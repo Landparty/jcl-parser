@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.egg-info/
+*.egg
+*.eggs/
+*.manifest
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Test, coverage, and build artifacts
+.coverage
+htmlcov/
+dist/
+build/
+*.log
+*.tmp
+*.bak
+*.swp
+*.sqlite3
+.cache/
+.pytest_cache/
+
+# IDE/editor files
+.vscode/
+.idea/
+*.sublime*
+*.DS_Store
+*.code-workspace
+
+# Jupyter and notebook files
+.ipynb_checkpoints/
+*.ipynb
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Misc
+*.orig
+*.rej
+*.out
+*.old
+*.lock
+*.pid
+
+# Examples and generated files
+examples/__pycache__/
+examples/*.pyc
+
+# Ignore documentation build
+/docs/_build/
+
+# Ignore coverage reports
+coverage.xml
+*.cover
+
+# Ignore package manager files
+pip-wheel-metadata/
