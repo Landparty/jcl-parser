@@ -33,7 +33,7 @@ class Statement:
     Base class for JCL statements.
     
     Attributes:
-        type: Statement type (JOB, EXEC, DD, etc.)
+        type: Statement type (JOB, EXEC, DD, PROC, SET, IF, etc.)
         name: Statement name
         parameters: Dictionary of parameters
         line_number: Source line number
@@ -42,6 +42,52 @@ class Statement:
     name: str
     parameters: Dict[str, Any] = field(default_factory=dict)
     line_number: int = 0
+
+
+@dataclass
+class ConditionalBlock:
+    """
+    Represents an IF/THEN/ELSE conditional block.
+    
+    Attributes:
+        condition: Conditional expression string
+        then_steps: Steps to execute if condition is true
+        else_steps: Steps to execute if condition is false (optional)
+        line_number: Source line number
+    """
+    condition: str
+    then_steps: List['Step'] = field(default_factory=list)
+    else_steps: List['Step'] = field(default_factory=list)
+    line_number: int = 0
+    
+    def add_then_step(self, step: 'Step') -> None:
+        """Add a step to the THEN block"""
+        self.then_steps.append(step)
+    
+    def add_else_step(self, step: 'Step') -> None:
+        """Add a step to the ELSE block"""
+        self.else_steps.append(step)
+
+
+@dataclass
+class Procedure:
+    """
+    Represents a PROC (procedure) definition.
+    
+    Attributes:
+        name: Procedure name
+        parameters: PROC parameters with defaults
+        steps: Steps within the procedure
+        line_number: Source line number
+    """
+    name: str
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    steps: List['Step'] = field(default_factory=list)
+    line_number: int = 0
+    
+    def add_step(self, step: 'Step') -> None:
+        """Add a step to this procedure"""
+        self.steps.append(step)
 
 
 @dataclass
@@ -74,14 +120,22 @@ class DDStatement:
     def is_input(self) -> bool:
         """True if this DD defines input data"""
         if self.disposition:
-            disp = self.disposition.upper()
+            # Handle both string and list disposition
+            if isinstance(self.disposition, list):
+                disp_upper = [d.upper() if isinstance(d, str) else str(d).upper() for d in self.disposition]
+                return any(d in ["OLD", "SHR"] for d in disp_upper)
+            disp = self.disposition.upper() if isinstance(self.disposition, str) else str(self.disposition).upper()
             return "SHR" in disp or "OLD" in disp
         return False
     
     def is_output(self) -> bool:
         """True if this DD defines output data"""
         if self.disposition:
-            disp = self.disposition.upper()
+            # Handle both string and list disposition
+            if isinstance(self.disposition, list):
+                disp_upper = [d.upper() if isinstance(d, str) else str(d).upper() for d in self.disposition]
+                return any(d in ["NEW", "MOD", "CATLG"] for d in disp_upper)
+            disp = self.disposition.upper() if isinstance(self.disposition, str) else str(self.disposition).upper()
             return "NEW" in disp or "CATLG" in disp
         return False
     
@@ -155,6 +209,11 @@ class Job:
         parameters: Job parameters (accounting, class, etc.)
         accounting_info: Accounting information from JOB statement
         steps: Execution steps in order
+        procedures: Inline procedure definitions
+        conditionals: IF/THEN/ELSE conditional blocks
+        set_statements: SET symbol definitions
+        jcllib_order: JCLLIB library concatenation
+        includes: INCLUDE member references
         comments: Job-level comments
         line_number: Source line number
     """
@@ -162,6 +221,11 @@ class Job:
     parameters: Dict[str, Any] = field(default_factory=dict)
     accounting_info: Optional[str] = None
     steps: List[Step] = field(default_factory=list)
+    procedures: List[Procedure] = field(default_factory=list)
+    conditionals: List[ConditionalBlock] = field(default_factory=list)
+    set_statements: Dict[str, str] = field(default_factory=dict)
+    jcllib_order: List[str] = field(default_factory=list)
+    includes: List[str] = field(default_factory=list)
     comments: List[str] = field(default_factory=list)
     line_number: int = 0
     
@@ -169,11 +233,30 @@ class Job:
         """Add an execution step to this job"""
         self.steps.append(step)
     
+    def add_procedure(self, procedure: Procedure) -> None:
+        """Add an inline procedure definition"""
+        self.procedures.append(procedure)
+    
+    def add_conditional(self, conditional: ConditionalBlock) -> None:
+        """Add a conditional block"""
+        self.conditionals.append(conditional)
+    
+    def add_set(self, symbol: str, value: str) -> None:
+        """Add a SET symbol definition"""
+        self.set_statements[symbol] = value
+    
     def get_step(self, name: str) -> Optional[Step]:
         """Find step by name"""
         for step in self.steps:
             if step.name == name:
                 return step
+        return None
+    
+    def get_procedure(self, name: str) -> Optional[Procedure]:
+        """Find procedure by name"""
+        for proc in self.procedures:
+            if proc.name == name:
+                return proc
         return None
     
     def get_dd_statements(self) -> List[DDStatement]:
@@ -230,15 +313,16 @@ class Job:
                 ErrorType.VALIDATION_ERROR
             ))
         
-        # Validate DD names are unique within step
+        # Validate DD names are unique within step (except for empty names used in concatenation)
         dd_names = []
         for dd in step.dd_statements:
-            if dd.name in dd_names:
+            # Empty DD names are allowed for concatenation - skip duplicate check
+            if dd.name and dd.name in dd_names:
                 errors.append(ValidationError(
                     f"Duplicate DD name in step {step.name or '(unnamed)'}: {dd.name}",
                     ErrorType.VALIDATION_ERROR
                 ))
-            else:
+            elif dd.name:  # Only add non-empty names to the list
                 dd_names.append(dd.name)
         
         return errors

@@ -142,15 +142,16 @@ def validate_step_structure(step: Step) -> List[ValidationError]:
             ErrorType.VALIDATION_ERROR
         ))
     
-    # Validate DD name uniqueness within step
+    # Validate DD name uniqueness within step (except for empty names used in concatenation)
     dd_names: Set[str] = set()
     for dd in step.dd_statements:
-        if dd.name in dd_names:
+        # Empty DD names are allowed for concatenation - skip duplicate check
+        if dd.name and dd.name in dd_names:
             errors.append(ValidationError(
                 f"Duplicate DD name in step {step.name or '(unnamed)'}: {dd.name}",
                 ErrorType.VALIDATION_ERROR
             ))
-        else:
+        elif dd.name:  # Only add non-empty names to the set
             dd_names.add(dd.name)
     
     # Validate each DD statement
