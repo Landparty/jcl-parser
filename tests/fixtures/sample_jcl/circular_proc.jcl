@@ -1,0 +1,12 @@
+//CIRCULAR JOB (ACCT),'CIRCULAR REFERENCE',CLASS=A
+//*
+//PROC1    PROC
+//STEP1    EXEC PROC2
+//         PEND
+//*
+//PROC2    PROC
+//STEP2    EXEC PROC1
+//         PEND
+//*
+//CALL     EXEC PROC1
+//

@@ -15,7 +15,9 @@ from .parser import parse_jcl, validate_jcl, parse_statement
 from .model import Job, Step, DDStatement, Parameter, Statement
 from .errors import (
     JCLSyntaxError, JCLValidationError, JCLStructureError,
-    ParseError, ErrorType, ErrorSeverity, ValidationError
+    ParseError, ErrorType, ErrorSeverity, ValidationError,
+    UndefinedSymbolError, ExplosionDepthError, CircularProcedureError,
+    ProcedureNotFoundError
 )
 from .plugins import (
     StatementPlugin, ValidationPlugin, PluginRegistry, 
@@ -25,6 +27,19 @@ from .validators import (
     validate_jcl_identifier, validate_dataset_name,
     validate_job_structure, validate_step_structure,
     validate_dd_statement
+)
+from .explosion import (
+    explode_job, substitute_symbols, SymbolScope, 
+    ExplosionRecord, ProcExpansionInfo
+)
+from .proc_loader import (
+    ProcedureLoader, InlineProcedureLoader, JCLLIBProcedureLoader,
+    CompositeProcedureLoader, create_default_loader
+)
+from .system_symbols import (
+    SystemSymbolProvider, MockSystemSymbolProvider,
+    RuntimeSystemSymbolProvider, EnvironmentSystemSymbolProvider,
+    get_default_provider, set_default_provider
 )
 
 # Initialize global plugin registry
@@ -52,6 +67,10 @@ __all__ = [
     'ValidationError',
     'ErrorType',
     'ErrorSeverity',
+    'UndefinedSymbolError',
+    'ExplosionDepthError',
+    'CircularProcedureError',
+    'ProcedureNotFoundError',
     
     # Plugin system
     'StatementPlugin',
@@ -67,6 +86,28 @@ __all__ = [
     'validate_job_structure',
     'validate_step_structure',
     'validate_dd_statement',
+    
+    # Explosion engine
+    'explode_job',
+    'substitute_symbols',
+    'SymbolScope',
+    'ExplosionRecord',
+    'ProcExpansionInfo',
+    
+    # Procedure loaders
+    'ProcedureLoader',
+    'InlineProcedureLoader',
+    'JCLLIBProcedureLoader',
+    'CompositeProcedureLoader',
+    'create_default_loader',
+    
+    # System symbol providers
+    'SystemSymbolProvider',
+    'MockSystemSymbolProvider',
+    'RuntimeSystemSymbolProvider',
+    'EnvironmentSystemSymbolProvider',
+    'get_default_provider',
+    'set_default_provider',
     
     # Package metadata
     '__version__',

@@ -157,6 +157,9 @@ class Step:
         dd_statements: Data definitions for this step
         comments: Step-level comments
         line_number: Source line number
+        is_exploded: True if this step was generated from procedure explosion
+        original_proc_call: Original procedure call step name (if exploded)
+        dd_overrides: DD overrides for qualified DD names (PROC.STEP.DD format)
     """
     name: Optional[str] = None
     program: Optional[str] = None
@@ -165,10 +168,18 @@ class Step:
     dd_statements: List[DDStatement] = field(default_factory=list)
     comments: List[str] = field(default_factory=list)
     line_number: int = 0
+    is_exploded: bool = False
+    original_proc_call: Optional[str] = None
+    dd_overrides: Dict[str, DDStatement] = field(default_factory=dict)
     
     @property
     def is_procedure(self) -> bool:
         """True if step executes a procedure"""
+        return self.procedure is not None
+    
+    @property
+    def is_proc_invocation(self) -> bool:
+        """True if step is a procedure invocation (alias for is_procedure)"""
         return self.procedure is not None
     
     def add_dd(self, dd_statement: DDStatement) -> None:
@@ -216,6 +227,8 @@ class Job:
         includes: INCLUDE member references
         comments: Job-level comments
         line_number: Source line number
+        explosion_audit: Audit records from procedure explosion
+        explosion_map: Cross-reference map of exploded procedures
     """
     name: str
     parameters: Dict[str, Any] = field(default_factory=dict)
@@ -228,6 +241,8 @@ class Job:
     includes: List[str] = field(default_factory=list)
     comments: List[str] = field(default_factory=list)
     line_number: int = 0
+    explosion_audit: List[Any] = field(default_factory=list)
+    explosion_map: Dict[str, Any] = field(default_factory=dict)
     
     def add_step(self, step: Step) -> None:
         """Add an execution step to this job"""
@@ -301,6 +316,47 @@ class Job:
             errors.extend(self._validate_step(step))
         
         return errors
+    
+    def explode(
+        self,
+        max_depth: int = 10,
+        loader: Optional[Any] = None,
+        audit: bool = True,
+        system_provider: Optional[Any] = None,
+        strict_symbols: bool = False
+    ) -> 'Job':
+        """
+        Explode all procedure invocations in this job.
+        
+        Creates a new Job instance with all PROC invocations expanded into
+        their constituent steps with symbolic parameters fully resolved.
+        
+        Args:
+            max_depth: Maximum procedure nesting depth (default 10)
+            loader: Optional custom procedure loader
+            audit: Whether to generate audit logs (default True)
+            system_provider: Optional system symbol provider
+            strict_symbols: If True, raise errors for undefined symbols
+            
+        Returns:
+            New Job instance with exploded procedures
+            
+        Raises:
+            ExplosionDepthError: If nesting exceeds max_depth
+            CircularProcedureError: If circular references detected
+            ProcedureNotFoundError: If referenced procedure not found
+            UndefinedSymbolError: If strict_symbols=True and symbol undefined
+        """
+        from .explosion import explode_job
+        
+        return explode_job(
+            job=self,
+            proc_loader=loader,
+            max_depth=max_depth,
+            audit=audit,
+            system_provider=system_provider,
+            strict_symbols=strict_symbols
+        )
     
     def _validate_step(self, step: Step) -> List[ValidationError]:
         """Validate a single step"""

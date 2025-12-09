@@ -141,7 +141,7 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
                         # If it contains statement keywords like DD, EXEC, JOB, it's not a continuation
                         if not any(continuation_content.upper().startswith(kw + " ") or 
                                  continuation_content.upper() == kw for kw in 
-                                 ["DD", "EXEC", "JOB", "PROC", "JCLLIB", "INCLUDE", "SET", "IF", "THEN", "ELSE", "ENDIF"]):
+                                 ["DD", "EXEC", "JOB", "PROC", "PEND", "JCLLIB", "INCLUDE", "SET", "IF", "THEN", "ELSE", "ENDIF"]):
                             # This is a true continuation of current statement
                             merged_line += "," + continuation_content
                             j += 1
@@ -165,6 +165,7 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
     current_dd = None
     inline_data_lines = []
     in_inline_data = False
+    current_procedure = None  # Track when we're inside a PROC/PEND block
     
     for line, line_num in merged_lines:
         try:
@@ -213,32 +214,56 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
                     raise JCLSyntaxError("EXEC statement missing program or procedure", line_num)
                 
                 current_step = _create_step_from_statement(stmt)
-                job.add_step(current_step)
+                
+                # Add step to procedure if we're inside PROC/PEND, otherwise to job
+                if current_procedure is not None:
+                    current_procedure.steps.append(current_step)
+                else:
+                    job.add_step(current_step)
             
             elif stmt.type == "DD":
                 if current_step is None:
                     raise JCLSyntaxError("DD statement before EXEC statement", line_num)
-                current_dd = _create_dd_from_statement(stmt)
-                current_step.add_dd(current_dd)
                 
-                # Check for inline data marker
-                if current_dd.parameters.get("*") or "DATA" in current_dd.parameters:
+                # Check for qualified DD name (PROC.STEP.DD format)
+                if stmt.name and '.' in stmt.name:
+                    # This is a DD override for a procedure step
+                    parts = stmt.name.split('.', 1)  # Split on first dot only
+                    if len(parts) == 2:
+                        # Store as override on the current step
+                        current_dd = _create_dd_from_statement(stmt)
+                        # Keep the qualified name for matching during explosion
+                        current_step.dd_overrides[parts[1]] = current_dd
+                    else:
+                        # Regular DD statement
+                        current_dd = _create_dd_from_statement(stmt)
+                        current_step.add_dd(current_dd)
+                else:
+                    # Regular DD statement
+                    current_dd = _create_dd_from_statement(stmt)
+                    current_step.add_dd(current_dd)
+                
+                # Check for inline data marker (only for non-override DDs)
+                if current_dd and (current_dd.parameters.get("*") or "DATA" in current_dd.parameters):
                     in_inline_data = True
                     inline_data_lines = []
             
             elif stmt.type == "PROC":
-                # Inline procedure definition
-                procedure = Procedure(
+                # Inline procedure definition - start tracking procedure
+                current_procedure = Procedure(
                     name=stmt.name or "UNNAMED",
                     parameters=stmt.parameters,
                     line_number=stmt.line_number
                 )
                 if job:
-                    job.add_procedure(procedure)
+                    job.add_procedure(current_procedure)
+                # Reset current_step since we're now inside procedure
+                current_step = None
             
             elif stmt.type == "PEND":
-                # End of procedure definition - no action needed
-                pass
+                # End of procedure definition - stop tracking
+                current_procedure = None
+                current_step = None
             
             elif stmt.type == "SET":
                 # SET symbol=value statement
@@ -314,8 +339,8 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
     if job is None:
         raise JCLSyntaxError("No JOB statement found", 0)
     
-    # Validate the parsed job if not in strict mode
-    if not strict_mode:
+    # Validate the parsed job if in strict mode
+    if strict_mode:
         validation_errors = job.validate()
         if validation_errors:
             error_msg = "; ".join([err.message for err in validation_errors])

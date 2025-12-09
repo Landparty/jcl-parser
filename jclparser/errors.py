@@ -77,6 +77,45 @@ class JCLStructureError(JCLParseError):
     pass
 
 
+class UndefinedSymbolError(JCLParseError):
+    """Exception raised when a symbolic parameter cannot be resolved"""
+    
+    def __init__(self, symbol: str, line_number: int = 0, context: str = ""):
+        self.symbol = symbol
+        message = f"Undefined symbolic parameter: {symbol}"
+        super().__init__(message, line_number, context)
+
+
+class ExplosionDepthError(JCLParseError):
+    """Exception raised when procedure explosion depth exceeds maximum"""
+    
+    def __init__(self, depth: int, max_depth: int, call_chain: list):
+        self.depth = depth
+        self.max_depth = max_depth
+        self.call_chain = call_chain
+        message = f"Procedure explosion depth {depth} exceeds maximum {max_depth}. Call chain: {' -> '.join(call_chain)}"
+        super().__init__(message)
+
+
+class CircularProcedureError(JCLParseError):
+    """Exception raised when circular procedure references are detected"""
+    
+    def __init__(self, procedure_name: str, call_chain: list):
+        self.procedure_name = procedure_name
+        self.call_chain = call_chain
+        message = f"Circular procedure reference detected: {procedure_name}. Call chain: {' -> '.join(call_chain)}"
+        super().__init__(message)
+
+
+class ProcedureNotFoundError(JCLParseError):
+    """Exception raised when a referenced procedure cannot be found"""
+    
+    def __init__(self, procedure_name: str, line_number: int = 0):
+        self.procedure_name = procedure_name
+        message = f"Procedure not found: {procedure_name}"
+        super().__init__(message, line_number)
+
+
 class ValidationError:
     """Represents a validation error (non-exception form)"""
     
