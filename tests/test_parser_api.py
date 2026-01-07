@@ -152,7 +152,7 @@ class TestParseStatementFunction:
         assert stmt.type == "EXEC"
         assert stmt.name == "STEP1"
         assert stmt.parameters["PGM"] == "IEFBR14"
-        assert stmt.parameters["PARM"] == "'DEBUG=YES'"
+        assert stmt.parameters["PARM"] == "DEBUG=YES"  # Quotes are stripped during parsing
     
     def test_parse_statement_dd(self):
         """GIVEN DD statement WHEN parse_statement() called THEN returns DDStatement"""

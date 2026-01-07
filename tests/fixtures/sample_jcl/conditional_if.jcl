@@ -1,0 +1,9 @@
+//IFTEST   JOB (ACCT),'CONDITIONAL EXECUTION'
+//         IF (RC = 0) THEN
+//STEP1    EXEC PGM=PROG1
+//         ENDIF
+//         IF (RC > 4 AND RC < 12) THEN
+//STEP2    EXEC PGM=PROG2
+//         ELSE
+//STEP3    EXEC PGM=PROG3
+//         ENDIF

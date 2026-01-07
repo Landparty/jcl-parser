@@ -9,12 +9,13 @@ and plugin extensibility.
 import re
 from pathlib import Path
 from typing import Union, List, Optional, Dict, Any, IO
-from .model import Job, Step, DDStatement, Statement, Parameter
+from .model import Job, Step, DDStatement, Statement, Parameter, ConditionalBlock, Procedure
 from .errors import (
     JCLSyntaxError, JCLValidationError, ParseError, 
     ErrorType, ErrorSeverity
 )
 from .plugins import get_plugin_registry, ParserConfig
+from .utils import normalize_jcl_line
 
 
 def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False, 
@@ -62,14 +63,54 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
             source.seek(0)  # Reset for potential reuse
     
     # Parse the content
-    lines = content.splitlines()
+    raw_lines = content.splitlines()
+    lines = [normalize_jcl_line(line) for line in raw_lines]
     
-    # First pass: merge continuation lines
+    # First pass: handle inline data sections (must be before continuation line merging)
+    # Mark lines that are inside inline data blocks
+    inline_data_markers = {}
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # Check if this line starts DD * or DD DATA
+        if line.strip() and line.startswith("//") and not line.strip().startswith("//*"):
+            upper_line = line.upper()
+            # Match DD followed by * or DATA (with possible spaces)
+            if " DD " in upper_line or " DD*" in upper_line or "\tDD\t" in upper_line:
+                if (" DD *" in upper_line or " DD*" in upper_line or 
+                    " DD DATA" in upper_line or "\tDD\t*" in upper_line or
+                    ",DLM=" in upper_line):  # DD DATA,DLM=...
+                    # Extract delimiter if specified
+                    delimiter = "/*"  # default
+                    if "DLM=" in upper_line:
+                        dlm_start = upper_line.index("DLM=") + 4
+                        dlm_end = dlm_start
+                        while dlm_end < len(upper_line) and upper_line[dlm_end] not in ",) \t\r\n":
+                            dlm_end += 1
+                        delimiter = line[dlm_start:dlm_end]
+                    
+                    # Mark all following lines until delimiter as inline data
+                    i += 1
+                    while i < len(lines):
+                        if lines[i].strip() == delimiter or lines[i].strip().startswith(delimiter):
+                            inline_data_markers[i] = True  # Mark delimiter line too
+                            break
+                        inline_data_markers[i] = True
+                        i += 1
+        i += 1
+    
+    # Second pass: merge continuation lines
     merged_lines = []
     i = 0
     while i < len(lines):
         line = lines[i]
         original_line_num = i + 1
+        
+        # For inline data lines, add them directly without merging
+        if i in inline_data_markers:
+            merged_lines.append((line, original_line_num))
+            i += 1
+            continue
         
         # Check if this is a JCL statement (not comment, not empty)
         if line.strip() and line.startswith("//") and not line.strip().startswith("//*"):
@@ -91,18 +132,25 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
                 j = i + 1
                 while j < len(lines):
                     next_line = lines[j]
+                    
+                    # Skip empty lines, null statements, or comments when looking for continuation
+                    if (not next_line.strip() or 
+                        next_line.strip() == "//" or 
+                        next_line.strip().startswith("//*")):
+                        j += 1
+                        continue
+
                     # Check if next line is a continuation
                     if (next_line.strip() and 
                         next_line.startswith("//") and 
                         len(next_line) > 2 and 
-                        next_line[2:].startswith(" ") and
-                        not next_line.strip().startswith("//*")):
+                        next_line[2:].startswith(" ")):
                         # Check if this is actually a continuation (no statement name/type after spaces)
                         continuation_content = next_line[2:].strip()
                         # If it contains statement keywords like DD, EXEC, JOB, it's not a continuation
                         if not any(continuation_content.upper().startswith(kw + " ") or 
                                  continuation_content.upper() == kw for kw in 
-                                 ["DD", "EXEC", "JOB", "PROC", "JCLLIB", "INCLUDE", "SET", "IF", "THEN", "ELSE", "ENDIF"]):
+                                 ["DD", "EXEC", "JOB", "PROC", "PEND", "JCLLIB", "INCLUDE", "SET", "IF", "THEN", "ELSE", "ENDIF"]):
                             # This is a true continuation of current statement
                             merged_line += "," + continuation_content
                             j += 1
@@ -126,6 +174,7 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
     current_dd = None
     inline_data_lines = []
     in_inline_data = False
+    current_procedure = None  # Track when we're inside a PROC/PEND block
     
     for line, line_num in merged_lines:
         try:
@@ -147,6 +196,10 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
             if not line.strip() or line.strip().startswith("//*"):
                 continue
             
+            # Skip lines marked as inline data (line_num is 1-indexed, markers use 0-indexed)
+            if (line_num - 1) in inline_data_markers:
+                continue
+            
             # Parse the statement
             stmt = parse_statement(line, line_num)
             if not stmt:
@@ -162,25 +215,131 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
                 if job is None:
                     raise JCLSyntaxError("EXEC statement before JOB statement", line_num)
                 
-                # Basic syntax check for EXEC - must have program or procedure
+                # Basic syntax check for EXEC - must have program, procedure, or positional parameter
                 has_pgm = "PGM" in stmt.parameters
+                has_proc = "PROC" in stmt.parameters
                 has_positional = any(k.startswith("_pos_") for k in stmt.parameters.keys())
-                if not has_pgm and not has_positional:
+                if not has_pgm and not has_proc and not has_positional:
                     raise JCLSyntaxError("EXEC statement missing program or procedure", line_num)
                 
                 current_step = _create_step_from_statement(stmt)
-                job.add_step(current_step)
+                
+                # Add step to procedure if we're inside PROC/PEND, otherwise to job
+                if current_procedure is not None:
+                    current_procedure.steps.append(current_step)
+                else:
+                    job.add_step(current_step)
             
             elif stmt.type == "DD":
                 if current_step is None:
                     raise JCLSyntaxError("DD statement before EXEC statement", line_num)
-                current_dd = _create_dd_from_statement(stmt)
-                current_step.add_dd(current_dd)
                 
-                # Check for inline data marker
-                if current_dd.parameters.get("*"):
+                # Check for qualified DD name (PROC.STEP.DD format)
+                if stmt.name and '.' in stmt.name:
+                    # This is a DD override for a procedure step
+                    parts = stmt.name.split('.', 1)  # Split on first dot only
+                    if len(parts) == 2:
+                        # Store as override on the current step
+                        current_dd = _create_dd_from_statement(stmt)
+                        # Keep the qualified name for matching during explosion
+                        current_step.dd_overrides[stmt.name] = current_dd
+                    else:
+                        # Regular DD statement
+                        current_dd = _create_dd_from_statement(stmt)
+                        current_step.add_dd(current_dd)
+                else:
+                    # Regular DD statement
+                    current_dd = _create_dd_from_statement(stmt)
+                    current_step.add_dd(current_dd)
+                
+                # Check for inline data marker (only for non-override DDs)
+                if current_dd and (current_dd.parameters.get("*") or "DATA" in current_dd.parameters):
                     in_inline_data = True
                     inline_data_lines = []
+            
+            elif stmt.type == "PROC":
+                # Inline procedure definition - start tracking procedure
+                current_procedure = Procedure(
+                    name=stmt.name or "UNNAMED",
+                    parameters=stmt.parameters,
+                    line_number=stmt.line_number
+                )
+                if job:
+                    job.add_procedure(current_procedure)
+                # Reset current_step since we're now inside procedure
+                current_step = None
+            
+            elif stmt.type == "PEND":
+                # End of procedure definition - stop tracking
+                current_procedure = None
+                current_step = None
+            
+            elif stmt.type == "SET":
+                # SET symbol=value statement
+                if job:
+                    # For SET statements, parameters are in the format SYMBOL=VALUE
+                    for key, value in stmt.parameters.items():
+                        if not key.startswith("_pos_"):
+                            job.add_set(key, value)
+                        elif key.startswith("_pos_"):
+                            # Positional parameter might be SYMBOL=VALUE without keyword
+                            param_val = value
+                            if "=" in param_val:
+                                sym, val = param_val.split("=", 1)
+                                job.add_set(sym.strip(), val.strip())
+            
+            elif stmt.type == "JCLLIB":
+                # JCLLIB ORDER=(lib1,lib2,...)
+                if job and "ORDER" in stmt.parameters:
+                    order_value = stmt.parameters["ORDER"]
+                    # ORDER parameter might already be parsed as a list
+                    if isinstance(order_value, list):
+                        job.jcllib_order.extend(order_value)
+                    elif isinstance(order_value, str):
+                        libs = order_value.strip("()").split(",")
+                        job.jcllib_order.extend([lib.strip() for lib in libs])
+            
+            elif stmt.type == "INCLUDE":
+                # INCLUDE MEMBER=name
+                if job:
+                    member = stmt.parameters.get("MEMBER") or stmt.parameters.get("_pos_0")
+                    if member:
+                        job.includes.append(member)
+            
+            elif stmt.type in ["IF", "THEN", "ELSE", "ENDIF"]:
+                # Conditional logic - track conditionals properly
+                if stmt.type == "IF" and job:
+                    # Extract condition from the statement name field or parameters
+                    # IF statements typically: // IF (condition) THEN
+                    condition_parts = []
+                    if stmt.name and stmt.name != "IF":
+                        condition_parts.append(stmt.name)
+                    for key, value in stmt.parameters.items():
+                        if not key.startswith("_"):
+                            condition_parts.append(f"{key}={value}")
+                        else:
+                            condition_parts.append(str(value))
+                    condition = " ".join(condition_parts)
+                    conditional = ConditionalBlock(
+                        condition=condition,
+                        line_number=stmt.line_number
+                    )
+                    job.add_conditional(conditional)
+            
+            elif stmt.type == "XMIT":
+                # XMIT statement - similar to DD but for data transmission
+                if current_step:
+                    current_dd = DDStatement(
+                        name=stmt.name or "XMIT",
+                        parameters=stmt.parameters,
+                        line_number=stmt.line_number
+                    )
+                    current_step.add_dd(current_dd)
+                    in_inline_data = True
+                    inline_data_lines = []
+                else:
+                    # Treat job-level XMIT as ignored/comment
+                    pass
         
         except Exception as e:
             if isinstance(e, (JCLSyntaxError, JCLValidationError)):
@@ -191,8 +350,8 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
     if job is None:
         raise JCLSyntaxError("No JOB statement found", 0)
     
-    # Validate the parsed job if not in strict mode
-    if not strict_mode:
+    # Validate the parsed job if in strict mode
+    if strict_mode:
         validation_errors = job.validate()
         if validation_errors:
             error_msg = "; ".join([err.message for err in validation_errors])
@@ -393,10 +552,17 @@ def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
     # Remove // prefix
     content = line[2:]
     
-    # Handle continuation lines - these start with spaces after //
+    # Handle continuation lines - these start with spaces after // BUT check if it's actually a statement without name
     if content.startswith(" ") and content.strip():
-        # This is a continuation line - return None as it should be processed with main statement
-        return None
+        # Check if this might be a statement without a name field (like // SET, // IF, // EXEC, // DD, etc.)
+        content_stripped = content.strip()
+        first_token = content_stripped.split()[0].upper() if content_stripped.split() else ""
+        # All valid JCL statement types that can appear without a name field
+        statement_types_no_name = ["JOB", "EXEC", "DD", "PROC", "PEND", "JCLLIB", "INCLUDE", 
+                                  "SET", "IF", "THEN", "ELSE", "ENDIF", "XMIT", "OUTPUT", "SCHEDULE"]
+        if first_token not in statement_types_no_name:
+            # This is a true continuation line - return None
+            return None
         
     content = content.strip()
     
@@ -405,22 +571,46 @@ def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
         return None
     
     # Parse statement name and type
-    if " " not in content:
-        raise JCLSyntaxError(f"Invalid statement format: {line}", line_number)
+    # Handle cases like "//         IF ..." where there's no name
+    content_stripped = content.lstrip()
     
-    name_part, rest = content.split(" ", 1)
-    rest = rest.strip()
+    if not content_stripped:
+        return None
+    
+    # Check if first token is a statement type (no name field)
+    first_token = content_stripped.split()[0] if content_stripped.split() else ""
+    statement_types = ["JOB", "EXEC", "DD", "PROC", "PEND", "JCLLIB", "INCLUDE", 
+                      "SET", "IF", "THEN", "ELSE", "ENDIF", "XMIT", "OUTPUT", "SCHEDULE"]
+    
+    if first_token.upper() in statement_types:
+        # No name field - statement starts directly with type
+        name_part = ""
+        rest = content_stripped
+    elif " " not in content_stripped:
+        # Only one token - could be name without operation
+        name_part = content_stripped
+        rest = ""
+    else:
+        # Has name field
+        name_part, rest = content_stripped.split(" ", 1)
+        rest = rest.strip()
     
     # Determine statement type
     if " " not in rest:
         statement_type = rest.upper()
         parameters_part = ""
     else:
-        statement_type, parameters_part = rest.split(" ", 1)
-        statement_type = statement_type.upper()
+        # Special handling for SET statements - syntax is: //  SET VAR=VALUE
+        if rest.upper().startswith("SET "):
+            statement_type = "SET"
+            parameters_part = rest[4:].strip()  # Everything after "SET "
+        else:
+            statement_type, parameters_part = rest.split(" ", 1)
+            statement_type = statement_type.upper()
     
     # Validate statement type
-    valid_types = ["JOB", "EXEC", "DD", "PROC", "JCLLIB", "INCLUDE", "SET", "IF", "THEN", "ELSE", "ENDIF"]
+    valid_types = ["JOB", "EXEC", "DD", "PROC", "PEND", "JCLLIB", "INCLUDE", 
+                   "SET", "IF", "THEN", "ELSE", "ENDIF", "XMIT", "OUTPUT", "SCHEDULE"]
     if statement_type not in valid_types:
         raise JCLSyntaxError(f"Unknown statement type: {statement_type}", line_number)
     
@@ -442,31 +632,54 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]
     if not param_string.strip():
         return parameters
     
-    # Handle special cases like DD * 
-    if param_string.strip() == "*":
+    # Handle special cases like DD * or DD DATA (only if standalone)
+    param_upper = param_string.strip().upper()
+    if param_upper == "*":
         parameters["*"] = True
         return parameters
+    elif param_upper == "DATA" or param_upper.startswith("DATA,"):
+        parameters["DATA"] = True
+        # Continue parsing if there are additional parameters after DATA,
+        if "," in param_string:
+            # Parse remaining parameters
+            remaining = param_string[param_string.index(",") + 1:]
+            # Continue to normal parameter parsing
+            param_string = remaining
+        else:
+            return parameters
     
-    # Simple parameter parsing (can be enhanced)
-    # Handle comma-separated parameters
+    # Enhanced parameter parsing with better list and parentheses handling
     parts = []
     current = ""
     in_quotes = False
     paren_depth = 0
     
-    for char in param_string:
-        if char == "'" and (not current or current[-1] != "\\"):
+    i = 0
+    while i < len(param_string):
+        char = param_string[i]
+        if char == "'":
+            # Handle escaped quotes: '' inside a quoted string represents a single quote
+            if in_quotes and i + 1 < len(param_string) and param_string[i + 1] == "'":
+                # Escaped quote - add only one quote to current and skip the next quote
+                current += "'"
+                i += 2  # Skip both quotes
+                continue
+            # Regular quote - toggle state
             in_quotes = not in_quotes
+            current += char
         elif char == "(" and not in_quotes:
             paren_depth += 1
+            current += char
         elif char == ")" and not in_quotes:
             paren_depth -= 1
+            current += char
         elif char == "," and not in_quotes and paren_depth == 0:
             if current.strip():
                 parts.append(current.strip())
             current = ""
-            continue
-        current += char
+        else:
+            current += char
+        i += 1
     
     if current.strip():
         parts.append(current.strip())
@@ -481,14 +694,75 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]
     
     # Parse individual parameters
     for i, part in enumerate(parts):
-        if "=" in part:
-            key, value = part.split("=", 1)
-            parameters[key.strip()] = value.strip()
+        if "=" in part and not part.startswith("("):
+            # Keyword parameter
+            eq_pos = part.index("=")
+            key = part[:eq_pos].strip().upper()  # Uppercase key
+            value = part[eq_pos+1:].strip()
+            
+            # Handle parameter lists like DSN=(A,B,C)
+            if value.startswith("(") and value.endswith(")"):
+                # Parse list value
+                list_content = value[1:-1]
+                list_items = _parse_list_parameter(list_content)
+                parameters[key] = list_items
+            else:
+                # Remove quotes from quoted values
+                if value.startswith("'") and value.endswith("'"):
+                    value = value[1:-1].replace("''", "'")
+                parameters[key] = value
         else:
             # Positional parameter
-            parameters[f"_pos_{i}"] = part.strip()
+            value = part
+            if value.startswith("'") and value.endswith("'"):
+                value = value[1:-1].replace("''", "'")
+            parameters[f"_pos_{i}"] = value
     
     return parameters
+
+
+def _parse_list_parameter(list_content: str) -> List[str]:
+    """Parse parameter list like A,B,C or 'A','B','C'"""
+    items = []
+    current = ""
+    in_quotes = False
+    paren_depth = 0
+    
+    i = 0
+    while i < len(list_content):
+        char = list_content[i]
+        if char == "'":
+            # Handle escaped quotes
+            if in_quotes and i + 1 < len(list_content) and list_content[i + 1] == "'":
+                current += "'"
+                i += 2
+                continue
+            in_quotes = not in_quotes
+            current += char
+        elif char == "(" and not in_quotes:
+            paren_depth += 1
+            current += char
+        elif char == ")" and not in_quotes:
+            paren_depth -= 1
+            current += char
+        elif char == "," and not in_quotes and paren_depth == 0:
+            if current.strip():
+                item = current.strip()
+                if item.startswith("'") and item.endswith("'"):
+                    item = item[1:-1].replace("''", "'")
+                items.append(item)
+            current = ""
+        else:
+            current += char
+        i += 1
+    
+    if current.strip():
+        item = current.strip()
+        if item.startswith("'") and item.endswith("'"):
+            item = item[1:-1].replace("''", "'")
+        items.append(item)
+    
+    return items
 
 
 def _create_job_from_statement(stmt: Statement) -> Job:
@@ -518,9 +792,16 @@ def _create_step_from_statement(stmt: Statement) -> Step:
     # Check if it's a program or procedure call
     if "PGM" in stmt.parameters:
         program = stmt.parameters.pop("PGM")
+    elif "PROC" in stmt.parameters:
+        procedure = stmt.parameters.pop("PROC")
     elif "_pos_0" in stmt.parameters:
-        # Might be a procedure call
-        procedure = stmt.parameters.pop("_pos_0")
+        # Might be a procedure call without keyword
+        proc_or_pgm = stmt.parameters.pop("_pos_0")
+        # If it looks like a procedure name (no path separators), treat as procedure
+        if "." not in proc_or_pgm and "/" not in proc_or_pgm:
+            procedure = proc_or_pgm
+        else:
+            program = proc_or_pgm
     
     return Step(
         name=stmt.name,
