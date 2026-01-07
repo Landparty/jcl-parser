@@ -15,6 +15,7 @@ from .errors import (
     ErrorType, ErrorSeverity
 )
 from .plugins import get_plugin_registry, ParserConfig
+from .utils import normalize_jcl_line
 
 
 def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False, 
@@ -62,7 +63,8 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
             source.seek(0)  # Reset for potential reuse
     
     # Parse the content
-    lines = content.splitlines()
+    raw_lines = content.splitlines()
+    lines = [normalize_jcl_line(line) for line in raw_lines]
     
     # First pass: handle inline data sections (must be before continuation line merging)
     # Mark lines that are inside inline data blocks
@@ -130,12 +132,19 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
                 j = i + 1
                 while j < len(lines):
                     next_line = lines[j]
+                    
+                    # Skip empty lines, null statements, or comments when looking for continuation
+                    if (not next_line.strip() or 
+                        next_line.strip() == "//" or 
+                        next_line.strip().startswith("//*")):
+                        j += 1
+                        continue
+
                     # Check if next line is a continuation
                     if (next_line.strip() and 
                         next_line.startswith("//") and 
                         len(next_line) > 2 and 
-                        next_line[2:].startswith(" ") and
-                        not next_line.strip().startswith("//*")):
+                        next_line[2:].startswith(" ")):
                         # Check if this is actually a continuation (no statement name/type after spaces)
                         continuation_content = next_line[2:].strip()
                         # If it contains statement keywords like DD, EXEC, JOB, it's not a continuation
@@ -233,7 +242,7 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
                         # Store as override on the current step
                         current_dd = _create_dd_from_statement(stmt)
                         # Keep the qualified name for matching during explosion
-                        current_step.dd_overrides[parts[1]] = current_dd
+                        current_step.dd_overrides[stmt.name] = current_dd
                     else:
                         # Regular DD statement
                         current_dd = _create_dd_from_statement(stmt)
@@ -319,16 +328,18 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
             
             elif stmt.type == "XMIT":
                 # XMIT statement - similar to DD but for data transmission
-                if current_step is None:
-                    raise JCLSyntaxError("XMIT statement before EXEC statement", line_num)
-                current_dd = DDStatement(
-                    name=stmt.name or "XMIT",
-                    parameters=stmt.parameters,
-                    line_number=stmt.line_number
-                )
-                current_step.add_dd(current_dd)
-                in_inline_data = True
-                inline_data_lines = []
+                if current_step:
+                    current_dd = DDStatement(
+                        name=stmt.name or "XMIT",
+                        parameters=stmt.parameters,
+                        line_number=stmt.line_number
+                    )
+                    current_step.add_dd(current_dd)
+                    in_inline_data = True
+                    inline_data_lines = []
+                else:
+                    # Treat job-level XMIT as ignored/comment
+                    pass
         
         except Exception as e:
             if isinstance(e, (JCLSyntaxError, JCLValidationError)):
@@ -686,7 +697,7 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]
         if "=" in part and not part.startswith("("):
             # Keyword parameter
             eq_pos = part.index("=")
-            key = part[:eq_pos].strip()
+            key = part[:eq_pos].strip().upper()  # Uppercase key
             value = part[eq_pos+1:].strip()
             
             # Handle parameter lists like DSN=(A,B,C)

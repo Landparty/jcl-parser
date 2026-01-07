@@ -291,6 +291,11 @@ class Job:
                 "Job must have a name",
                 ErrorType.VALIDATION_ERROR
             ))
+        elif len(self.name) > 8:
+            errors.append(ValidationError(
+                f"Invalid job name '{self.name}': must be 1-8 characters",
+                ErrorType.VALIDATION_ERROR
+            ))
         
         # Job must have at least one step
         if not self.steps:

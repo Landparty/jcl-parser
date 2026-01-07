@@ -230,24 +230,24 @@ class TestSymbolicParameterEdgeCases:
     
     def test_symbol_with_period_concatenation(self):
         """Test symbolic parameter with period concatenation"""
-        from jclparser.explosion import substitute_symbols
-        symbols = {"VAR": "VALUE"}
-        result = substitute_symbols("&VAR..DATA", symbols, strict=False)
+        from jclparser.explosion import substitute_symbols, SymbolScope
+        scope = SymbolScope(set_symbols={"VAR": "VALUE"})
+        result = substitute_symbols("&VAR..DATA", scope, strict=False)
         # Should become VALUE.DATA
         assert "VALUE" in result
     
     def test_double_ampersand_escape(self):
         """Test && escapes to single &"""
-        from jclparser.explosion import substitute_symbols
-        symbols = {}
-        result = substitute_symbols("&&TEMP", symbols, strict=False)
+        from jclparser.explosion import substitute_symbols, SymbolScope
+        scope = SymbolScope(set_symbols={})
+        result = substitute_symbols("&&TEMP", scope, strict=False)
         assert "&" in result or result == "&&TEMP"
     
     def test_undefined_symbol_lenient(self):
         """Test undefined symbol in lenient mode"""
-        from jclparser.explosion import substitute_symbols
-        symbols = {}
-        result = substitute_symbols("&UNDEF", symbols, strict=False)
+        from jclparser.explosion import substitute_symbols, SymbolScope
+        scope = SymbolScope(set_symbols={})
+        result = substitute_symbols("&UNDEF", scope, strict=False, allow_undefined=True)
         # Should keep as-is in lenient mode
         assert "&UNDEF" in result
 
@@ -261,7 +261,8 @@ class TestProcLoaderEdgeCases:
         from jclparser.model import Procedure
         
         proc = Procedure(name="MYPROC", parameters={}, line_number=1)
-        loader = InlineProcedureLoader({"MYPROC": proc})
+        # Pass list of procedures, not dict
+        loader = InlineProcedureLoader([proc])
         
         # Should find by exact name
         result = loader.load_procedure("MYPROC", ())
@@ -285,7 +286,7 @@ class TestSystemSymbolsEdgeCases:
         from jclparser.system_symbols import RuntimeSystemSymbolProvider
         
         provider = RuntimeSystemSymbolProvider()
-        sysdate = provider.resolve("SYSDATE")
+        sysdate = provider.get_symbol("SYSDATE")
         # Should be in format YY/MM/DD or YYYY/MM/DD
         assert "/" in sysdate or len(sysdate) > 0
     
@@ -295,6 +296,6 @@ class TestSystemSymbolsEdgeCases:
         
         provider = EnvironmentSystemSymbolProvider()
         # Request a symbol that doesn't exist in environment
-        result = provider.resolve("NONEXISTENT_VAR_XYZ")
-        # Should return a default or empty
-        assert isinstance(result, str)
+        result = provider.get_symbol("NONEXISTENT_VAR_XYZ")
+        # Should return a default or None
+        assert result is None or isinstance(result, str)

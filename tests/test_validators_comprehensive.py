@@ -148,14 +148,14 @@ class TestValidateStepStructure:
         step = Step(name="STEP1", line_number=2)
         errors = validate_step_structure(step)
         assert len(errors) > 0
-        assert any("program or procedure" in err.message for err in errors)
+        assert any("program (PGM=) or procedure" in err.message for err in errors)
     
     def test_both_program_and_procedure(self):
         """Test step with both program and procedure"""
         step = Step(name="STEP1", program="PROG", procedure="PROC", line_number=2)
         errors = validate_step_structure(step)
         assert len(errors) > 0
-        assert any("both program and procedure" in err.message for err in errors)
+        assert any("cannot specify both program and procedure" in err.message for err in errors)
     
     def test_invalid_step_name(self):
         """Test invalid step name"""
@@ -196,7 +196,7 @@ class TestValidateDDStatement:
     
     def test_special_dd_names(self):
         """Test special DD names are valid"""
-        dd = DDStatement(name="SYSIN", line_number=3)
+        dd = DDStatement(name="SYSIN", parameters={"DUMMY": True}, line_number=3)
         errors = validate_dd_statement(dd)
         assert len(errors) == 0
 
@@ -255,7 +255,7 @@ class TestValidateDataDependencies:
         
         errors = validate_data_dependencies(job)
         assert len(errors) > 0
-        assert any("Multiple steps create" in err.message for err in errors)
+        assert any("created in multiple steps" in err.message for err in errors)
 
 
 class TestValidationError:

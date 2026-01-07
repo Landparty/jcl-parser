@@ -275,7 +275,7 @@ def expand_proc_invocation(
         
         # Substitute symbols in DD statements
         for dd in new_step.dd_statements:
-            substitute_dd_statement(dd, expansion_scope)
+            substitute_dd_statement(dd, expansion_scope, strict=False)
         
         expanded_steps.append(new_step)
     
@@ -316,7 +316,8 @@ def substitute_parameters_dict(
 
 def substitute_dd_statement(
     dd: DDStatement,
-    scope: SymbolScope
+    scope: SymbolScope,
+    strict: bool = False
 ) -> None:
     """
     Substitute symbols in DD statement (in-place).
@@ -327,11 +328,11 @@ def substitute_dd_statement(
     """
     # Substitute dataset name
     if dd.dataset_name:
-        dd.dataset_name = substitute_symbols(dd.dataset_name, scope, strict=False)
+        dd.dataset_name = substitute_symbols(dd.dataset_name, scope, strict=strict)
     
     # Substitute disposition
     if dd.disposition:
-        dd.disposition = substitute_symbols(dd.disposition, scope, strict=False)
+        dd.disposition = substitute_symbols(dd.disposition, scope, strict=strict)
     
     # Substitute all parameters
     dd.parameters = substitute_parameters_dict(dd.parameters, scope)
@@ -454,7 +455,7 @@ def explode_job(
             )
             
             for dd in substituted_step.dd_statements:
-                substitute_dd_statement(dd, base_scope)
+                substitute_dd_statement(dd, base_scope, strict=strict_symbols)
             
             exploded_steps.append(substituted_step)
     

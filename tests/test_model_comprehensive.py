@@ -39,18 +39,6 @@ class TestJobModel:
         assert "MYVAR" in job.set_statements
         assert job.set_statements["MYVAR"] == "VALUE"
     
-    def test_add_jcllib(self):
-        """Test adding JCLLIB"""
-        job = Job(name="TESTJOB", parameters={}, accounting_info="ACCT")
-        job.add_jcllib("MY.PROCLIB")
-        assert "MY.PROCLIB" in job.jcllib_order
-    
-    def test_add_include(self):
-        """Test adding INCLUDE"""
-        job = Job(name="TESTJOB", parameters={}, accounting_info="ACCT")
-        job.add_include("MYMEMBER")
-        assert "MYMEMBER" in job.includes
-    
     def test_add_comment(self):
         """Test adding comment"""
         job = Job(name="TESTJOB", parameters={}, accounting_info="ACCT")

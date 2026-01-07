@@ -99,7 +99,7 @@ INLINE DATA
         from jclparser.system_symbols import RuntimeSystemSymbolProvider
         
         provider = RuntimeSystemSymbolProvider()
-        sysdate = provider.resolve("SYSDATE")
+        sysdate = provider.get_symbol("SYSDATE")
         assert isinstance(sysdate, str)
         assert len(sysdate) > 0
     
@@ -221,7 +221,8 @@ INLINE DATA
         os.environ["JCL_MYVAR"] = "MYVALUE"
         try:
             provider = EnvironmentSystemSymbolProvider()
-            result = provider.resolve("MYVAR")
-            assert result in ["MYVALUE", ""] or result is not None
+            result = provider.get_symbol("MYVAR")
+            # Should return None or the value
+            assert result is None or result == "MYVALUE"
         finally:
             os.environ.pop("JCL_MYVAR", None)

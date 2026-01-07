@@ -4,7 +4,7 @@ Laser-focused tests for remaining uncovered lines to reach 90%
 
 import pytest
 from jclparser import parse_jcl
-from jclparser.model import Job, Step, DDStatement
+from jclparser.model import Job, Step, DDStatement, Procedure
 from jclparser.parser import parse_statement
 from jclparser.utils import split_jcl_parameters, parse_jcl_parameter
 
@@ -184,20 +184,20 @@ LINE 5 OF INPUT DATA
     
     def test_symbol_substitution_complex(self):
         """Test complex symbol substitution"""
-        from jclparser.explosion import substitute_symbols
+        from jclparser.explosion import substitute_symbols, SymbolScope
         
-        symbols = {
+        scope = SymbolScope(set_symbols={
             "VAR1": "VALUE1",
             "VAR2": "VALUE2",
             "VAR3": "VALUE3"
-        }
+        })
         
         # Multiple symbols in one string
-        result = substitute_symbols("&VAR1.&VAR2.&VAR3", symbols, strict=False)
+        result = substitute_symbols("&VAR1.&VAR2.&VAR3", scope, strict=False)
         assert "VALUE1" in result or result is not None
         
         # Symbol with text
-        result = substitute_symbols("PREFIX.&VAR1.SUFFIX", symbols, strict=False)
+        result = substitute_symbols("PREFIX.&VAR1.SUFFIX", scope, strict=False)
         assert "VALUE1" in result or result is not None
     
     def test_validator_all_error_types(self):
@@ -224,8 +224,9 @@ LINE 5 OF INPUT DATA
         
         # Add various components
         job.add_set("VAR", "VALUE")
-        job.add_jcllib("LIB1")
-        job.add_include("MEM1")
+        # Directly append to lists instead of using non-existent methods
+        job.jcllib_order.append("LIB1")
+        job.includes.append("MEM1")
         job.comments.append("//* Comment")
         
         proc = Procedure(name="PROC1", parameters={}, line_number=1)

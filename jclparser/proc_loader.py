@@ -167,14 +167,32 @@ class JCLLIBProcedureLoader(ProcedureLoader):
             Procedure object
         """
         from .parser import parse_jcl
+        from .jcl_file_type import detect_file_type, FileType
         
         try:
-            # Parse the file as JCL
+            # First, detect the file type
+            file_type = detect_file_type(file_path)
+            
+            # Reject if it's a JCL job file (has JOB card)
+            # A PROC file should NOT have a JOB card
+            if file_type == FileType.JCL:
+                # This is a JCL job file, not a PROC - skip it
+                # In a real system, you might want to log a warning
+                return None
+            
+            # PROC or UNKNOWN files are acceptable
+            # Read the file content
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             
+            # For standalone PROC files (no JOB statement), we need to wrap them
+            # in a dummy JOB statement so the parser can handle them
+            if file_type == FileType.PROC:
+                # Prepend a dummy JOB statement
+                content = f"//DUMMYJOB JOB\n{content}"
+            
             # Parse to extract procedure definition
-            job = parse_jcl(content, strict=False)
+            job = parse_jcl(content, strict_mode=False)
             
             # Look for the procedure in the parsed job
             for proc in job.procedures:

@@ -142,6 +142,13 @@ def validate_step_structure(step: Step) -> List[ValidationError]:
             ErrorType.VALIDATION_ERROR
         ))
     
+    # Cannot have both program and procedure
+    if step.program and step.procedure:
+        errors.append(ValidationError(
+            f"Step {step.name or '(unnamed)'} cannot specify both program and procedure",
+            ErrorType.VALIDATION_ERROR
+        ))
+    
     # Validate DD name uniqueness within step (except for empty names used in concatenation)
     dd_names: Set[str] = set()
     for dd in step.dd_statements:

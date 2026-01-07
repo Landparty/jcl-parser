@@ -137,8 +137,8 @@ def quote_jcl_value(value: str) -> str:
     Returns:
         Quoted value if necessary
     """
-    # Quote if contains special characters or spaces
-    if re.search(r'[,()=\s]', value):
+    # Quote if contains special characters or spaces (including apostrophes)
+    if re.search(r"[,()=\s']", value):
         # Escape existing quotes
         escaped = value.replace("'", "''")
         return f"'{escaped}'"
@@ -215,16 +215,15 @@ def format_jcl_line(statement_type: str, name: str, parameters: Dict[str, Any],
             param_parts.append(str(value))
         else:
             if isinstance(value, (list, tuple)):
-                # Handle list values (like DISP)
+                # Handle list values (like DISP) - don't quote parenthesized values
                 value_str = "(" + ",".join(str(v) for v in value) + ")"
+                param_parts.append(f"{key}={value_str}")
             else:
                 value_str = str(value)
-            
-            # Quote if necessary
-            if isinstance(value_str, str):
-                value_str = quote_jcl_value(value_str)
-            
-            param_parts.append(f"{key}={value_str}")
+                # Quote if necessary
+                if isinstance(value_str, str):
+                    value_str = quote_jcl_value(value_str)
+                param_parts.append(f"{key}={value_str}")
     
     param_string = ",".join(param_parts)
     full_line = f"{base} {param_string}"

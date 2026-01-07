@@ -33,7 +33,9 @@ class TestUltraComprehensive:
             "//DD1   DD DSN=DATA",
             "//"
         ]
-        job = parse_jcl(lines, strict_mode=False)
+        # Convert list to string
+        jcl_string = "\n".join(lines)
+        job = parse_jcl(jcl_string, strict_mode=False)
         assert job.name == "JOB2"
     
     def test_parse_jcl_empty_input(self):
@@ -271,7 +273,9 @@ INPUT
         """Test exporting model to dict"""
         job = Job(name="EXPORT", parameters={"CLASS": "A"}, accounting_info="ACCT")
         step = Step(name="STEP1", program="PROG", line_number=2)
-        step.add_dd("DD1", DSN="DATA", DISP="SHR")
+        dd = DDStatement(name="DD1", dataset_name="DATA", disposition="SHR",
+                        parameters={"DSN": "DATA", "DISP": "SHR"}, line_number=3)
+        step.add_dd(dd)
         job.add_step(step)
         
         # Test to_dict if available

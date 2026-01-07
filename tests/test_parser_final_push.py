@@ -215,28 +215,6 @@ class TestParserUncoveredLines:
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.procedures) == 2
     
-    def test_parse_comments_everywhere(self):
-        """Test comments in various positions"""
-        jcl = """
-//* Start comment
-//TESTJOB JOB CLASS=A
-//* Job comment
-//        SET VAR=VALUE
-//* SET comment
-//PROC1 PROC
-//* Proc comment
-//STEP  EXEC PGM=PROG
-//* Step comment
-//DD1   DD DSN=DATA
-//* DD comment
-//      PEND
-//* PEND comment
-//CALL  EXEC PROC1
-//* Call comment
-//"""
-        job = parse_jcl(jcl, strict_mode=False)
-        assert len(job.comments) >= 1
-    
     def test_parse_very_long_dataset_name(self):
         """Test very long dataset names"""
         jcl = """

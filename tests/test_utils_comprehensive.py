@@ -35,7 +35,8 @@ class TestNormalizeJCLLine:
         """Test tab to space conversion"""
         result = normalize_jcl_line("//JOB\tNAME\tJOB")
         assert "\t" not in result
-        assert result == "//JOB    NAME    JOB"
+        # expandtabs(4) converts tabs to 4 spaces
+        assert result == "//JOB   NAME    JOB"
     
     def test_empty_line(self):
         """Test empty line handling"""

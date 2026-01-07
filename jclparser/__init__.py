@@ -41,6 +41,9 @@ from .system_symbols import (
     RuntimeSystemSymbolProvider, EnvironmentSystemSymbolProvider,
     get_default_provider, set_default_provider
 )
+from .jcl_file_type import (
+    FileType, detect_file_type, is_jcl_file, is_proc_file
+)
 
 # Initialize global plugin registry
 _registry = get_plugin_registry()
@@ -108,6 +111,12 @@ __all__ = [
     'EnvironmentSystemSymbolProvider',
     'get_default_provider',
     'set_default_provider',
+    
+    # File type detection
+    'FileType',
+    'detect_file_type',
+    'is_jcl_file',
+    'is_proc_file',
     
     # Package metadata
     '__version__',

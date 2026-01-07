@@ -119,6 +119,13 @@ class ProcedureNotFoundError(JCLParseError):
 class ValidationError:
     """Represents a validation error (non-exception form)"""
     
-    def __init__(self, message: str, error_type: ErrorType = ErrorType.VALIDATION_ERROR):
+    def __init__(self, message: str, error_type: ErrorType = ErrorType.VALIDATION_ERROR, line_number: Optional[int] = None):
         self.message = message
         self.error_type = error_type
+        self.line_number = line_number
+    
+    def __str__(self) -> str:
+        """String representation of validation error"""
+        if self.line_number:
+            return f"Line {self.line_number}: {self.message}"
+        return self.message

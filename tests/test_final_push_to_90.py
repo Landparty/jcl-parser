@@ -150,11 +150,12 @@ class TestUncoveredPaths:
         
         key2, val2 = parse_jcl_parameter("COND=(0,NE)")
         assert key2 == "COND"
-        assert val2 == "(0,NE)"
+        assert val2 == ['0', 'NE']  # Parenthesized values are parsed as lists
         
         key3, val3 = parse_jcl_parameter("DSN")
-        assert key3 == "DSN"
-        assert val3 is None
+        # Positional parameter (no equals sign)
+        assert key3 == "_positional"
+        assert val3 == "DSN"
     
     def test_model_advanced_operations(self):
         """Test advanced model operations"""
@@ -162,12 +163,18 @@ class TestUncoveredPaths:
         
         # Add steps with various configurations
         step1 = Step(name="STEP1", program="PROG1", line_number=2)
-        step1.add_dd("DD1", DSN="DATA1", DISP="SHR")
-        step1.add_dd("DD2", DSN="DATA2", DISP="NEW")
+        dd1 = DDStatement(name="DD1", dataset_name="DATA1", disposition="SHR",
+                         parameters={"DSN": "DATA1", "DISP": "SHR"}, line_number=3)
+        dd2 = DDStatement(name="DD2", dataset_name="DATA2", disposition="NEW",
+                         parameters={"DSN": "DATA2", "DISP": "NEW"}, line_number=4)
+        step1.add_dd(dd1)
+        step1.add_dd(dd2)
         job.add_step(step1)
         
         step2 = Step(name="STEP2", procedure="PROC1", line_number=5)
-        step2.add_dd("PDD1", DSN="OVERRIDE")
+        dd3 = DDStatement(name="PDD1", dataset_name="OVERRIDE",
+                         parameters={"DSN": "OVERRIDE"}, line_number=6)
+        step2.add_dd(dd3)
         job.add_step(step2)
         
         # Test step operations
