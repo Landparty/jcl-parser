@@ -243,6 +243,7 @@ class Job:
     line_number: int = 0
     explosion_audit: List[Any] = field(default_factory=list)
     explosion_map: Dict[str, Any] = field(default_factory=dict)
+    jes_statements: List[str] = field(default_factory=list)
     
     def add_step(self, step: Step) -> None:
         """Add an execution step to this job"""

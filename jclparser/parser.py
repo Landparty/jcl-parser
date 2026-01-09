@@ -113,7 +113,7 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
             continue
         
         # Check if this is a JCL statement (not comment, not empty)
-        if line.strip() and line.startswith("//") and not line.strip().startswith("//*"):
+        if line.strip() and (line.startswith("//") or line.startswith("/*")) and not line.strip().startswith("//*"):
             # Check if this is a continuation line (// followed by only spaces before content)
             if len(line) > 2 and line[2:].startswith(" " * 13):  # Traditional JCL continuation
                 # This is a continuation line - it should be merged with previous
@@ -175,12 +175,13 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
     inline_data_lines = []
     in_inline_data = False
     current_procedure = None  # Track when we're inside a PROC/PEND block
+    current_delimiter = "/*"
     
     for line, line_num in merged_lines:
         try:
             # Handle inline data continuation
             if in_inline_data:
-                if line.strip() == "/*":
+                if line.strip() == current_delimiter or line.strip().startswith(current_delimiter):
                     # End of inline data
                     if current_dd:
                         current_dd.inline_data = '\n'.join(inline_data_lines)
@@ -253,9 +254,14 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
                     current_step.add_dd(current_dd)
                 
                 # Check for inline data marker (only for non-override DDs)
-                if current_dd and (current_dd.parameters.get("*") or "DATA" in current_dd.parameters):
+                has_star_pos = any(v == "*" for k, v in current_dd.parameters.items() if k.startswith("_pos_"))
+                if current_dd and (current_dd.parameters.get("*") or "DATA" in current_dd.parameters or has_star_pos):
                     in_inline_data = True
                     inline_data_lines = []
+                    current_delimiter = current_dd.parameters.get("DLM", "/*")
+                    # Handle quoted delimiter
+                    if current_delimiter.startswith("'") and current_delimiter.endswith("'"):
+                        current_delimiter = current_delimiter[1:-1]
             
             elif stmt.type == "PROC":
                 # Inline procedure definition - start tracking procedure
@@ -325,6 +331,11 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
                         line_number=stmt.line_number
                     )
                     job.add_conditional(conditional)
+            
+            elif stmt.type == "JES":
+                if job:
+                    content = f"/*{stmt.name} {stmt.parameters.get('_raw', '')}".strip()
+                    job.jes_statements.append(content)
             
             elif stmt.type == "XMIT":
                 # XMIT statement - similar to DD but for data transmission
@@ -546,6 +557,24 @@ def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
         return None
     
     # JCL statements must start with //
+    if line.startswith("/*"):
+        if len(line) <= 2 or not line[2].strip():
+             # Just '/*' or '/* ' is an EOF delimiter, ignore if treating as stmt
+             return None
+        
+        # Parse JES statement
+        # Format: /*COMMAND options
+        parts = line[2:].split(None, 1)
+        command = parts[0]
+        params = parts[1] if len(parts) > 1 else ""
+        
+        return Statement(
+            type="JES",
+            name=command,
+            parameters={"_raw": params},
+            line_number=line_number
+        )
+
     if not line.startswith("//"):
         raise JCLSyntaxError(f"Invalid JCL statement (must start with //): {line}", line_number)
     

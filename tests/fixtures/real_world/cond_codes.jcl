@@ -1,0 +1,15 @@
+//CONDJOB  JOB (5555),'COND CODES',CLASS=A,
+//             COND=(4,LT)
+//*
+//* Complex COND parameter usage
+//*
+//STEP1    EXEC PGM=IEFBR14
+//*
+//STEP2    EXEC PGM=IEFBR14,COND=(0,NE,STEP1)
+//*
+//STEP3    EXEC PGM=IEFBR14,COND=EVEN
+//*
+//STEP4    EXEC PGM=IEFBR14,COND=ONLY
+//*
+//STEP5    EXEC PGM=IEFBR14,
+//             COND=((4,GT,STEP1),(8,EQ,STEP2))

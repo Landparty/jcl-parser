@@ -3,7 +3,7 @@
 A comprehensive Python library for parsing IBM JCL (Job Control Language) scripts into structured Python objects. Provides a clean API for analyzing, validating, and manipulating JCL jobs with full support for modern Python type hints and extensible plugin architecture.
 
 [![Python Version](https://img.shields.io/badge/python-3.13+-blue.svg)](https://python.org)
-[![Test Coverage](https://img.shields.io/badge/coverage-87.8%25-green.svg)](#testing)
+[![Test Coverage](https://img.shields.io/badge/coverage-99%25-green.svg)](#testing)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## Features
@@ -174,6 +174,7 @@ job.parameters             # Job parameters (Dict[str, Any])
 job.accounting_info        # Accounting information (Optional[str])
 job.steps                  # List of Step objects
 job.comments               # Job-level comments (List[str])
+job.jes_statements         # JES2/JES3 control statements (List[str])
 job.line_number           # Source line number (int)
 
 # Job methods
@@ -269,6 +270,72 @@ for dd in job.get_dd_statements():
         temp_datasets.append(dd.dataset_name)
         
 print(f"Temporary datasets: {temp_datasets}")
+```
+
+### Procedure Expansion
+
+The parser supports "exploding" JCL procedures (PROCs) to view the actual executed steps with symbolic parameters resolved.
+
+```python
+# JCL with PROC
+jcl = """
+//MYPROC PROC DSN='DEFAULT.DATA'
+//STEP1  EXEC PGM=IEFBR14
+//DD1    DD   DSN=&DSN,DISP=SHR
+//       PEND
+//RUN1   EXEC MYPROC,DSN='PROD.DATA'
+"""
+
+job = jclparser.parse_jcl(jcl)
+exploded_job = job.explode()
+
+print(f"Original steps: {len(job.steps)}")      # 1 (The EXEC MYPROC call)
+print(f"Exploded steps: {len(exploded_job.steps)}") # 1 (The resolved EXEC IEFBR14)
+
+step = exploded_job.steps[0]
+dd = step.get_dd("DD1")
+print(f"Resolved DSN: {dd.dataset_name}")       # PROD.DATA
+```
+
+### JES2/JES3 Control Statements
+
+JES2/JES3 control statements (starting with `/*`) are parsed and preserved.
+
+```python
+jcl = """
+//JESJOB   JOB (1234),'TEST',CLASS=A
+/*JOBPARM ROOM=123,TIME=60
+/*ROUTE PRINT LOCAL
+//STEP1    EXEC PGM=IEFBR14
+"""
+
+job = jclparser.parse_jcl(jcl)
+
+for stmt in job.jes_statements:
+    print(f"Control Statement: {stmt}")
+# Output:
+# Control Statement: /*JOBPARM ROOM=123,TIME=60
+# Control Statement: /*ROUTE PRINT LOCAL
+```
+
+### Real-World Patterns
+
+**Generation Data Groups (GDGs):**
+```python
+# Parsing GDG generations
+dd = step.get_dd("OUTFILE")
+if "(+1)" in dd.dataset_name:
+    print("Creates new generation")
+```
+
+**Sort Control Cards:**
+```python
+# Parsing Inline Sort Cards
+step = job.get_step("SORTSTEP")
+sysin = step.get_dd("SYSIN")
+if sysin.has_inline_data:
+    if "SORT FIELDS" in sysin.inline_data:
+        print("Found Sort parameters")
 ```
 
 ### Plugin System

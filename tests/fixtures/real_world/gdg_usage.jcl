@@ -1,0 +1,14 @@
+//GDGJOB   JOB (1234),'GDG USAGE',CLASS=A
+//*
+//* Demonstrates GDG (Generation Data Group) usage
+//*
+//STEP1    EXEC PGM=PROG1
+//OUTFILE  DD DSN=MY.GDG.BASE(+1),
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(1,1)),
+//            DCB=(LRECL=80,RECFM=FB,BLKSIZE=0)
+//*
+//STEP2    EXEC PGM=PROG2
+//INFILE   DD DSN=MY.GDG.BASE(0),DISP=SHR
+//HIST     DD DSN=MY.GDG.BASE(-1),DISP=SHR
+//TEMP     DD DSN=&&TEMP,DISP=(NEW,PASS)
