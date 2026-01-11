@@ -8,6 +8,7 @@ with validation methods and type safety.
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Union
 from .errors import ValidationError, ErrorType
+from .parameter_ast import DCBParameter, SPACEParameter, ParameterParser
 
 
 @dataclass
@@ -111,6 +112,60 @@ class DDStatement:
     inline_data: Optional[str] = None
     comments: List[str] = field(default_factory=list)
     line_number: int = 0
+    
+    # Cached parsed parameters (not included in __init__)
+    _dcb_parsed: Optional[DCBParameter] = field(default=None, init=False, repr=False)
+    _space_parsed: Optional[SPACEParameter] = field(default=None, init=False, repr=False)
+    
+    @property
+    def dcb(self) -> Optional[DCBParameter]:
+        """
+        Get parsed DCB parameter.
+        
+        Returns:
+            DCBParameter object or None if no DCB parameter
+            
+        Example:
+            >>> dd.dcb.recfm  # 'FB'
+            >>> dd.dcb.lrecl  # 80
+            >>> dd.dcb.blksize  # 27920
+        """
+        if self._dcb_parsed is None and "DCB" in self.parameters:
+            parser = ParameterParser()
+            dcb_value = self.parameters["DCB"]
+            if isinstance(dcb_value, str):
+                self._dcb_parsed = parser.parse_dcb(dcb_value, self.line_number)
+            elif isinstance(dcb_value, list):
+                # Handle list format
+                dcb_str = ','.join(str(v) for v in dcb_value)
+                self._dcb_parsed = parser.parse_dcb(dcb_str, self.line_number)
+        
+        return self._dcb_parsed
+    
+    @property
+    def space(self) -> Optional[SPACEParameter]:
+        """
+        Get parsed SPACE parameter.
+        
+        Returns:
+            SPACEParameter object or None if no SPACE parameter
+            
+        Example:
+            >>> dd.space.unit  # 'CYL'
+            >>> dd.space.primary  # 10
+            >>> dd.space.secondary  # 5
+            >>> dd.space.rlse  # True
+        """
+        if self._space_parsed is None and "SPACE" in self.parameters:
+            parser = ParameterParser()
+            space_value = self.parameters["SPACE"]
+            if isinstance(space_value, str):
+                self._space_parsed = parser.parse_space(space_value, self.line_number)
+            elif isinstance(space_value, list):
+                space_str = ','.join(str(v) for v in space_value)
+                self._space_parsed = parser.parse_space(space_str, self.line_number)
+        
+        return self._space_parsed
     
     @property
     def has_inline_data(self) -> bool:

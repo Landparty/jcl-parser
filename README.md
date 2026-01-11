@@ -14,11 +14,42 @@ A comprehensive Python library for parsing IBM JCL (Job Control Language) script
 - 🔌 **Extensible** - Plugin system for custom statement types and validation rules
 - 🛡️ **Error Handling** - Comprehensive exception hierarchy with context information
 - 📈 **Performance** - Handles large JCL files efficiently (3000+ lines in <5 seconds)
+- 🔗 **Enhanced Continuation** - Full support for complex multi-line JCL statements
+- 📦 **Structured Parameters** - DCB and SPACE parameters parsed into rich objects with validation
 
-## Current Limitations
+## New in v0.2.0
 
-- **Continuation Lines**: Multi-line JCL statements with continuation syntax (`//   parameter=value`) are not yet fully supported. Use single-line statements for now.
-- **Complex DCB Parameters**: Nested parameter parsing is basic - complex DCB and other multi-level parameters are parsed as strings.
+### Enhanced Continuation Line Support
+
+Complex multi-line JCL statements are now fully supported:
+
+```jcl
+//DD1 DD DSN=MY.VERY.LONG.DATASET.NAME,
+//       DISP=(NEW,CATLG,DELETE),
+//       SPACE=(CYL,(100,10),RLSE),
+//       DCB=(RECFM=FB,LRECL=80,BLKSIZE=27920,
+//            BUFNO=20,DSORG=PS)
+```
+
+### Structured DCB and SPACE Parameters
+
+Access DCB and SPACE parameters as structured objects instead of strings:
+
+```python
+dd = step.get_dd("DD1")
+
+# Structured DCB access
+print(dd.dcb.recfm)      # 'FB'
+print(dd.dcb.lrecl)      # 80
+print(dd.dcb.blksize)    # 27920
+dd.dcb.validate()        # Returns list of validation errors
+
+# Structured SPACE access
+print(dd.space.unit)      # 'CYL'
+print(dd.space.primary)   # 100
+print(dd.space.rlse)      # True
+dd.space.validate()       # Returns list of validation errors
+```
 
 ## Installation
 

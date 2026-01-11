@@ -16,6 +16,7 @@ from .errors import (
 )
 from .plugins import get_plugin_registry, ParserConfig
 from .utils import normalize_jcl_line
+from .continuation_handler import ContinuationLineHandler
 
 
 def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False, 
@@ -99,74 +100,38 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
                         i += 1
         i += 1
     
-    # Second pass: merge continuation lines
+    
+    # Second pass: merge continuation lines using enhanced handler
+    # Filter out inline data lines before merging (they should not be merged)
+    non_inline_lines = []
+    inline_line_map = {}  # Map from non-inline index to original index
+    
+    for i, line in enumerate(lines):
+        if i not in inline_data_markers:
+            inline_line_map[len(non_inline_lines)] = i
+            non_inline_lines.append(line)
+    
+    # Use enhanced continuation handler
+    handler = ContinuationLineHandler()
+    merged_non_inline = handler.merge_continuation_lines(non_inline_lines)
+    
+    # Now interleave the merged lines with inline data lines
     merged_lines = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        original_line_num = i + 1
-        
-        # For inline data lines, add them directly without merging
+    merged_idx = 0
+    
+    for i, line in enumerate(lines):
         if i in inline_data_markers:
-            merged_lines.append((line, original_line_num))
-            i += 1
-            continue
-        
-        # Check if this is a JCL statement (not comment, not empty)
-        if line.strip() and (line.startswith("//") or line.startswith("/*")) and not line.strip().startswith("//*"):
-            # Check if this is a continuation line (// followed by only spaces before content)
-            if len(line) > 2 and line[2:].startswith(" " * 13):  # Traditional JCL continuation
-                # This is a continuation line - it should be merged with previous
-                if merged_lines:
-                    # Merge with previous line
-                    prev_line, prev_line_num = merged_lines[-1]
-                    continuation_content = line[2:].strip()  # Remove // and leading spaces
-                    merged_line = prev_line + "," + continuation_content
-                    merged_lines[-1] = (merged_line, prev_line_num)
-                else:
-                    # No previous line to merge with - treat as standalone
-                    merged_lines.append((line, original_line_num))
-            else:
-                # Regular line - check if next lines are continuations
-                merged_line = line
-                j = i + 1
-                while j < len(lines):
-                    next_line = lines[j]
-                    
-                    # Skip empty lines, null statements, or comments when looking for continuation
-                    if (not next_line.strip() or 
-                        next_line.strip() == "//" or 
-                        next_line.strip().startswith("//*")):
-                        j += 1
-                        continue
-
-                    # Check if next line is a continuation
-                    if (next_line.strip() and 
-                        next_line.startswith("//") and 
-                        len(next_line) > 2 and 
-                        next_line[2:].startswith(" ")):
-                        # Check if this is actually a continuation (no statement name/type after spaces)
-                        continuation_content = next_line[2:].strip()
-                        # If it contains statement keywords like DD, EXEC, JOB, it's not a continuation
-                        if not any(continuation_content.upper().startswith(kw + " ") or 
-                                 continuation_content.upper() == kw for kw in 
-                                 ["DD", "EXEC", "JOB", "PROC", "PEND", "JCLLIB", "INCLUDE", "SET", "IF", "THEN", "ELSE", "ENDIF"]):
-                            # This is a true continuation of current statement
-                            merged_line += "," + continuation_content
-                            j += 1
-                        else:
-                            # This is a new statement, not a continuation
-                            break
-                    else:
-                        break
-                
-                merged_lines.append((merged_line, original_line_num))
-                i = j - 1  # Skip the continuation lines we processed
+            # This is an inline data line - add it directly
+            merged_lines.append((line, i + 1))
         else:
-            # Non-JCL statement (comment, empty line, etc.)
-            merged_lines.append((line, original_line_num))
-        
-        i += 1
+            # This is a regular line - check if we have a merged version
+            # Find the corresponding merged line
+            if merged_idx < len(merged_non_inline):
+                merged_line, orig_line_num = merged_non_inline[merged_idx]
+                # Check if this merged line starts at this position
+                if inline_line_map.get(orig_line_num - 1) == i:
+                    merged_lines.append((merged_line, i + 1))
+                    merged_idx += 1
     
     # Now parse the merged lines
     job = None
