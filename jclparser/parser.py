@@ -19,8 +19,13 @@ from .utils import normalize_jcl_line
 from .continuation_handler import ContinuationLineHandler
 
 
-def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False, 
-              config: Optional[ParserConfig] = None) -> Job:
+def parse_jcl(
+    source: Union[str, Path, IO], 
+    strict_mode: bool = False, 
+    config: Optional[ParserConfig] = None,
+    proc_base_path: Optional[Union[str, Path]] = None,
+    enable_external_procs: bool = True
+) -> Job:
     """
     Parse JCL script from various input sources into structured Job object.
     
@@ -28,6 +33,9 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
         source: JCL script content as string, file path, or file-like object
         strict_mode: Enable strict parsing mode
         config: Optional parser configuration
+        proc_base_path: Base directory for external PROC libraries
+                       (defaults to JCL_PROCLIB_PATH env var or current directory)
+        enable_external_procs: Enable loading PROCs from file system via JCLLIB ORDER
         
     Returns:
         Job object representing parsed JCL structure
@@ -350,6 +358,46 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
     
     if job is None:
         raise JCLSyntaxError("No JOB statement found", 0)
+    
+    # Create and attach procedure loader for external PROC loading
+    if enable_external_procs and job.jcllib_order:
+        from .proc_loader import create_default_loader
+        proc_loader = create_default_loader(
+            inline_procedures=job.procedures,
+            base_path=proc_base_path,
+            include_jcllib=True
+        )
+        # Store loader on job for later use (e.g., in explosion)
+        job._proc_loader = proc_loader
+        
+        # Try to load any external PROCs that were referenced but not found inline
+        # This happens when EXEC PROC is used but PROC is not defined inline
+        for step in job.steps:
+            if step.procedure and not job.get_procedure(step.procedure):
+                # Try to load external PROC
+                # Convert list to tuple for caching (CompositeProcedureLoader requires hashable)
+                libraries_tuple = tuple(job.jcllib_order) if job.jcllib_order else None
+                proc = proc_loader.load_procedure(step.procedure, libraries_tuple)
+                if proc:
+                    job.add_procedure(proc)
+                elif strict_mode:
+                    raise JCLSyntaxError(
+                        f"Procedure '{step.procedure}' not found. "
+                        f"Searched in: inline={len(job.procedures)} procedures, "
+                        f"libraries={job.jcllib_order}",
+                        step.line_number
+                    )
+    else:
+        # External loading disabled or no JCLLIB - check for missing PROCs in strict mode
+        if strict_mode:
+            for step in job.steps:
+                if step.procedure and not job.get_procedure(step.procedure):
+                    reason = "external PROC loading is disabled" if not enable_external_procs else "no JCLLIB ORDER specified"
+                    raise JCLSyntaxError(
+                        f"Procedure '{step.procedure}' not found ({reason}). "
+                        f"Searched in: inline={len(job.procedures)} procedures",
+                        step.line_number
+                    )
     
     # Validate the parsed job if in strict mode
     if strict_mode:

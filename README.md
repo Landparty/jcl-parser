@@ -121,7 +121,7 @@ with open("job.jcl", "r") as file:
 
 ### Core Functions
 
-#### `parse_jcl(source, strict_mode=False, config=None)`
+#### `parse_jcl(source, strict_mode=False, config=None, proc_base_path=None, enable_external_procs=True)`
 
 Parse JCL script into structured Job object.
 
@@ -129,6 +129,8 @@ Parse JCL script into structured Job object.
 - `source`: JCL content (str), file path (Path/str), or file-like object
 - `strict_mode`: Enable strict parsing (bool, default: False)
 - `config`: Optional ParserConfig for advanced options
+- `proc_base_path`: Base directory for external PROC libraries (Path/str, optional)
+- `enable_external_procs`: Enable loading PROCs from file system (bool, default: True)
 
 **Returns:** `Job` object
 
@@ -143,6 +145,9 @@ job = jclparser.parse_jcl(jcl_content)
 
 # Strict mode (no automatic validation)
 job = jclparser.parse_jcl(jcl_content, strict_mode=True)
+
+# With external PROC loading
+job = jclparser.parse_jcl(jcl_content, proc_base_path='/path/to/proclibs')
 
 # With custom configuration
 config = jclparser.ParserConfig(dialect="custom", strict_mode=True)
@@ -326,6 +331,96 @@ print(f"Exploded steps: {len(exploded_job.steps)}") # 1 (The resolved EXEC IEFBR
 step = exploded_job.steps[0]
 dd = step.get_dd("DD1")
 print(f"Resolved DSN: {dd.dataset_name}")       # PROD.DATA
+```
+
+### External PROC Loading
+
+The parser can load procedures from external libraries specified via JCLLIB ORDER statements, enabling support for real-world JCL that references system and user procedure libraries.
+
+#### Basic Usage
+
+```python
+# JCL with JCLLIB ORDER
+jcl = """
+//MYJOB JOB (ACCT),'TEST'
+// JCLLIB ORDER=SYS1.PROCLIB
+//STEP1 EXEC MYPROC
+"""
+
+# Specify base path for PROC libraries
+job = jclparser.parse_jcl(jcl, proc_base_path='/path/to/proclibs')
+
+# Access loaded PROC
+proc = job.get_procedure('MYPROC')
+print(f"PROC loaded from: SYS1.PROCLIB/MYPROC.jcl")
+```
+
+#### Directory Structure
+
+The parser expects PROC libraries to be organized as directories:
+
+```
+/path/to/proclibs/
+    SYS1.PROCLIB/
+        MYPROC.jcl
+        SORTPROC.jcl
+    USER.PROCLIB/
+        CUSTOM.jcl
+```
+
+#### Multiple Libraries
+
+Libraries are searched in the order specified in JCLLIB ORDER:
+
+```python
+jcl = """
+//MYJOB JOB (ACCT),'TEST'
+// JCLLIB ORDER=(SYS1.PROCLIB,USER.PROCLIB)
+//STEP1 EXEC MYPROC
+"""
+
+job = jclparser.parse_jcl(jcl, proc_base_path='/path/to/proclibs')
+# Searches SYS1.PROCLIB first, then USER.PROCLIB
+```
+
+#### Environment Variable
+
+Set `JCL_PROCLIB_PATH` to avoid specifying `proc_base_path`:
+
+```bash
+export JCL_PROCLIB_PATH=/path/to/proclibs
+```
+
+```python
+job = jclparser.parse_jcl(jcl)  # Automatically uses env var
+```
+
+#### Configuration Options
+
+```python
+# Disable external loading
+job = jclparser.parse_jcl(jcl, enable_external_procs=False)
+
+# Strict mode - error if PROC not found
+job = jclparser.parse_jcl(jcl, strict_mode=True, proc_base_path='/path')
+```
+
+#### Inline vs External Precedence
+
+Inline PROCs always take precedence over external PROCs:
+
+```python
+jcl = """
+//MYJOB JOB (ACCT),'TEST'
+// JCLLIB ORDER=SYS1.PROCLIB
+//MYPROC PROC
+//INLINE EXEC PGM=INLINE
+// PEND
+//STEP1 EXEC MYPROC
+"""
+
+job = jclparser.parse_jcl(jcl, proc_base_path='/path')
+# Uses inline PROC, not external
 ```
 
 ### JES2/JES3 Control Statements
