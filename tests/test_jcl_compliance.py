@@ -271,12 +271,16 @@ class TestEdgeCasesAndErrorHandling:
         with pytest.raises(JCLSyntaxError):
             parse_jcl(jcl)
     
-    def test_dd_before_exec_fails(self):
-        """DD before first EXEC should fail"""
+    def test_dd_before_exec_allowed(self):
+        """DD before first EXEC should be allowed and attached to first step"""
         jcl = """//TEST JOB (ACCT),'TEST'
-//DD1 DD DSN=MY.DATA,DISP=SHR"""
-        with pytest.raises(JCLSyntaxError):
-            parse_jcl(jcl)
+//DD1 DD DSN=MY.DATA,DISP=SHR
+//STEP1 EXEC PGM=IEFBR14"""
+        job = parse_jcl(jcl)
+        
+        # Should be valid and DD should be attached to STEP1
+        assert len(job.steps) == 1
+        assert job.steps[0].get_dd("DD1") is not None
     
     def test_multiple_job_statements_fail(self):
         """Multiple JOB statements should fail"""

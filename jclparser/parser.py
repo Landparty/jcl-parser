@@ -141,6 +141,8 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
     in_inline_data = False
     current_procedure = None  # Track when we're inside a PROC/PEND block
     current_delimiter = "/*"
+    orphaned_dds = []  # Track DDs that appear before first EXEC
+
     
     for line, line_num in merged_lines:
         try:
@@ -190,6 +192,12 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
                 
                 current_step = _create_step_from_statement(stmt)
                 
+                # Attach any orphaned DDs to this first step
+                if orphaned_dds:
+                    for dd in orphaned_dds:
+                        current_step.add_dd(dd)
+                    orphaned_dds = []
+                
                 # Add step to procedure if we're inside PROC/PEND, otherwise to job
                 if current_procedure is not None:
                     current_procedure.steps.append(current_step)
@@ -197,11 +205,13 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
                     job.add_step(current_step)
             
             elif stmt.type == "DD":
-                if current_step is None:
-                    raise JCLSyntaxError("DD statement before EXEC statement", line_num)
+                # Create the DD statement
+                current_dd = _create_dd_from_statement(stmt)
                 
-                # Check for qualified DD name (PROC.STEP.DD format)
-                if stmt.name and '.' in stmt.name:
+                if current_step is None:
+                    # Store as orphaned DD to be attached to next step
+                    orphaned_dds.append(current_dd)
+                elif stmt.name and '.' in stmt.name:
                     # This is a DD override for a procedure step
                     parts = stmt.name.split('.', 1)  # Split on first dot only
                     if len(parts) == 2:
@@ -211,11 +221,9 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
                         current_step.dd_overrides[stmt.name] = current_dd
                     else:
                         # Regular DD statement
-                        current_dd = _create_dd_from_statement(stmt)
                         current_step.add_dd(current_dd)
                 else:
                     # Regular DD statement
-                    current_dd = _create_dd_from_statement(stmt)
                     current_step.add_dd(current_dd)
                 
                 # Check for inline data marker (only for non-override DDs)
@@ -467,12 +475,8 @@ def validate_jcl(source: Union[str, Path, IO], level: str = "basic") -> List[Par
                 
                 elif stmt.type == "DD":
                     if current_step is None:
-                        errors.append(ParseError(
-                            error_type=ErrorType.SYNTAX_ERROR,
-                            message="DD statement before EXEC statement",
-                            line_number=line_num,
-                            severity=ErrorSeverity.ERROR
-                        ))
+                        # DD before EXEC is allowed
+                        pass
         
         except JCLSyntaxError as e:
             errors.append(ParseError(

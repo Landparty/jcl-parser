@@ -271,14 +271,15 @@ class TestEdgeCases:
         with pytest.raises((JCLSyntaxError, JCLValidationError)):
             parse_jcl(jcl)
     
-    def test_dd_before_exec(self):
-        """Test DD statement before EXEC"""
+    def test_dd_before_exec_allowed(self):
+        """Test DD statement before EXEC is allowed"""
         jcl = '''
 //TESTJOB JOB (ACCT)
 //DD1 DD SYSOUT=*
+//STEP1 EXEC PGM=IEFBR14
         '''
         errors = validate_jcl(jcl, level="structure")
-        assert any("before EXEC" in err.message for err in errors)
+        assert not any("before EXEC" in err.message for err in errors)
     
     def test_unclosed_quote(self):
         """Test detection of unclosed quotes"""
