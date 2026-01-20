@@ -168,6 +168,229 @@ class DDStatement:
         return self._space_parsed
     
     @property
+    def dataclas(self) -> Optional[str]:
+        """
+        Get DATACLAS (SMS data class) parameter.
+        
+        Returns:
+            DATACLAS value or None if not specified
+            
+        Example:
+            >>> dd.dataclas  # 'DCPROD'
+        """
+        return self.parameters.get('DATACLAS')
+    
+    @property
+    def mgmtclas(self) -> Optional[str]:
+        """
+        Get MGMTCLAS (SMS management class) parameter.
+        
+        Returns:
+            MGMTCLAS value or None if not specified
+            
+        Example:
+            >>> dd.mgmtclas  # 'MCPROD'
+        """
+        return self.parameters.get('MGMTCLAS')
+    
+    @property
+    def storclas(self) -> Optional[str]:
+        """
+        Get STORCLAS (SMS storage class) parameter.
+        
+        Returns:
+            STORCLAS value or None if not specified
+            
+        Example:
+            >>> dd.storclas  # 'SCPROD'
+        """
+        return self.parameters.get('STORCLAS')
+    
+    @property
+    def amp(self) -> Optional[Union[str, List[str]]]:
+        """
+        Get AMP (Access Method Parameters) for VSAM.
+        
+        Returns:
+            AMP value or None if not specified
+            
+        Example:
+            >>> dd.amp  # "('BUFND=10','BUFNI=5')"
+        """
+        return self.parameters.get('AMP')
+    
+    @property
+    def subsys(self) -> Optional[Union[str, List[str]]]:
+        """
+        Get SUBSYS (Subsystem) parameter.
+        
+        Returns:
+            SUBSYS value or None if not specified
+            
+        Example:
+            >>> dd.subsys  # "(DB2,PLAN=MYPLAN)"
+        """
+        return self.parameters.get('SUBSYS')
+    
+    @property
+    def dsntype(self) -> Optional[str]:
+        """
+        Get DSNTYPE (Dataset Type) parameter.
+        
+        Returns:
+            DSNTYPE value or None if not specified
+            
+        Example:
+            >>> dd.dsntype  # 'LIBRARY'
+        """
+        return self.parameters.get('DSNTYPE')
+    
+    @property
+    def avgrec(self) -> Optional[str]:
+        """
+        Get AVGREC (Average Record) parameter for space allocation.
+        
+        Returns:
+            AVGREC value or None if not specified
+            
+        Example:
+            >>> dd.avgrec  # 'K'
+        """
+        return self.parameters.get('AVGREC')
+    
+    @property
+    def path(self) -> Optional[str]:
+        """
+        Get PATH parameter for Unix files.
+        
+        Returns:
+            PATH value or None if not specified
+            
+        Example:
+            >>> dd.path  # '/u/user/file.txt'
+        """
+        return self.parameters.get('PATH')
+    
+    @property
+    def pathdisp(self) -> Optional[Union[str, List[str]]]:
+        """
+        Get PATHDISP parameter for Unix file disposition.
+        
+        Returns:
+            PATHDISP value or None if not specified
+            
+        Example:
+            >>> dd.pathdisp  # ['KEEP', 'DELETE']
+        """
+        return self.parameters.get('PATHDISP')
+    
+    @property
+    def pathopts(self) -> Optional[Union[str, List[str]]]:
+        """
+        Get PATHOPTS parameter for Unix file options.
+        
+        Returns:
+            PATHOPTS value or None if not specified
+            
+        Example:
+            >>> dd.pathopts  # ['ORDONLY', 'OCREAT']
+        """
+        return self.parameters.get('PATHOPTS')
+    
+    @property
+    def pathmode(self) -> Optional[str]:
+        """
+        Get PATHMODE parameter for Unix file permissions.
+        
+        Returns:
+            PATHMODE value or None if not specified
+            
+        Example:
+            >>> dd.pathmode  # 'SIRWXU'
+        """
+        return self.parameters.get('PATHMODE')
+    
+    @property
+    def like(self) -> Optional[str]:
+        """
+        Get LIKE parameter (model dataset).
+        
+        Returns:
+            LIKE value or None if not specified
+            
+        Example:
+            >>> dd.like  # 'MODEL.DATASET'
+        """
+        return self.parameters.get('LIKE')
+    
+    @property
+    def refdd(self) -> Optional[str]:
+        """
+        Get REFDD parameter (reference DD).
+        
+        Returns:
+            REFDD value or None if not specified
+            
+        Example:
+            >>> dd.refdd  # 'DD1'
+        """
+        return self.parameters.get('REFDD')
+    
+    @property
+    def keyoff(self) -> Optional[int]:
+        """
+        Get KEYOFF parameter (key offset for KSDS).
+        
+        Returns:
+            KEYOFF value as integer or None if not specified
+            
+        Example:
+            >>> dd.keyoff  # 0
+        """
+        val = self.parameters.get('KEYOFF')
+        return int(val) if val else None
+    
+    @property
+    def keylen(self) -> Optional[int]:
+        """
+        Get KEYLEN parameter (key length for KSDS).
+        
+        Returns:
+            KEYLEN value as integer or None if not specified
+            
+        Example:
+            >>> dd.keylen  # 10
+        """
+        val = self.parameters.get('KEYLEN')
+        return int(val) if val else None
+    
+    @property
+    def recorg(self) -> Optional[str]:
+        """
+        Get RECORG parameter (record organization for VSAM).
+        
+        Returns:
+            RECORG value or None if not specified
+            
+        Example:
+            >>> dd.recorg  # 'KS'
+        """
+        return self.parameters.get('RECORG')
+    
+    @property
+    def label(self) -> Optional[Union[str, List]]:
+        """
+        Get LABEL parameter (tape label information).
+        
+        Returns:
+            LABEL value or None if not specified
+            
+        Example:
+            >>> dd.label  # [3, 'SL', 'RETPD=30']
+        """
+        return self.parameters.get('LABEL')
+    
+    @property
     def has_inline_data(self) -> bool:
         """True if this DD contains inline data (DD *)"""
         return self.inline_data is not None
@@ -263,6 +486,45 @@ class Step:
             if dd.is_output() and dd.dataset_name:
                 datasets.append(dd.dataset_name)
         return datasets
+    
+    # EXEC Parameter Properties (KISS - simple accessors)
+    
+    @property
+    def dynamnbr(self) -> Optional[int]:
+        """Dynamic allocation count."""
+        val = self.parameters.get('DYNAMNBR')
+        return int(val) if val else None
+    
+    @property
+    def memlimit(self) -> Optional[str]:
+        """Memory limit above the bar (e.g., '2G')."""
+        return self.parameters.get('MEMLIMIT')
+    
+    @property
+    def acct(self) -> Optional[Union[str, List[str]]]:
+        """Step-level accounting."""
+        return self.parameters.get('ACCT')
+    
+    @property
+    def addrspc(self) -> Optional[str]:
+        """Address space type (REAL, VIRT)."""
+        return self.parameters.get('ADDRSPC')
+    
+    @property
+    def dprty(self) -> Optional[Union[str, List[int]]]:
+        """Dispatching priority."""
+        return self.parameters.get('DPRTY')
+    
+    @property
+    def perform(self) -> Optional[int]:
+        """Performance group."""
+        val = self.parameters.get('PERFORM')
+        return int(val) if val else None
+    
+    @property
+    def rd(self) -> Optional[str]:
+        """Restart definition (R, RNC, NR, NC)."""
+        return self.parameters.get('RD')
 
 
 @dataclass  
@@ -443,3 +705,29 @@ class Job:
                 dd_names.append(dd.name)
         
         return errors
+    # JOB Parameter Properties (KISS - simple accessors)
+    
+    @property
+    def bytes_limit(self) -> Optional[Union[int, List]]:
+        """Output byte limit."""
+        return self.parameters.get('BYTES')
+    
+    @property
+    def lines_limit(self) -> Optional[Union[int, List]]:
+        """Output line limit."""
+        return self.parameters.get('LINES')
+    
+    @property
+    def pages_limit(self) -> Optional[Union[int, List]]:
+        """Output page limit."""
+        return self.parameters.get('PAGES')
+    
+    @property
+    def sysaff(self) -> Optional[str]:
+        """System affinity."""
+        return self.parameters.get('SYSAFF')
+    
+    @property
+    def schenv(self) -> Optional[str]:
+        """Scheduling environment."""
+        return self.parameters.get('SCHENV')

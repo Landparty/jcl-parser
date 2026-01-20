@@ -310,6 +310,23 @@ def parse_jcl(source: Union[str, Path, IO], strict_mode: bool = False,
                     content = f"/*{stmt.name} {stmt.parameters.get('_raw', '')}".strip()
                     job.jes_statements.append(content)
             
+            elif stmt.type == "NULL":
+                # NULL statement (//) - just ignore, used as delimiter
+                pass
+            
+            elif stmt.type == "COMMAND":
+                # COMMAND statement - operator commands, just ignore
+                pass
+            
+            elif stmt.type in ["CNTL", "ENDCNTL"]:
+                # CNTL/ENDCNTL statements - utility control, just ignore
+                pass
+            
+            elif stmt.type == "UNKNOWN":
+                # Unknown statement type - log but continue processing
+                # Could add to job.warnings list if we create one
+                pass
+            
             elif stmt.type == "XMIT":
                 # XMIT statement - similar to DD but for data transmission
                 if current_step:
@@ -557,16 +574,23 @@ def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
         first_token = content_stripped.split()[0].upper() if content_stripped.split() else ""
         # All valid JCL statement types that can appear without a name field
         statement_types_no_name = ["JOB", "EXEC", "DD", "PROC", "PEND", "JCLLIB", "INCLUDE", 
-                                  "SET", "IF", "THEN", "ELSE", "ENDIF", "XMIT", "OUTPUT", "SCHEDULE"]
+                                  "SET", "IF", "THEN", "ELSE", "ENDIF", "XMIT", "OUTPUT", "SCHEDULE",
+                                  "NULL", "COMMAND", "CNTL", "ENDCNTL"]
         if first_token not in statement_types_no_name:
             # This is a true continuation line - return None
             return None
         
     content = content.strip()
     
-    # Handle empty lines after //
+    # Handle empty lines after // (NULL statement)
     if not content:
-        return None
+        # This is a NULL statement (//)
+        return Statement(
+            type="NULL",
+            name="",
+            parameters={},
+            line_number=line_number
+        )
     
     # Parse statement name and type
     # Handle cases like "//         IF ..." where there's no name
@@ -578,7 +602,8 @@ def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
     # Check if first token is a statement type (no name field)
     first_token = content_stripped.split()[0] if content_stripped.split() else ""
     statement_types = ["JOB", "EXEC", "DD", "PROC", "PEND", "JCLLIB", "INCLUDE", 
-                      "SET", "IF", "THEN", "ELSE", "ENDIF", "XMIT", "OUTPUT", "SCHEDULE"]
+                      "SET", "IF", "THEN", "ELSE", "ENDIF", "XMIT", "OUTPUT", "SCHEDULE",
+                      "NULL", "COMMAND", "CNTL", "ENDCNTL"]
     
     if first_token.upper() in statement_types:
         # No name field - statement starts directly with type
@@ -608,9 +633,16 @@ def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
     
     # Validate statement type
     valid_types = ["JOB", "EXEC", "DD", "PROC", "PEND", "JCLLIB", "INCLUDE", 
-                   "SET", "IF", "THEN", "ELSE", "ENDIF", "XMIT", "OUTPUT", "SCHEDULE"]
+                   "SET", "IF", "THEN", "ELSE", "ENDIF", "XMIT", "OUTPUT", "SCHEDULE",
+                   "NULL", "COMMAND", "CNTL", "ENDCNTL"]
     if statement_type not in valid_types:
-        raise JCLSyntaxError(f"Unknown statement type: {statement_type}", line_number)
+        # Don't crash on unknown statement types - create UNKNOWN type for graceful degradation
+        return Statement(
+            type="UNKNOWN",
+            name=name_part,
+            parameters={"_raw": parameters_part, "_statement_type": statement_type},
+            line_number=line_number
+        )
     
     # Parse parameters
     parameters = _parse_parameters(parameters_part, line_number) if parameters_part else {}
