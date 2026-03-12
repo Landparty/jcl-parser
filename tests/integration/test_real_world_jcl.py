@@ -27,7 +27,8 @@ def test_complex_proc_expansion():
     # MYPROC has 2 steps: STEP1 and STEP2 (conditional)
     
     # Filter for actual execution steps (not the PROC definitions)
-    exec_steps = exploded_job.steps
+    from jclparser.model import iter_execution_steps
+    exec_steps = list(iter_execution_steps(exploded_job.steps))
     
     # Verify RUN1 expansion (Default values)
     # RUN1 calls MYPROC. Expands to RUN1.STEP1 and RUN1.STEP2 (x2)

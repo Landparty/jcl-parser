@@ -130,6 +130,7 @@ def parse_jcl(
     
     # Now parse the merged lines
     job = None
+    conditional_stack = []  # List of tuples: (ConditionalBlock, active_branch)
     current_step = None
     current_dd = None
     inline_data_lines = []
@@ -194,11 +195,16 @@ def parse_jcl(
                     orphaned_dds = []
                 
                 # Add step to procedure if we're inside PROC/PEND, otherwise to job
-                if current_procedure is not None:
+                if conditional_stack:
+                    active_cond, active_branch = conditional_stack[-1]
+                    if active_branch == 'THEN':
+                        active_cond.add_then_step(current_step)
+                    else:
+                        active_cond.add_else_step(current_step)
+                elif current_procedure is not None:
                     current_procedure.steps.append(current_step)
                 else:
                     job.add_step(current_step)
-            
             elif stmt.type == "DD":
                 # Create the DD statement
                 current_dd = _create_dd_from_statement(stmt)
@@ -283,8 +289,6 @@ def parse_jcl(
             elif stmt.type in ["IF", "THEN", "ELSE", "ENDIF"]:
                 # Conditional logic - track conditionals properly
                 if stmt.type == "IF" and job:
-                    # Extract condition from the statement name field or parameters
-                    # IF statements typically: // IF (condition) THEN
                     condition_parts = []
                     if stmt.name and stmt.name != "IF":
                         condition_parts.append(stmt.name)
@@ -294,12 +298,32 @@ def parse_jcl(
                         else:
                             condition_parts.append(str(value))
                     condition = " ".join(condition_parts)
+                    if condition.upper().endswith(' THEN'):
+                        condition = condition[:-5]
                     conditional = ConditionalBlock(
                         condition=condition,
                         line_number=stmt.line_number
                     )
                     job.add_conditional(conditional)
-            
+                    if conditional_stack:
+                        active_cond, active_branch = conditional_stack[-1]
+                        if active_branch == 'THEN':
+                            active_cond.add_then_step(conditional)
+                        else:
+                            active_cond.add_else_step(conditional)
+                    elif current_procedure is not None:
+                        current_procedure.steps.append(conditional)
+                    else:
+                        job.steps.append(conditional)
+                    conditional_stack.append((conditional, 'THEN'))
+                elif stmt.type == "THEN" and conditional_stack:
+                    active_cond, _ = conditional_stack.pop()
+                    conditional_stack.append((active_cond, 'THEN'))
+                elif stmt.type == "ELSE" and conditional_stack:
+                    active_cond, _ = conditional_stack.pop()
+                    conditional_stack.append((active_cond, 'ELSE'))
+                elif stmt.type == "ENDIF" and conditional_stack:
+                    conditional_stack.pop()
             elif stmt.type == "JES":
                 if job:
                     content = f"/*{stmt.name} {stmt.parameters.get('_raw', '')}".strip()

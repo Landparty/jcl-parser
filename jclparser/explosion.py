@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional, Set, Tuple
 from datetime import datetime
 from copy import deepcopy
 
-from .model import Job, Step, DDStatement, Procedure
+from .model import Job, Step, DDStatement, Procedure, ConditionalBlock
 from .errors import (
     UndefinedSymbolError,
     ExplosionDepthError,
@@ -245,39 +245,50 @@ def expand_proc_invocation(
     # Generate step name prefix
     prefix = step_prefix or step.name or 'PROC'
     
-    for proc_step in procedure.steps:
-        # Clone the step
-        new_step = deepcopy(proc_step)
+    def _process_proc_steps(steps_list):
+        result = []
+        for proc_step in steps_list:
+            if isinstance(proc_step, ConditionalBlock):
+                new_cond = ConditionalBlock(condition=proc_step.condition, line_number=proc_step.line_number)
+                new_cond.then_steps = _process_proc_steps(proc_step.then_steps)
+                new_cond.else_steps = _process_proc_steps(proc_step.else_steps)
+                result.append(new_cond)
+            else:
+                # Clone the step
+                new_step = deepcopy(proc_step)
+                
+                # Generate qualified step name
+                if new_step.name:
+                    new_step.name = f"{prefix}.{new_step.name}"
+                else:
+                    new_step.name = prefix
+                
+                # Mark as exploded
+                new_step.is_exploded = True
+                new_step.original_proc_call = step.name
+                
+                # Substitute symbols in program name
+                if new_step.program:
+                    new_step.program = substitute_symbols(
+                        new_step.program,
+                        expansion_scope,
+                        strict=False
+                    )
+                
+                # Substitute symbols in step parameters
+                new_step.parameters = substitute_parameters_dict(
+                    new_step.parameters,
+                    expansion_scope
+                )
+                
+                # Substitute symbols in DD statements
+                for dd in new_step.dd_statements:
+                    substitute_dd_statement(dd, expansion_scope, strict=False)
+                
+                result.append(new_step)
+        return result
         
-        # Generate qualified step name
-        if new_step.name:
-            new_step.name = f"{prefix}.{new_step.name}"
-        else:
-            new_step.name = prefix
-        
-        # Mark as exploded
-        new_step.is_exploded = True
-        new_step.original_proc_call = step.name
-        
-        # Substitute symbols in program name
-        if new_step.program:
-            new_step.program = substitute_symbols(
-                new_step.program,
-                expansion_scope,
-                strict=False
-            )
-        
-        # Substitute symbols in step parameters
-        new_step.parameters = substitute_parameters_dict(
-            new_step.parameters,
-            expansion_scope
-        )
-        
-        # Substitute symbols in DD statements
-        for dd in new_step.dd_statements:
-            substitute_dd_statement(dd, expansion_scope, strict=False)
-        
-        expanded_steps.append(new_step)
+    expanded_steps = _process_proc_steps(procedure.steps)
     
     return expanded_steps
 
@@ -421,44 +432,54 @@ def explode_job(
     explosion_map: Dict[str, ProcExpansionInfo] = {}
     
     # Process steps
-    exploded_steps: List[Step] = []
+    expanded_steps: List[Step] = []
     
-    for step in job.steps:
-        if step.is_proc_invocation:
-            # Expand procedure
-            expanded = _explode_step(
-                step=step,
-                proc_loader=proc_loader,
-                base_scope=base_scope,
-                call_chain=[],
-                depth=0,
-                max_depth=max_depth,
-                audit_records=explosion_audit if audit else None,
-                expansion_map=explosion_map,
-                strict_symbols=strict_symbols,
-                jcllib_order=job.jcllib_order or None,
-            )
-            exploded_steps.extend(expanded)
-        else:
-            # Regular step - just substitute symbols
-            substituted_step = deepcopy(step)
-            
-            if substituted_step.program:
-                substituted_step.program = substitute_symbols(
-                    substituted_step.program,
-                    base_scope,
-                    strict=strict_symbols
+    def _process_steps(steps_list):
+        result = []
+        for step in steps_list:
+            if isinstance(step, ConditionalBlock):
+                new_cond = ConditionalBlock(condition=step.condition, line_number=step.line_number)
+                new_cond.then_steps = _process_steps(step.then_steps)
+                new_cond.else_steps = _process_steps(step.else_steps)
+                result.append(new_cond)
+            elif step.is_proc_invocation:
+                # Expand procedure
+                expanded = _explode_step(
+                    step=step,
+                    proc_loader=proc_loader,
+                    base_scope=base_scope,
+                    call_chain=[],
+                    depth=0,
+                    max_depth=max_depth,
+                    audit_records=explosion_audit if audit else None,
+                    expansion_map=explosion_map,
+                    strict_symbols=strict_symbols,
+                    jcllib_order=job.jcllib_order or None,
                 )
-            
-            substituted_step.parameters = substitute_parameters_dict(
-                substituted_step.parameters,
-                base_scope
-            )
-            
-            for dd in substituted_step.dd_statements:
-                substitute_dd_statement(dd, base_scope, strict=strict_symbols)
-            
-            exploded_steps.append(substituted_step)
+                result.extend(expanded)
+            else:
+                # Regular step - just substitute symbols
+                substituted_step = deepcopy(step)
+                
+                if substituted_step.program:
+                    substituted_step.program = substitute_symbols(
+                        substituted_step.program,
+                        base_scope,
+                        strict=strict_symbols
+                    )
+                
+                substituted_step.parameters = substitute_parameters_dict(
+                    substituted_step.parameters,
+                    base_scope
+                )
+                
+                for dd in substituted_step.dd_statements:
+                    substitute_dd_statement(dd, base_scope, strict=strict_symbols)
+                
+                result.append(substituted_step)
+        return result
+        
+    exploded_steps = _process_steps(job.steps)
     
     # Create new job with exploded steps
     exploded_job = Job(
@@ -556,7 +577,7 @@ def _explode_step(
             parameters=overrides,
             depth=depth,
             timestamp=datetime.now(),
-            expanded_steps=[s.name for s in expanded if s.name]
+            expanded_steps=[s.name for s in expanded if hasattr(s, 'name') and s.name]
         )
         audit_records.append(record)
     
@@ -567,30 +588,40 @@ def _explode_step(
             proc_definition=procedure.name,
             resolved_parameters=overrides,
             source_line_numbers=[step.line_number],
-            expanded_step_names=[s.name for s in expanded if s.name]
+            expanded_step_names=[s.name for s in expanded if hasattr(s, 'name') and s.name]
         )
     
     # Recursively explode any nested procedure calls
     final_steps = []
     new_call_chain = call_chain + [proc_name]
     
-    for expanded_step in expanded:
-        if expanded_step.is_proc_invocation:
-            # Nested procedure - recurse
-            nested = _explode_step(
-                step=expanded_step,
-                proc_loader=proc_loader,
-                base_scope=base_scope,
-                call_chain=new_call_chain,
-                depth=depth + 1,
-                max_depth=max_depth,
-                audit_records=audit_records,
-                expansion_map=expansion_map,
-                strict_symbols=strict_symbols,
-                jcllib_order=jcllib_order,
-            )
-            final_steps.extend(nested)
-        else:
-            final_steps.append(expanded_step)
+    def _explode_nested(steps_list):
+        result = []
+        for s in steps_list:
+            if isinstance(s, ConditionalBlock):
+                new_cond = ConditionalBlock(condition=s.condition, line_number=s.line_number)
+                new_cond.then_steps = _explode_nested(s.then_steps)
+                new_cond.else_steps = _explode_nested(s.else_steps)
+                result.append(new_cond)
+            elif s.is_proc_invocation:
+                # Nested procedure - recurse
+                nested = _explode_step(
+                    step=s,
+                    proc_loader=proc_loader,
+                    base_scope=base_scope,
+                    call_chain=new_call_chain,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                    audit_records=audit_records,
+                    expansion_map=expansion_map,
+                    strict_symbols=strict_symbols,
+                    jcllib_order=jcllib_order,
+                )
+                result.extend(nested)
+            else:
+                result.append(s)
+        return result
+        
+    final_steps = _explode_nested(expanded)
     
     return final_steps

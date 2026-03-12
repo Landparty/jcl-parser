@@ -7,7 +7,7 @@ and data integrity checks for parsed JCL structures.
 
 import re
 from typing import List, Set, Dict, Any, Optional
-from .model import Job, Step, DDStatement
+from .model import Job, Step, DDStatement, ConditionalBlock, iter_execution_steps
 from .errors import ValidationError, ErrorType
 from .parameter_validators import DatasetNameValidator, DISPValidator
 
@@ -78,9 +78,11 @@ def validate_job_structure(job: Job) -> List[ValidationError]:
             ErrorType.STRUCTURE_ERROR
         ))
     
+    flat_steps = list(iter_execution_steps(job.steps))
+
     # Validate step name uniqueness
     step_names: Set[str] = set()
-    for step in job.steps:
+    for step in flat_steps:
         if step.name:
             if step.name in step_names:
                 errors.append(ValidationError(
@@ -91,7 +93,7 @@ def validate_job_structure(job: Job) -> List[ValidationError]:
                 step_names.add(step.name)
     
     # Validate each step
-    for step in job.steps:
+    for step in flat_steps:
         errors.extend(validate_step_structure(step))
     
     # Validate data dependencies
@@ -253,7 +255,9 @@ def validate_data_dependencies(job: Job) -> List[ValidationError]:
     temp_datasets_created: Dict[str, str] = {}  # dataset -> step_name
     temp_datasets_used: Dict[str, List[str]] = {}  # dataset -> [step_names]
     
-    for step in job.steps:
+    flat_steps = list(iter_execution_steps(job.steps))
+    
+    for step in flat_steps:
         step_name = step.name or f"Step{len(temp_datasets_created) + 1}"
         
         for dd in step.dd_statements:

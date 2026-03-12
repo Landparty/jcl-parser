@@ -205,6 +205,7 @@ class TestConditionalAndControlStatements:
 // ENDIF"""
         job = parse_jcl(jcl)
         assert len(job.steps) == 1
+        assert len(job.steps[0].then_steps) == 1
     
     def test_if_then_else_endif_block(self):
         """IF/THEN/ELSE/ENDIF conditional execution"""
@@ -215,7 +216,9 @@ class TestConditionalAndControlStatements:
 //STEP2 EXEC PGM=PROG2
 // ENDIF"""
         job = parse_jcl(jcl)
-        assert len(job.steps) == 2
+        assert len(job.steps) == 1
+        assert len(job.steps[0].then_steps) == 1
+        assert len(job.steps[0].else_steps) == 1
     
     def test_set_statement(self):
         """SET statement for symbol substitution"""

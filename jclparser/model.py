@@ -6,7 +6,7 @@ with validation methods and type safety.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Iterator
 from .errors import ValidationError, ErrorType
 from .parameter_ast import DCBParameter, SPACEParameter, ParameterParser
 
@@ -57,15 +57,15 @@ class ConditionalBlock:
         line_number: Source line number
     """
     condition: str
-    then_steps: List['Step'] = field(default_factory=list)
-    else_steps: List['Step'] = field(default_factory=list)
+    then_steps: List[Union['Step', 'ConditionalBlock']] = field(default_factory=list)
+    else_steps: List[Union['Step', 'ConditionalBlock']] = field(default_factory=list)
     line_number: int = 0
     
-    def add_then_step(self, step: 'Step') -> None:
+    def add_then_step(self, step: Union['Step', 'ConditionalBlock']) -> None:
         """Add a step to the THEN block"""
         self.then_steps.append(step)
     
-    def add_else_step(self, step: 'Step') -> None:
+    def add_else_step(self, step: Union['Step', 'ConditionalBlock']) -> None:
         """Add a step to the ELSE block"""
         self.else_steps.append(step)
 
@@ -83,10 +83,10 @@ class Procedure:
     """
     name: str
     parameters: Dict[str, Any] = field(default_factory=dict)
-    steps: List['Step'] = field(default_factory=list)
+    steps: List[Union['Step', 'ConditionalBlock']] = field(default_factory=list)
     line_number: int = 0
     
-    def add_step(self, step: 'Step') -> None:
+    def add_step(self, step: Union['Step', 'ConditionalBlock']) -> None:
         """Add a step to this procedure"""
         self.steps.append(step)
 
@@ -602,7 +602,7 @@ class Job:
     name: str
     parameters: Dict[str, Any] = field(default_factory=dict)
     accounting_info: Optional[str] = None
-    steps: List[Step] = field(default_factory=list)
+    steps: List[Union['Step', 'ConditionalBlock']] = field(default_factory=list)
     procedures: List[Procedure] = field(default_factory=list)
     conditionals: List[ConditionalBlock] = field(default_factory=list)
     set_statements: Dict[str, str] = field(default_factory=dict)
@@ -614,7 +614,7 @@ class Job:
     explosion_map: Dict[str, Any] = field(default_factory=dict)
     jes_statements: List[str] = field(default_factory=list)
     
-    def add_step(self, step: Step) -> None:
+    def add_step(self, step: Union['Step', 'ConditionalBlock']) -> None:
         """Add an execution step to this job"""
         self.steps.append(step)
     
@@ -632,7 +632,7 @@ class Job:
     
     def get_step(self, name: str) -> Optional[Step]:
         """Find step by name"""
-        for step in self.steps:
+        for step in iter_execution_steps(self.steps):
             if step.name == name:
                 return step
         return None
@@ -647,7 +647,7 @@ class Job:
     def get_dd_statements(self) -> List[DDStatement]:
         """Get all DD statements from all steps"""
         all_dds = []
-        for step in self.steps:
+        for step in iter_execution_steps(self.steps):
             all_dds.extend(step.dd_statements)
         return all_dds
     
@@ -752,3 +752,13 @@ class Job:
     def schenv(self) -> Optional[str]:
         """Scheduling environment."""
         return self.parameters.get('SCHENV')
+
+
+def iter_execution_steps(steps: List[Union[Step, ConditionalBlock]]) -> Iterator[Step]:
+    """Recursively yield all flattened Step objects from a step list."""
+    for s in steps:
+        if isinstance(s, Step):
+            yield s
+        elif isinstance(s, ConditionalBlock):
+            yield from iter_execution_steps(s.then_steps)
+            yield from iter_execution_steps(s.else_steps)
