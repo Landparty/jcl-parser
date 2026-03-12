@@ -15,8 +15,15 @@ from .errors import (
     ErrorType, ErrorSeverity
 )
 from .plugins import get_plugin_registry, ParserConfig
-from .utils import normalize_jcl_line
+from .utils import normalize_jcl_line, read_source, POSITIONAL_PARAM_PREFIX, is_positional_key
 from .continuation_handler import ContinuationLineHandler
+
+#: All recognised JCL statement type keywords (single canonical definition).
+_STATEMENT_TYPES: frozenset = frozenset({
+    "JOB", "EXEC", "DD", "PROC", "PEND", "JCLLIB", "INCLUDE",
+    "SET", "IF", "THEN", "ELSE", "ENDIF", "XMIT", "OUTPUT",
+    "SCHEDULE", "NULL", "COMMAND", "CNTL", "ENDCNTL",
+})
 
 
 def parse_jcl(
@@ -46,31 +53,11 @@ def parse_jcl(
         FileNotFoundError: When source is path to non-existent file
     """
     # Handle different input source types
-    if isinstance(source, Path):
-        # Definitely a file path
-        if not source.exists():
-            raise FileNotFoundError(f"JCL file not found: {source}")
-        with open(source, 'r', encoding='utf-8') as file:
-            content = file.read()
-    elif isinstance(source, str):
-        # Check if it's likely a file path vs JCL content
-        if (source.endswith('.jcl') or 
-            (('/' in source or '\\' in source) and not source.strip().startswith('//'))):
-            # Treat as file path
-            path = Path(source)
-            if not path.exists():
-                raise FileNotFoundError(f"JCL file not found: {path}")
-            with open(path, 'r', encoding='utf-8') as file:
-                content = file.read()
-        else:
-            # Treat as JCL content string
-            content = source
-    else:
-        # Treat as file-like object
-        content = source.read()
-        if hasattr(source, 'seek'):
-            source.seek(0)  # Reset for potential reuse
-    
+    try:
+        content = read_source(source)
+    except FileNotFoundError:
+        raise
+
     # Parse the content
     raw_lines = content.splitlines()
     lines = [normalize_jcl_line(line) for line in raw_lines]
@@ -194,7 +181,7 @@ def parse_jcl(
                 # Basic syntax check for EXEC - must have program, procedure, or positional parameter
                 has_pgm = "PGM" in stmt.parameters
                 has_proc = "PROC" in stmt.parameters
-                has_positional = any(k.startswith("_pos_") for k in stmt.parameters.keys())
+                has_positional = any(is_positional_key(k) for k in stmt.parameters.keys())
                 if not has_pgm and not has_proc and not has_positional:
                     raise JCLSyntaxError("EXEC statement missing program or procedure", line_num)
                 
@@ -235,7 +222,7 @@ def parse_jcl(
                     current_step.add_dd(current_dd)
                 
                 # Check for inline data marker (only for non-override DDs)
-                has_star_pos = any(v == "*" for k, v in current_dd.parameters.items() if k.startswith("_pos_"))
+                has_star_pos = any(v == "*" for k, v in current_dd.parameters.items() if is_positional_key(k))
                 if current_dd and (current_dd.parameters.get("*") or "DATA" in current_dd.parameters or has_star_pos):
                     in_inline_data = True
                     inline_data_lines = []
@@ -266,9 +253,9 @@ def parse_jcl(
                 if job:
                     # For SET statements, parameters are in the format SYMBOL=VALUE
                     for key, value in stmt.parameters.items():
-                        if not key.startswith("_pos_"):
+                        if not is_positional_key(key):
                             job.add_set(key, value)
-                        elif key.startswith("_pos_"):
+                        elif is_positional_key(key):
                             # Positional parameter might be SYMBOL=VALUE without keyword
                             param_val = value
                             if "=" in param_val:
@@ -289,7 +276,7 @@ def parse_jcl(
             elif stmt.type == "INCLUDE":
                 # INCLUDE MEMBER=name
                 if job:
-                    member = stmt.parameters.get("MEMBER") or stmt.parameters.get("_pos_0")
+                    member = stmt.parameters.get("MEMBER") or stmt.parameters.get(f"{POSITIONAL_PARAM_PREFIX}0")
                     if member:
                         job.includes.append(member)
             
@@ -458,38 +445,17 @@ def validate_jcl(source: Union[str, Path, IO], level: str = "basic") -> List[Par
     
     # Line-by-line validation to catch multiple syntax errors
     # Parse content from source
-    if isinstance(source, Path):
-        if not source.exists():
-            errors.append(ParseError(
-                error_type=ErrorType.SYNTAX_ERROR,
-                message=f"JCL file not found: {source}",
-                line_number=0,
-                severity=ErrorSeverity.ERROR
-            ))
-            return errors
-        with open(source, 'r', encoding='utf-8') as file:
-            content = file.read()
-    elif isinstance(source, str):
-        if (source.endswith('.jcl') or 
-            (('/' in source or '\\' in source) and not source.strip().startswith('//'))):
-            path = Path(source)
-            if not path.exists():
-                errors.append(ParseError(
-                    error_type=ErrorType.SYNTAX_ERROR,
-                    message=f"JCL file not found: {path}",
-                    line_number=0,
-                    severity=ErrorSeverity.ERROR
-                ))
-                return errors
-            with open(path, 'r', encoding='utf-8') as file:
-                content = file.read()
-        else:
-            content = source
-    else:
-        content = source.read()
-        if hasattr(source, 'seek'):
-            source.seek(0)
-    
+    try:
+        content = read_source(source)
+    except FileNotFoundError as exc:
+        errors.append(ParseError(
+            error_type=ErrorType.SYNTAX_ERROR,
+            message=str(exc),
+            line_number=0,
+            severity=ErrorSeverity.ERROR
+        ))
+        return errors
+
     # Validate line by line, collecting all errors
     lines = content.splitlines()
     has_job = False
@@ -528,7 +494,7 @@ def validate_jcl(source: Union[str, Path, IO], level: str = "basic") -> List[Par
                     
                     # Check for missing program or procedure
                     has_pgm = "PGM" in stmt.parameters
-                    has_positional = any(k.startswith("_pos_") for k in stmt.parameters.keys())
+                    has_positional = any(is_positional_key(k) for k in stmt.parameters.keys())
                     if not has_pgm and not has_positional:
                         errors.append(ParseError(
                             error_type=ErrorType.SYNTAX_ERROR,
@@ -621,10 +587,7 @@ def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
         content_stripped = content.strip()
         first_token = content_stripped.split()[0].upper() if content_stripped.split() else ""
         # All valid JCL statement types that can appear without a name field
-        statement_types_no_name = ["JOB", "EXEC", "DD", "PROC", "PEND", "JCLLIB", "INCLUDE", 
-                                  "SET", "IF", "THEN", "ELSE", "ENDIF", "XMIT", "OUTPUT", "SCHEDULE",
-                                  "NULL", "COMMAND", "CNTL", "ENDCNTL"]
-        if first_token not in statement_types_no_name:
+        if first_token not in _STATEMENT_TYPES:
             # This is a true continuation line - return None
             return None
         
@@ -649,11 +612,8 @@ def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
     
     # Check if first token is a statement type (no name field)
     first_token = content_stripped.split()[0] if content_stripped.split() else ""
-    statement_types = ["JOB", "EXEC", "DD", "PROC", "PEND", "JCLLIB", "INCLUDE", 
-                      "SET", "IF", "THEN", "ELSE", "ENDIF", "XMIT", "OUTPUT", "SCHEDULE",
-                      "NULL", "COMMAND", "CNTL", "ENDCNTL"]
-    
-    if first_token.upper() in statement_types:
+
+    if first_token.upper() in _STATEMENT_TYPES:
         # No name field - statement starts directly with type
         name_part = ""
         rest = content_stripped
@@ -680,10 +640,7 @@ def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
             statement_type = statement_type.upper()
     
     # Validate statement type
-    valid_types = ["JOB", "EXEC", "DD", "PROC", "PEND", "JCLLIB", "INCLUDE", 
-                   "SET", "IF", "THEN", "ELSE", "ENDIF", "XMIT", "OUTPUT", "SCHEDULE",
-                   "NULL", "COMMAND", "CNTL", "ENDCNTL"]
-    if statement_type not in valid_types:
+    if statement_type not in _STATEMENT_TYPES:
         # Don't crash on unknown statement types - create UNKNOWN type for graceful degradation
         return Statement(
             type="UNKNOWN",
@@ -794,7 +751,7 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]
             value = part
             if value.startswith("'") and value.endswith("'"):
                 value = value[1:-1].replace("''", "'")
-            parameters[f"_pos_{i}"] = value
+            parameters[f"{POSITIONAL_PARAM_PREFIX}{i}"] = value
     
     return parameters
 
@@ -848,11 +805,11 @@ def _create_job_from_statement(stmt: Statement) -> Job:
     accounting_info = None
     
     # Extract accounting information (first positional parameter)
-    if "_pos_0" in stmt.parameters:
-        accounting_info = stmt.parameters["_pos_0"].strip("()")
+    if f"{POSITIONAL_PARAM_PREFIX}0" in stmt.parameters:
+        accounting_info = stmt.parameters[f"{POSITIONAL_PARAM_PREFIX}0"].strip("()")
     
     # Extract other parameters
-    job_params = {k: v for k, v in stmt.parameters.items() if not k.startswith("_pos_")}
+    job_params = {k: v for k, v in stmt.parameters.items() if not is_positional_key(k)}
     
     return Job(
         name=stmt.name,
@@ -872,9 +829,9 @@ def _create_step_from_statement(stmt: Statement) -> Step:
         program = stmt.parameters.pop("PGM")
     elif "PROC" in stmt.parameters:
         procedure = stmt.parameters.pop("PROC")
-    elif "_pos_0" in stmt.parameters:
+    elif f"{POSITIONAL_PARAM_PREFIX}0" in stmt.parameters:
         # Might be a procedure call without keyword
-        proc_or_pgm = stmt.parameters.pop("_pos_0")
+        proc_or_pgm = stmt.parameters.pop(f"{POSITIONAL_PARAM_PREFIX}0")
         # If it looks like a procedure name (no path separators), treat as procedure
         if "." not in proc_or_pgm and "/" not in proc_or_pgm:
             procedure = proc_or_pgm

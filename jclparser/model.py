@@ -216,6 +216,10 @@ class DDStatement:
             
         Example:
             >>> dd.amp  # "('BUFND=10','BUFNI=5')"
+
+        .. deprecated::
+            Use ``dd.parameters.get('AMP')`` directly.
+            This property will be removed in a future release.
         """
         return self.parameters.get('AMP')
     
@@ -229,6 +233,10 @@ class DDStatement:
             
         Example:
             >>> dd.subsys  # "(DB2,PLAN=MYPLAN)"
+
+        .. deprecated::
+            Use ``dd.parameters.get('SUBSYS')`` directly.
+            This property will be removed in a future release.
         """
         return self.parameters.get('SUBSYS')
     
@@ -255,6 +263,10 @@ class DDStatement:
             
         Example:
             >>> dd.avgrec  # 'K'
+
+        .. deprecated::
+            Use ``dd.parameters.get('AVGREC')`` directly.
+            This property will be removed in a future release.
         """
         return self.parameters.get('AVGREC')
     
@@ -268,6 +280,10 @@ class DDStatement:
             
         Example:
             >>> dd.path  # '/u/user/file.txt'
+
+        .. deprecated::
+            Use ``dd.parameters.get('PATH')`` directly.
+            This property will be removed in a future release.
         """
         return self.parameters.get('PATH')
     
@@ -281,6 +297,10 @@ class DDStatement:
             
         Example:
             >>> dd.pathdisp  # ['KEEP', 'DELETE']
+
+        .. deprecated::
+            Use ``dd.parameters.get('PATHDISP')`` directly.
+            This property will be removed in a future release.
         """
         return self.parameters.get('PATHDISP')
     
@@ -294,6 +314,10 @@ class DDStatement:
             
         Example:
             >>> dd.pathopts  # ['ORDONLY', 'OCREAT']
+
+        .. deprecated::
+            Use ``dd.parameters.get('PATHOPTS')`` directly.
+            This property will be removed in a future release.
         """
         return self.parameters.get('PATHOPTS')
     
@@ -307,6 +331,10 @@ class DDStatement:
             
         Example:
             >>> dd.pathmode  # 'SIRWXU'
+
+        .. deprecated::
+            Use ``dd.parameters.get('PATHMODE')`` directly.
+            This property will be removed in a future release.
         """
         return self.parameters.get('PATHMODE')
     
@@ -320,6 +348,10 @@ class DDStatement:
             
         Example:
             >>> dd.like  # 'MODEL.DATASET'
+
+        .. deprecated::
+            Use ``dd.parameters.get('LIKE')`` directly.
+            This property will be removed in a future release.
         """
         return self.parameters.get('LIKE')
     
@@ -333,6 +365,10 @@ class DDStatement:
             
         Example:
             >>> dd.refdd  # 'DD1'
+
+        .. deprecated::
+            Use ``dd.parameters.get('REFDD')`` directly.
+            This property will be removed in a future release.
         """
         return self.parameters.get('REFDD')
     
@@ -346,6 +382,10 @@ class DDStatement:
             
         Example:
             >>> dd.keyoff  # 0
+
+        .. deprecated::
+            Use ``int(dd.parameters['KEYOFF'])`` directly.
+            This property will be removed in a future release.
         """
         val = self.parameters.get('KEYOFF')
         return int(val) if val else None
@@ -360,6 +400,10 @@ class DDStatement:
             
         Example:
             >>> dd.keylen  # 10
+
+        .. deprecated::
+            Use ``int(dd.parameters['KEYLEN'])`` directly.
+            This property will be removed in a future release.
         """
         val = self.parameters.get('KEYLEN')
         return int(val) if val else None
@@ -374,6 +418,10 @@ class DDStatement:
             
         Example:
             >>> dd.recorg  # 'KS'
+
+        .. deprecated::
+            Use ``dd.parameters.get('RECORG')`` directly.
+            This property will be removed in a future release.
         """
         return self.parameters.get('RECORG')
     
@@ -387,6 +435,10 @@ class DDStatement:
             
         Example:
             >>> dd.label  # [3, 'SL', 'RETPD=30']
+
+        .. deprecated::
+            Use ``dd.parameters.get('LABEL')`` directly.
+            This property will be removed in a future release.
         """
         return self.parameters.get('LABEL')
     
@@ -457,8 +509,8 @@ class Step:
     
     @property
     def is_proc_invocation(self) -> bool:
-        """True if step is a procedure invocation (alias for is_procedure)"""
-        return self.procedure is not None
+        """True if step is a procedure invocation (alias for :attr:`is_procedure`)."""
+        return self.is_procedure
     
     def add_dd(self, dd_statement: DDStatement) -> None:
         """Add a DD statement to this step"""
@@ -600,45 +652,14 @@ class Job:
         return all_dds
     
     def validate(self) -> List[ValidationError]:
-        """Validate job structure and dependencies"""
-        errors = []
-        
-        # Job must have a name
-        if not self.name or not self.name.strip():
-            errors.append(ValidationError(
-                "Job must have a name",
-                ErrorType.VALIDATION_ERROR
-            ))
-        elif len(self.name) > 8:
-            errors.append(ValidationError(
-                f"Invalid job name '{self.name}': must be 1-8 characters",
-                ErrorType.VALIDATION_ERROR
-            ))
-        
-        # Job must have at least one step
-        if not self.steps:
-            errors.append(ValidationError(
-                "Job must contain at least one execution step",
-                ErrorType.STRUCTURE_ERROR
-            ))
-        
-        # Validate step names are unique
-        step_names = []
-        for step in self.steps:
-            if step.name:
-                if step.name in step_names:
-                    errors.append(ValidationError(
-                        f"Duplicate step name: {step.name}",
-                        ErrorType.VALIDATION_ERROR
-                    ))
-                else:
-                    step_names.append(step.name)
-        
-        # Validate each step
-        for step in self.steps:
-            errors.extend(self._validate_step(step))
-        
-        return errors
+        """
+        Validate job structure and dependencies.
+
+        Delegates to :func:`jclparser.validators.validate_job_structure` which
+        performs all structural checks *and* data-dependency validation.
+        """
+        from .validators import validate_job_structure
+        return validate_job_structure(self)
     
     def explode(
         self,

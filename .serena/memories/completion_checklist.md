@@ -1,0 +1,1 @@
+When changing code: preserve current public API unless deprecation is explicit; run relevant pytest targets; prefer wrapper-based consolidation for duplicated validators and utils helpers; be careful with explosion/proc loading because nested JCLLIB behavior has a confirmed bug in explosion.py.

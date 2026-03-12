@@ -3,10 +3,31 @@ Helper utilities for JCL syntax handling.
 
 Contains utility functions for parsing parameters, handling quotes,
 and other JCL-specific syntax operations.
+
+Function classification
+-----------------------
+Runtime-critical (used by the main parse path):
+    read_source, normalize_jcl_line, is_continuation_line,
+    quote_jcl_value, unquote_jcl_value
+
+Public utility API (used externally, not on the hot path):
+    split_jcl_parameters, parse_jcl_parameter,
+    validate_jcl_name, format_jcl_line,
+    extract_inline_data, merge_continuation_lines,
+    calculate_jcl_checksum
 """
 
 import re
-from typing import List, Dict, Any, Tuple, Optional
+from pathlib import Path
+from typing import List, Dict, Any, Tuple, Optional, Union
+
+#: Prefix used to store positional (keyword-less) JCL parameters in dicts.
+POSITIONAL_PARAM_PREFIX: str = "_pos_"
+
+
+def is_positional_key(key: str) -> bool:
+    """Return ``True`` if *key* represents a positional (keyword-less) JCL parameter."""
+    return key.startswith(POSITIONAL_PARAM_PREFIX)
 
 
 def normalize_jcl_line(line: str) -> str:
@@ -42,61 +63,81 @@ def is_continuation_line(line: str) -> bool:
     return stripped.startswith("//") and not stripped.startswith("//*") and len(stripped) > 2 and stripped[2] == " "
 
 
+def read_source(source: Union[str, Path, Any]) -> str:
+    """
+    Resolve a JCL source (string content, file path, or file-like object) into a
+    string of JCL content.
+
+    Runtime-critical — used by the main parse path.
+
+    Args:
+        source: JCL content as string, a :class:`pathlib.Path`, or any file-like
+                object with a ``read()`` method.
+
+    Returns:
+        String of JCL content.
+
+    Raises:
+        FileNotFoundError: If *source* is a path to a file that does not exist.
+    """
+    if isinstance(source, Path):
+        if not source.exists():
+            raise FileNotFoundError(f"JCL file not found: {source}")
+        with open(source, 'r', encoding='utf-8') as fh:
+            return fh.read()
+    if isinstance(source, str):
+        # Treat as a file path when it looks like one
+        if source.endswith('.jcl') or (
+            ('/' in source or '\\' in source) and not source.strip().startswith('//')
+        ):
+            path = Path(source)
+            if not path.exists():
+                raise FileNotFoundError(f"JCL file not found: {path}")
+            with open(path, 'r', encoding='utf-8') as fh:
+                return fh.read()
+        return source
+    # File-like object
+    content = source.read()
+    if hasattr(source, 'seek'):
+        source.seek(0)
+    return content
+
+
 def split_jcl_parameters(param_string: str) -> List[str]:
     """
     Split JCL parameter string into individual parameters.
-    
+
     Handles quoted strings, parentheses, and nested structures properly.
-    
+
+    .. note::
+        This is a compatibility wrapper that delegates to
+        :meth:`jclparser.parameter_ast.ParameterParser._split_parameters`,
+        which is the canonical implementation.
+
     Args:
         param_string: String containing JCL parameters
-        
+
     Returns:
         List of individual parameter strings
     """
     if not param_string.strip():
         return []
-    
-    parameters = []
-    current = ""
-    in_quotes = False
-    paren_depth = 0
-    i = 0
-    
-    while i < len(param_string):
-        char = param_string[i]
-        
-        if char == "'" and (i == 0 or param_string[i-1] != "\\"):
-            in_quotes = not in_quotes
-            current += char
-        elif char == "(" and not in_quotes:
-            paren_depth += 1
-            current += char
-        elif char == ")" and not in_quotes:
-            paren_depth -= 1
-            current += char
-        elif char == "," and not in_quotes and paren_depth == 0:
-            if current.strip():
-                parameters.append(current.strip())
-            current = ""
-        else:
-            current += char
-        
-        i += 1
-    
-    if current.strip():
-        parameters.append(current.strip())
-    
-    return parameters
+    from .parameter_ast import ParameterParser
+    return ParameterParser()._split_parameters(param_string)
 
 
 def parse_jcl_parameter(param: str) -> Tuple[str, Any]:
     """
     Parse individual JCL parameter into key-value pair.
-    
+
+    .. deprecated::
+        Superseded by :class:`jclparser.parameter_ast.ParameterParser`, which
+        provides a richer AST and handles all JCL parameter types correctly.
+        Use ``ParameterParser`` for new code.
+
     Args:
         param: Parameter string (e.g., "DSN=MY.DATA", "CLASS=A")
-        
+
     Returns:
         Tuple of (parameter_name, parameter_value)
     """
@@ -167,11 +208,15 @@ def unquote_jcl_value(value: str) -> str:
 def validate_jcl_name(name: str, max_length: int = 8) -> bool:
     """
     Validate JCL name format.
-    
+
+    .. note::
+        Identical to ``validators.validate_jcl_identifier()``.
+        Consider using that function directly.
+
     Args:
         name: Name to validate
         max_length: Maximum allowed length
-        
+
     Returns:
         True if valid JCL name
     """
@@ -265,11 +310,16 @@ def format_jcl_line(statement_type: str, name: str, parameters: Dict[str, Any],
 def extract_inline_data(lines: List[str], start_index: int) -> Tuple[Optional[str], int]:
     """
     Extract inline data from DD * statement.
-    
+
+    .. deprecated::
+        Inline data extraction is now handled internally by the main parser
+        in :func:`jclparser.parser.parse_jcl`.  This standalone helper may
+        produce inconsistent results for complex JCL with custom delimiters.
+
     Args:
         lines: List of JCL lines
         start_index: Index where DD * statement was found
-        
+
     Returns:
         Tuple of (inline_data, end_index) or (None, start_index)
     """
@@ -297,10 +347,15 @@ def extract_inline_data(lines: List[str], start_index: int) -> Tuple[Optional[st
 def merge_continuation_lines(lines: List[str]) -> List[str]:
     """
     Merge JCL continuation lines into complete statements.
-    
+
+    .. deprecated::
+        Superseded by :class:`jclparser.continuation_handler.ContinuationLineHandler`,
+        which correctly handles all edge-cases defined in z/OS JCL syntax rules.
+        Use that class for new code.
+
     Args:
         lines: List of raw JCL lines
-        
+
     Returns:
         List of complete JCL statements
     """

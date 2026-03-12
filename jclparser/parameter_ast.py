@@ -296,11 +296,16 @@ class ParameterParser:
     
     def _split_parameters(self, param_string: str) -> List[str]:
         """
-        Split parameter string by comma, respecting parentheses.
-        
+        Split parameter string by comma, respecting parentheses and JCL-quoted strings.
+
+        In JCL, a quoted string is delimited by ``'...'``.  A literal apostrophe
+        inside a quoted string is represented by ``''`` (two consecutive single
+        quotes).  Both pairs must be consumed together so the quote-depth
+        tracker stays correct.
+
         Args:
             param_string: Parameter string to split
-            
+
         Returns:
             List of parameter parts
         """
@@ -308,28 +313,45 @@ class ParameterParser:
         current = ""
         paren_depth = 0
         in_quotes = False
-        
-        for i, char in enumerate(param_string):
-            if char == "'" and (i == 0 or param_string[i-1] != "'"):
-                in_quotes = not in_quotes
-                current += char
-            elif not in_quotes:
-                if char == '(':
+        i = 0
+
+        while i < len(param_string):
+            char = param_string[i]
+
+            if in_quotes:
+                if char == "'":
+                    # Look-ahead: is this the start of an escaped '' pair?
+                    if i + 1 < len(param_string) and param_string[i + 1] == "'":
+                        # Escaped apostrophe — consume both and stay in-quotes
+                        current += "''"
+                        i += 2
+                        continue
+                    else:
+                        # Closing quote
+                        in_quotes = False
+                        current += char
+                else:
+                    current += char
+            else:
+                if char == "'":
+                    in_quotes = True
+                    current += char
+                elif char == "(":
                     paren_depth += 1
                     current += char
-                elif char == ')':
+                elif char == ")":
                     paren_depth -= 1
                     current += char
-                elif char == ',' and paren_depth == 0:
+                elif char == "," and paren_depth == 0:
                     if current.strip():
                         parts.append(current.strip())
                     current = ""
                 else:
                     current += char
-            else:
-                current += char
-        
+
+            i += 1
+
         if current.strip():
             parts.append(current.strip())
-        
+
         return parts

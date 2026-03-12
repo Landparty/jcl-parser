@@ -9,6 +9,7 @@ import re
 from typing import List, Set, Dict, Any, Optional
 from .model import Job, Step, DDStatement
 from .errors import ValidationError, ErrorType
+from .parameter_validators import DatasetNameValidator, DISPValidator
 
 
 def validate_jcl_identifier(name: str) -> bool:
@@ -37,35 +38,18 @@ def validate_jcl_identifier(name: str) -> bool:
 def validate_dataset_name(dsn: str) -> bool:
     """
     Validate dataset name format.
-    
+
+    Compatibility wrapper — canonical rules live in
+    ``parameter_validators.DatasetNameValidator``.
+
     Args:
         dsn: Dataset name to validate
-        
+
     Returns:
         True if valid dataset name
     """
-    if not dsn:
-        return False
-    
-    # Handle temporary datasets
-    if dsn.startswith("&&"):
-        return validate_jcl_identifier(dsn[2:])
-    
-    # Regular dataset name - qualifiers separated by dots
-    qualifiers = dsn.split(".")
-    if not qualifiers:
-        return False
-    
-    # Each qualifier must be valid
-    for qualifier in qualifiers:
-        if not qualifier or len(qualifier) > 8:
-            return False
-        if not re.match(r'^[A-Za-z0-9@#$]+$', qualifier):
-            return False
-        if not re.match(r'^[A-Za-z@#$]', qualifier):
-            return False
-    
-    return True
+    result = DatasetNameValidator.validate(dsn)
+    return result.is_valid
 
 
 def validate_job_structure(job: Job) -> List[ValidationError]:
@@ -179,9 +163,9 @@ def validate_dd_statement(dd: DDStatement) -> List[ValidationError]:
         List of validation errors
     """
     errors = []
-    
-    # DD name validation
-    if not validate_jcl_identifier(dd.name):
+
+    # DD name validation — empty names are valid for DD concatenation statements
+    if dd.name and not validate_jcl_identifier(dd.name):
         errors.append(ValidationError(
             f"Invalid DD name '{dd.name}': must be 1-8 characters, alphanumeric + @#$",
             ErrorType.VALIDATION_ERROR
@@ -222,52 +206,35 @@ def validate_dd_statement(dd: DDStatement) -> List[ValidationError]:
     return errors
 
 
-def validate_disposition(disp: str) -> bool:
+def validate_disposition(disp) -> bool:
     """
     Validate DISP parameter format.
-    
+
+    Compatibility wrapper — canonical rules live in
+    ``parameter_validators.DISPValidator``.
+
     Args:
-        disp: DISP parameter value to validate
-        
+        disp: DISP parameter value to validate (string or list of parts)
+
     Returns:
         True if valid disposition
     """
     if not disp:
         return False
-    
-    # Handle simple dispositions
-    simple_disps = ["NEW", "OLD", "SHR", "MOD"]
-    if disp.upper() in simple_disps:
-        return True
-    
-    # Handle complex dispositions (status,normal,abnormal)
-    if disp.startswith("(") and disp.endswith(")"):
-        inner = disp[1:-1]
-        parts = [part.strip() for part in inner.split(",")]
-        
-        # Must have at least status
-        if not parts or not parts[0]:
+    # Handle list form — parser may produce ['NEW', 'CATLG', 'DELETE']
+    if isinstance(disp, list):
+        if not disp or not disp[0]:
             return False
-        
-        # Validate status
-        if parts[0].upper() not in simple_disps:
+        disp = '(' + ','.join(str(d) for d in disp) + ')'
+    # For parenthesized forms, status must be non-empty
+    stripped = disp.strip()
+    if stripped.startswith('(') and stripped.endswith(')'):
+        inner = stripped[1:-1]
+        parts = [p.strip() for p in inner.split(',')]
+        if not parts[0]:
             return False
-        
-        # Validate normal disposition (if provided)
-        if len(parts) > 1 and parts[1]:
-            normal_disps = ["CATLG", "DELETE", "KEEP", "PASS", "UNCATLG"]
-            if parts[1].upper() not in normal_disps:
-                return False
-        
-        # Validate abnormal disposition (if provided)  
-        if len(parts) > 2 and parts[2]:
-            abnormal_disps = ["CATLG", "DELETE", "KEEP", "UNCATLG"]
-            if parts[2].upper() not in abnormal_disps:
-                return False
-        
-        return True
-    
-    return False
+    result = DISPValidator.validate(disp)
+    return result.is_valid
 
 
 def validate_data_dependencies(job: Job) -> List[ValidationError]:

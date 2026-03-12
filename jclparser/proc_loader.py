@@ -95,6 +95,7 @@ class JCLLIBProcedureLoader(ProcedureLoader):
             base_path = Path(env_path) if env_path else Path.cwd()
         
         self.base_path = Path(base_path)
+        self._cache: Dict = {}
     
     def load_procedure(self, name: str, libraries: Optional[List[str]] = None) -> Optional[Procedure]:
         """
@@ -106,9 +107,7 @@ class JCLLIBProcedureLoader(ProcedureLoader):
         """
         # Create cache key
         cache_key = (name.upper(), tuple(libraries) if libraries else ())
-        if not hasattr(self, '_cache'):
-            self._cache = {}
-        
+
         if cache_key in self._cache:
             return self._cache[cache_key]
         if libraries is None:

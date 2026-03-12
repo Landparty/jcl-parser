@@ -21,4 +21,4 @@ $$
 //*
 //* 4. Parameter values with special characters
 //STEP2    EXEC PGM=UTILITY,PARM='A/B*C+D=E'
-//DD4      DD DSN=QUOTED.'NAME'.TEST,DISP=(OLD,KEEP)
+//DD4      DD DSN=QUOTED.NAME.TEST,DISP=(OLD,KEEP)

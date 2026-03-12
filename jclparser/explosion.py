@@ -435,7 +435,8 @@ def explode_job(
                 max_depth=max_depth,
                 audit_records=explosion_audit if audit else None,
                 expansion_map=explosion_map,
-                strict_symbols=strict_symbols
+                strict_symbols=strict_symbols,
+                jcllib_order=job.jcllib_order or None,
             )
             exploded_steps.extend(expanded)
         else:
@@ -491,7 +492,8 @@ def _explode_step(
     max_depth: int,
     audit_records: Optional[List[ExplosionRecord]],
     expansion_map: Dict[str, ProcExpansionInfo],
-    strict_symbols: bool
+    strict_symbols: bool,
+    jcllib_order: Optional[List[str]] = None,
 ) -> List[Step]:
     """
     Recursively explode a single step (internal implementation).
@@ -522,7 +524,10 @@ def _explode_step(
     detect_circular_refs(proc_name, call_chain)
     
     # Load procedure definition
-    procedure = proc_loader.load_procedure(proc_name, job.jcllib_order if 'job' in locals() else None)
+    # CompositeProcedureLoader requires a tuple (hashable) for its LRU cache;
+    # other loaders accept both.  Always pass a tuple or None.
+    _libs = tuple(jcllib_order) if jcllib_order else None
+    procedure = proc_loader.load_procedure(proc_name, _libs)
     
     if procedure is None:
         raise ProcedureNotFoundError(proc_name, step.line_number)
@@ -581,7 +586,8 @@ def _explode_step(
                 max_depth=max_depth,
                 audit_records=audit_records,
                 expansion_map=expansion_map,
-                strict_symbols=strict_symbols
+                strict_symbols=strict_symbols,
+                jcllib_order=jcllib_order,
             )
             final_steps.extend(nested)
         else:

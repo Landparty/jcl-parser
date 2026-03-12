@@ -50,76 +50,66 @@ _registry = get_plugin_registry()
 
 # Public API - what gets imported with "from jclparser import *"
 __all__ = [
-    # Core parsing functions
+    # ── Tier 1: Stable public API ─────────────────────────────────────────────
+    # These are the primary entry points for all users.
     'parse_jcl',
-    'validate_jcl', 
+    'validate_jcl',
     'parse_statement',
-    
-    # Data model classes
+    'parse',
     'Job',
-    'Step', 
+    'Step',
     'DDStatement',
     'Parameter',
     'Statement',
-    
-    # Error classes
     'JCLSyntaxError',
-    'JCLValidationError', 
+    'JCLValidationError',
     'JCLStructureError',
     'ParseError',
     'ValidationError',
     'ErrorType',
     'ErrorSeverity',
-    'UndefinedSymbolError',
-    'ExplosionDepthError',
-    'CircularProcedureError',
-    'ProcedureNotFoundError',
-    
-    # Plugin system
-    'StatementPlugin',
-    'ValidationPlugin',
-    'PluginRegistry',
-    'ParserConfig',
     'ValidationLevel',
-    'get_plugin_registry',
-    
-    # Validation functions
+    '__version__',
+
+    # ── Tier 2: Advanced / power-user API ────────────────────────────────────
+    # Stable, but intended for advanced use cases.
+    'explode_job',
+    'ProcedureLoader',
+    'CompositeProcedureLoader',
+    'create_default_loader',
+    'SystemSymbolProvider',
+    'ParserConfig',
+    'SymbolScope',
     'validate_jcl_identifier',
     'validate_dataset_name',
     'validate_job_structure',
     'validate_step_structure',
     'validate_dd_statement',
-    
-    # Explosion engine
-    'explode_job',
-    'substitute_symbols',
-    'SymbolScope',
-    'ExplosionRecord',
-    'ProcExpansionInfo',
-    
-    # Procedure loaders
-    'ProcedureLoader',
-    'InlineProcedureLoader',
-    'JCLLIBProcedureLoader',
-    'CompositeProcedureLoader',
-    'create_default_loader',
-    
-    # System symbol providers
-    'SystemSymbolProvider',
-    'MockSystemSymbolProvider',
-    'RuntimeSystemSymbolProvider',
-    'EnvironmentSystemSymbolProvider',
-    'get_default_provider',
-    'set_default_provider',
-    
-    # File type detection
     'FileType',
     'detect_file_type',
     'is_jcl_file',
     'is_proc_file',
-    
-    # Package metadata
-    '__version__',
+
+    # ── Tier 3: Internal / backwards-compatibility exports ───────────────────
+    # Exported for existing consumers; may be removed in a future major version.
+    'MockSystemSymbolProvider',
+    'EnvironmentSystemSymbolProvider',
+    'RuntimeSystemSymbolProvider',
+    'get_default_provider',
+    'set_default_provider',
+    'ExplosionRecord',
+    'ProcExpansionInfo',
+    'InlineProcedureLoader',
+    'JCLLIBProcedureLoader',
+    'UndefinedSymbolError',
+    'ExplosionDepthError',
+    'CircularProcedureError',
+    'ProcedureNotFoundError',
+    'substitute_symbols',
+    'StatementPlugin',
+    'ValidationPlugin',
+    'PluginRegistry',
+    'get_plugin_registry',
 ]
 
 # Convenience function for quick parsing
@@ -130,6 +120,3 @@ def parse(source, **kwargs):
     Alias for parse_jcl() with simpler name.
     """
     return parse_jcl(source, **kwargs)
-
-# Add to exports
-__all__.append('parse')
