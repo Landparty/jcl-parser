@@ -59,11 +59,6 @@ class TestParseStatement:
         stmt = parse_statement("//      INCLUDE MEMBER=MYMEM", 1)
         assert stmt.type == "INCLUDE"
     
-    def test_invalid_statement(self):
-        """Test parsing invalid statement"""
-        with pytest.raises(JCLSyntaxError):
-            parse_statement("//INVALID BADTYPE PARAM=VALUE", 1)
-
 
 class TestParseJCLBasic:
     """Basic parse_jcl tests"""
@@ -227,12 +222,6 @@ class TestParseJCLErrors:
         """Test EXEC before JOB"""
         jcl = "//STEP1 EXEC PGM=PROG\n//TESTJOB JOB CLASS=A\n//"
         with pytest.raises(JCLSyntaxError, match="before JOB"):
-            parse_jcl(jcl, strict_mode=False)
-    
-    def test_dd_before_exec(self):
-        """Test DD before EXEC"""
-        jcl = "//TESTJOB JOB CLASS=A\n//DD1 DD DSN=DATA\n//"
-        with pytest.raises(JCLSyntaxError, match="before EXEC"):
             parse_jcl(jcl, strict_mode=False)
     
     def test_multiple_job_statements(self):

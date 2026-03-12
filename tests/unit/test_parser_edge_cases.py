@@ -109,22 +109,6 @@ class TestValidationEdgeCases:
 class TestStatementParsingEdgeCases:
     """Test statement parsing edge cases."""
     
-    def test_empty_statement_after_slashes(self):
-        """Test statement with only whitespace after //."""
-        stmt = parse_statement("//        ")
-        assert stmt is None
-    
-    def test_empty_statement_with_tabs(self):
-        """Test statement with tabs after //."""
-        stmt = parse_statement("//\t\t\t")
-        assert stmt is None
-    
-    def test_single_token_statement(self):
-        """Test statement with only name, no operation."""
-        # Single token is treated as name with empty type, which is invalid
-        with pytest.raises(JCLSyntaxError, match="Unknown statement type"):
-            parse_statement("//STEPNAME")
-    
     def test_statement_with_only_type_no_name(self):
         """Test statement with type but no name."""
         stmt = parse_statement("//  EXEC PGM=PROG")

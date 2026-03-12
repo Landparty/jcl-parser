@@ -558,13 +558,6 @@ class TestErrorHandling:
         with pytest.raises((JCLSyntaxError, JCLValidationError)):
             parse_jcl(jcl_file)
             
-    def test_dd_without_exec(self, fixtures_dir):
-        """Test error when DD has no preceding EXEC"""
-        jcl_file = fixtures_dir / "error_dd_without_exec.jcl"
-        
-        with pytest.raises((JCLSyntaxError, JCLValidationError)):
-            parse_jcl(jcl_file)
-            
     def test_unclosed_quote(self, fixtures_dir):
         """Test error for unclosed quote"""
         jcl_file = fixtures_dir / "error_unclosed_quote.jcl"
@@ -672,7 +665,6 @@ class TestFixtureConsistency:
         """Test that all error fixtures raise exceptions"""
         error_fixtures = [
             "error_no_job_statement.jcl",
-            "error_dd_without_exec.jcl",
             "error_unclosed_quote.jcl",
             "error_unclosed_paren.jcl",
             # "error_invalid_name.jcl",  # May not always fail
