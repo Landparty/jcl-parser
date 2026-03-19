@@ -684,6 +684,25 @@ def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
     )
 
 
+def _find_keyword_eq(part: str, operator_prefixes: frozenset) -> Optional[int]:
+    """Find the position of '=' that acts as a keyword parameter delimiter.
+
+    Returns None if no keyword '=' is found (i.e., all '=' signs are part of
+    relational operators like ¬=, ^=, ~=, !=, <=, >=).
+    """
+    pos = 0
+    while pos < len(part):
+        eq_pos = part.find("=", pos)
+        if eq_pos == -1:
+            return None
+        # An '=' is a keyword delimiter if it's at position 0 or the preceding
+        # character is NOT an operator prefix (¬, ^, ~, !, <, >)
+        if eq_pos == 0 or part[eq_pos - 1] not in operator_prefixes:
+            return eq_pos
+        pos = eq_pos + 1
+    return None
+
+
 def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]:
     """Parse JCL parameters from parameter string"""
     parameters = {}
@@ -752,10 +771,17 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]
         raise JCLSyntaxError(f"Unmatched parentheses in parameter: {param_string}", line_number)
     
     # Parse individual parameters
+    # Characters that form relational operators when followed by '='
+    # (e.g., ¬=, ^=, ~=, !=, <=, >= in JCL IF conditions)
+    _OPERATOR_PREFIXES = frozenset("¬^~!<>")
+
     for i, part in enumerate(parts):
-        if "=" in part and not part.startswith("("):
+        # Find the first '=' that acts as a keyword parameter delimiter
+        # (not part of a relational operator like ¬=, ^=, ~=, !=, <=, >=)
+        keyword_eq_pos = _find_keyword_eq(part, _OPERATOR_PREFIXES)
+        if keyword_eq_pos is not None and not part.startswith("("):
             # Keyword parameter
-            eq_pos = part.index("=")
+            eq_pos = keyword_eq_pos
             key = part[:eq_pos].strip().upper()  # Uppercase key
             value = part[eq_pos+1:].strip()
             
