@@ -1,21 +1,23 @@
-MIT License
+Polyform Noncommercial License 1.0.0
 
-Copyright (c) 2026 Samuel Dion
+Acceptance
+In order to receive this license, you must agree to its rules. The rules of this license are conditions of the copy and distribution of the software. If you do not agree to these rules, you do not have a license to this software.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+User
+You may use the software for any non-commercial purpose.
+Non-Commercial Purposes
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+A "non-commercial purpose" is any use of the software that is not intended for or directed toward commercial advantage or monetary compensation.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Commercial Purposes
+You may not use the software for any commercial purpose. Examples of commercial purposes include:
+ - Selling or letting the software.
+ - Using the software to provide services to others for a fee.
+ - Using the software as part of a product or service you sell.
+ - Using the software for internal business purposes (such as in an office or on a work computer).
+
+Redistribution
+You may redistribute the software, provided that you include this license with any copy you distribute.
+No Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
