@@ -49,17 +49,22 @@ class Statement:
 class ConditionalBlock:
     """
     Represents an IF/THEN/ELSE conditional block.
-    
+
     Attributes:
-        condition: Conditional expression string
+        condition: Conditional expression string (raw, always populated)
         then_steps: Steps to execute if condition is true
         else_steps: Steps to execute if condition is false (optional)
         line_number: Source line number
+        condition_ast: Structured AST of the condition expression, or None if
+            the condition could not be parsed into a known structure.
+            Use :func:`jclparser.condition_parser.parse_condition` to obtain
+            this value; it is populated automatically by the parser.
     """
     condition: str
     then_steps: List[Union['Step', 'ConditionalBlock']] = field(default_factory=list)
     else_steps: List[Union['Step', 'ConditionalBlock']] = field(default_factory=list)
     line_number: int = 0
+    condition_ast: Any = field(default=None, repr=False)
     
     def add_then_step(self, step: Union['Step', 'ConditionalBlock']) -> None:
         """Add a step to the THEN block"""
@@ -447,26 +452,34 @@ class DDStatement:
         """True if this DD contains inline data (DD *)"""
         return self.inline_data is not None
     
+    # Disposition sets used by is_input / is_output.  Defined at class scope
+    # so the sets are built once and shared across all instances.
+    _INPUT_DISPOSITIONS: frozenset = frozenset({"OLD", "SHR"})
+    _OUTPUT_DISPOSITIONS: frozenset = frozenset({"NEW", "MOD", "CATLG", "UNCATLG"})
+
+    def _disp_tokens(self) -> List[str]:
+        """Return disposition as an uppercase list of individual tokens."""
+        if isinstance(self.disposition, list):
+            return [
+                (d.upper() if isinstance(d, str) else str(d).upper())
+                for d in self.disposition
+            ]
+        # String form: may be bare "SHR", "(NEW,CATLG,DELETE)", or "NEW,CATLG"
+        return [
+            t.strip()
+            for t in str(self.disposition).upper().strip("()").split(",")
+        ]
+
     def is_input(self) -> bool:
-        """True if this DD defines input data"""
+        """True if this DD defines input data (DISP status is OLD or SHR)."""
         if self.disposition:
-            # Handle both string and list disposition
-            if isinstance(self.disposition, list):
-                disp_upper = [d.upper() if isinstance(d, str) else str(d).upper() for d in self.disposition]
-                return any(d in ["OLD", "SHR"] for d in disp_upper)
-            disp = self.disposition.upper() if isinstance(self.disposition, str) else str(self.disposition).upper()
-            return "SHR" in disp or "OLD" in disp
+            return any(t in self._INPUT_DISPOSITIONS for t in self._disp_tokens())
         return False
-    
+
     def is_output(self) -> bool:
-        """True if this DD defines output data"""
+        """True if this DD defines output data (DISP status is NEW, MOD, CATLG, or UNCATLG)."""
         if self.disposition:
-            # Handle both string and list disposition
-            if isinstance(self.disposition, list):
-                disp_upper = [d.upper() if isinstance(d, str) else str(d).upper() for d in self.disposition]
-                return any(d in ["NEW", "MOD", "CATLG"] for d in disp_upper)
-            disp = self.disposition.upper() if isinstance(self.disposition, str) else str(self.disposition).upper()
-            return "NEW" in disp or "CATLG" in disp
+            return any(t in self._OUTPUT_DISPOSITIONS for t in self._disp_tokens())
         return False
     
     def is_temporary(self) -> bool:

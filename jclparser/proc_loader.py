@@ -8,7 +8,6 @@ from various sources (inline, external files, JCLLIB libraries).
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional, List, Dict
-from functools import lru_cache
 import os
 
 from .model import Procedure
@@ -218,41 +217,45 @@ class JCLLIBProcedureLoader(ProcedureLoader):
 class CompositeProcedureLoader(ProcedureLoader):
     """
     Composite loader implementing fallback chain.
-    
+
     Tries multiple loaders in sequence, returning the first successful result.
-    Provides LRU caching for performance optimization.
+    Only successful (non-None) lookups are cached so that a procedure that
+    was unavailable at first call can still be found once it becomes available.
     """
-    
+
     def __init__(self, loaders: List[ProcedureLoader]):
         """
         Initialize composite loader.
-        
+
         Args:
             loaders: List of loaders to try in order
         """
         self.loaders = loaders
-    
-    @lru_cache(maxsize=256)
+        self._cache: Dict[tuple, Procedure] = {}
+
     def load_procedure(self, name: str, libraries: Optional[tuple] = None) -> Optional[Procedure]:
         """
         Load procedure using fallback chain.
-        
-        Note: libraries converted to tuple for cache hashability.
+
+        Note: *libraries* must be a tuple (or None) so it can be used as a
+        dict key.  Pass a tuple when calling from external code.
         """
-        # Convert tuple back to list for internal use
+        cache_key = (name.upper(), libraries if libraries is not None else ())
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
         lib_list = list(libraries) if libraries else None
-        
-        # Try each loader in sequence
+
         for loader in self.loaders:
             proc = loader.load_procedure(name, lib_list)
             if proc is not None:
+                self._cache[cache_key] = proc  # only cache successes
                 return proc
-        
-        return None
-    
+
+        return None  # not found — do NOT cache so retries can succeed
+
     def has_procedure(self, name: str, libraries: Optional[List[str]] = None) -> bool:
         """Check if any loader can provide the procedure"""
-        # Convert list to tuple for caching
         lib_tuple = tuple(libraries) if libraries else None
         return self.load_procedure(name, lib_tuple) is not None
 

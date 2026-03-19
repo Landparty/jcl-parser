@@ -365,21 +365,41 @@ def apply_dd_overrides(
         step_name_prefix: Prefix used for step names
     """
     for override_key, override_dd in dd_overrides.items():
-        # Parse qualified DD name (e.g., "STEP1.DD1")
+        # Parse qualified DD name.
+        # Two-part  "PROCSTEP.DDNAME"              -> step prefix.PROCSTEP  / DD DDNAME
+        # Three-part "PROCSTEP.INNERST.DDNAME"     -> step prefix.PROCSTEP.INNERST / DD DDNAME
+        #   (used for nested PROC invocations where the outer PROC step itself
+        #   calls another PROC whose internal step name is needed)
         parts = override_key.split('.')
-        
+
         if len(parts) == 2:
             target_step, target_dd = parts
             qualified_step = f"{step_name_prefix}.{target_step}"
-            
-            # Find matching step
+
             for step in expanded_steps:
                 if step.name == qualified_step:
-                    # Find and replace DD statement
                     for i, dd in enumerate(step.dd_statements):
                         if dd.name == target_dd:
                             step.dd_statements[i] = deepcopy(override_dd)
                             break
+
+        elif len(parts) == 3:
+            # Three-part override: OUTERSTEP.INNERSTEP.DDNAME
+            # The outer expansion has not yet expanded the inner PROC, so the
+            # fully-qualified step "prefix.OUTERSTEP.INNERSTEP" does not exist
+            # in `expanded_steps` at this point.  Instead we locate the
+            # intermediate step "prefix.OUTERSTEP" (which is still a proc
+            # invocation) and inject a two-part override "INNERSTEP.DDNAME"
+            # into it so the override is applied when the inner PROC is later
+            # expanded by the recursive _explode_step call.
+            outer_step, inner_step, target_dd = parts
+            qualified_outer = f"{step_name_prefix}.{outer_step}"
+            two_part_key = f"{inner_step}.{target_dd}"
+
+            for step in expanded_steps:
+                if step.name == qualified_outer:
+                    step.dd_overrides[two_part_key] = deepcopy(override_dd)
+                    break
 
 
 def explode_job(

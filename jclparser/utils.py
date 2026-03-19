@@ -33,19 +33,28 @@ def is_positional_key(key: str) -> bool:
 def normalize_jcl_line(line: str) -> str:
     """
     Normalize JCL line by removing extra whitespace and handling continuations.
-    
+
+    Strips mainframe sequence numbers from columns 73-80.  In the standard
+    80-column JCL record format columns 73-80 are identifier/sequence fields
+    that must not be interpreted as JCL content.  Truncating to column 72 is
+    always safe: lines shorter than 73 characters are unaffected.
+
     Args:
         line: Raw JCL line
-        
+
     Returns:
         Normalized line
     """
+    # Strip mainframe sequence numbers (cols 73-80, 0-indexed 72-79)
+    if len(line) > 72:
+        line = line[:72]
+
     # Remove trailing whitespace but preserve leading spaces for continuation detection
     line = line.rstrip()
-    
+
     # Convert tabs to spaces
     line = line.expandtabs(4)
-    
+
     return line
 
 

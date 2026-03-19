@@ -44,6 +44,16 @@ from .system_symbols import (
 from .jcl_file_type import (
     FileType, detect_file_type, is_jcl_file, is_proc_file
 )
+from .condition_parser import (
+    parse_condition,
+    ConditionNode,
+    ReturnCodeCondition,
+    AbendCondition,
+    RunCondition,
+    NotCondition,
+    AndCondition,
+    OrCondition,
+)
 
 # Initialize global plugin registry
 _registry = get_plugin_registry()
@@ -73,6 +83,14 @@ __all__ = [
 
     # ── Tier 2: Advanced / power-user API ────────────────────────────────────
     # Stable, but intended for advanced use cases.
+    'parse_condition',
+    'ConditionNode',
+    'ReturnCodeCondition',
+    'AbendCondition',
+    'RunCondition',
+    'NotCondition',
+    'AndCondition',
+    'OrCondition',
     'explode_job',
     'ProcedureLoader',
     'CompositeProcedureLoader',

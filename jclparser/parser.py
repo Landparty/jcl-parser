@@ -17,6 +17,7 @@ from .errors import (
 from .plugins import get_plugin_registry, ParserConfig
 from .utils import normalize_jcl_line, read_source, POSITIONAL_PARAM_PREFIX, is_positional_key
 from .continuation_handler import ContinuationLineHandler
+from .condition_parser import parse_condition
 
 #: All recognised JCL statement type keywords (single canonical definition).
 _STATEMENT_TYPES: frozenset = frozenset({
@@ -302,6 +303,7 @@ def parse_jcl(
                         condition = condition[:-5]
                     conditional = ConditionalBlock(
                         condition=condition,
+                        condition_ast=parse_condition(condition),
                         line_number=stmt.line_number
                     )
                     job.add_conditional(conditional)
@@ -361,11 +363,8 @@ def parse_jcl(
                     # Treat job-level XMIT as ignored/comment
                     pass
         
-        except Exception as e:
-            if isinstance(e, (JCLSyntaxError, JCLValidationError)):
-                raise
-            else:
-                raise JCLSyntaxError(f"Parse error: {str(e)}", line_num)
+        except (JCLSyntaxError, JCLValidationError):
+            raise
     
     if job is None:
         raise JCLSyntaxError("No JOB statement found", 0)
@@ -480,18 +479,20 @@ def validate_jcl(source: Union[str, Path, IO], level: str = "basic") -> List[Par
         ))
         return errors
 
-    # Validate line by line, collecting all errors
-    lines = content.splitlines()
+    # Merge continuation lines so multi-line statements are validated as a unit
+    raw_lines = [normalize_jcl_line(l) for l in content.splitlines()]
+    handler = ContinuationLineHandler()
+    merged_pairs = handler.merge_continuation_lines(raw_lines)
     has_job = False
     current_step = None
-    
-    for line_num, line in enumerate(lines, 1):
+
+    for line, line_num in merged_pairs:
         line = line.strip()
-        
+
         # Skip comments and empty lines
         if not line or line.startswith("//*"):
             continue
-        
+
         # Validate each statement individually
         try:
             stmt = parse_statement(line, line_num)
@@ -807,12 +808,17 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]
 
 
 def _parse_list_parameter(list_content: str) -> List[str]:
-    """Parse parameter list like A,B,C or 'A','B','C'"""
+    """Parse parameter list like A,B,C or 'A','B','C'.
+
+    Empty positional subfields are preserved so that omitted DISP subfields
+    such as ``DISP=(,CATLG,DELETE)`` retain their positional meaning.
+    Trailing empty elements are stripped (from trailing commas).
+    """
     items = []
     current = ""
     in_quotes = False
     paren_depth = 0
-    
+
     i = 0
     while i < len(list_content):
         char = list_content[i]
@@ -831,22 +837,25 @@ def _parse_list_parameter(list_content: str) -> List[str]:
             paren_depth -= 1
             current += char
         elif char == "," and not in_quotes and paren_depth == 0:
-            if current.strip():
-                item = current.strip()
-                if item.startswith("'") and item.endswith("'"):
-                    item = item[1:-1].replace("''", "'")
-                items.append(item)
+            item = current.strip()
+            if item.startswith("'") and item.endswith("'"):
+                item = item[1:-1].replace("''", "'")
+            items.append(item)  # preserve empty strings for omitted positional subfields
             current = ""
         else:
             current += char
         i += 1
-    
-    if current.strip():
-        item = current.strip()
-        if item.startswith("'") and item.endswith("'"):
-            item = item[1:-1].replace("''", "'")
-        items.append(item)
-    
+
+    # Append final element
+    item = current.strip()
+    if item.startswith("'") and item.endswith("'"):
+        item = item[1:-1].replace("''", "'")
+    items.append(item)
+
+    # Strip trailing empty elements (from trailing commas) but keep internal ones
+    while items and items[-1] == "":
+        items.pop()
+
     return items
 
 
