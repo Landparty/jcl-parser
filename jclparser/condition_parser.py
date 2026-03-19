@@ -183,6 +183,9 @@ _OP_MAP: Dict[str, str] = {
 # Two-character operator prefixes (characters that combine with = / < / >)
 _TWO_CHAR_OP_STARTS = frozenset("¬^~!<>")
 
+# Precompiled regex pattern for numeric token matching
+_RE_DIGITS = re.compile(r"\d+$")
+
 
 # ---------------------------------------------------------------------------
 # Tokenizer
@@ -354,14 +357,14 @@ class _Parser:
             self._consume()  # consume operator
 
             val_tok = self._peek()
-            if val_tok is not None and re.fullmatch(r"\d+", val_tok):
+            if val_tok is not None and _RE_DIGITS.match(val_tok):
                 self._consume()
                 return ReturnCodeCondition(step_name=step_name, operator=op, value=int(val_tok))
 
             return ReturnCodeCondition(step_name=step_name, operator=op, value=0)
 
         # Bare number — treat as anonymous RC comparison: value op rc  (rare)
-        if re.fullmatch(r"\d+", attr):
+        if _RE_DIGITS.match(attr):
             op_tok = self._peek()
             op = _OP_MAP.get(op_tok.upper()) if op_tok else None
             if op:

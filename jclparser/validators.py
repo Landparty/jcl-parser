@@ -11,6 +11,11 @@ from .model import Job, Step, DDStatement, ConditionalBlock, iter_execution_step
 from .errors import ValidationError, ErrorType
 from .parameter_validators import DatasetNameValidator, DISPValidator
 
+# Precompiled regex patterns for performance
+_RE_JCL_ID_START = re.compile(r'^[A-Za-z@#$]')
+_RE_JCL_ID_FULL = re.compile(r'^[A-Za-z0-9@#$]+$')
+_RE_PARAM_NAME = re.compile(r'^[A-Za-z][A-Za-z0-9]*$')
+
 
 def validate_jcl_identifier(name: str) -> bool:
     """
@@ -28,11 +33,11 @@ def validate_jcl_identifier(name: str) -> bool:
         return False
     
     # Must start with letter or @, #, $
-    if not re.match(r'^[A-Za-z@#$]', name):
+    if not _RE_JCL_ID_START.match(name):
         return False
-    
+
     # Remaining characters can be alphanumeric or @, #, $
-    return re.match(r'^[A-Za-z0-9@#$]+$', name) is not None
+    return _RE_JCL_ID_FULL.match(name) is not None
 
 
 def validate_dataset_name(dsn: str) -> bool:
@@ -304,7 +309,7 @@ def validate_parameter_syntax(param_name: str, param_value: Any) -> List[Validat
     errors = []
     
     # Parameter name validation
-    if not re.match(r'^[A-Za-z][A-Za-z0-9]*$', param_name):
+    if not _RE_PARAM_NAME.match(param_name):
         errors.append(ValidationError(
             f"Invalid parameter name '{param_name}': must start with letter, alphanumeric only",
             ErrorType.VALIDATION_ERROR
