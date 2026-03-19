@@ -6,7 +6,6 @@ into structured Python objects with full support for syntax validation
 and plugin extensibility.
 """
 
-import re
 from pathlib import Path
 from typing import Union, List, Optional, Dict, Any, IO
 from .model import Job, Step, DDStatement, Statement, Parameter, ConditionalBlock, Procedure

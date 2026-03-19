@@ -13,7 +13,6 @@ This module follows the KISS (Keep It Simple, Stupid) principle:
 from enum import Enum
 from pathlib import Path
 from typing import Union, IO, Optional
-import re
 
 
 class FileType(Enum):
