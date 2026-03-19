@@ -24,6 +24,11 @@ from typing import List, Dict, Any, Tuple, Optional, Union
 #: Prefix used to store positional (keyword-less) JCL parameters in dicts.
 POSITIONAL_PARAM_PREFIX: str = "_pos_"
 
+# Precompiled regex patterns for performance
+_RE_SPECIAL_CHARS = re.compile(r"[,()=\s']")
+_RE_JCL_NAME_START = re.compile(r'^[A-Za-z@#$]')
+_RE_JCL_NAME_FULL = re.compile(r'^[A-Za-z0-9@#$]+$')
+
 
 def is_positional_key(key: str) -> bool:
     """Return ``True`` if *key* represents a positional (keyword-less) JCL parameter."""
@@ -188,7 +193,7 @@ def quote_jcl_value(value: str) -> str:
         Quoted value if necessary
     """
     # Quote if contains special characters or spaces (including apostrophes)
-    if re.search(r"[,()=\s']", value):
+    if _RE_SPECIAL_CHARS.search(value):
         # Escape existing quotes
         escaped = value.replace("'", "''")
         return f"'{escaped}'"
@@ -233,11 +238,11 @@ def validate_jcl_name(name: str, max_length: int = 8) -> bool:
         return False
     
     # Must start with letter or @, #, $
-    if not re.match(r'^[A-Za-z@#$]', name):
+    if not _RE_JCL_NAME_START.match(name):
         return False
-    
+
     # Remaining characters can be alphanumeric or @, #, $
-    return re.match(r'^[A-Za-z0-9@#$]+$', name) is not None
+    return _RE_JCL_NAME_FULL.match(name) is not None
 
 
 def format_jcl_line(statement_type: str, name: str, parameters: Dict[str, Any], 
