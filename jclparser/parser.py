@@ -62,71 +62,56 @@ def parse_jcl(
     raw_lines = content.splitlines()
     lines = [normalize_jcl_line(line) for line in raw_lines]
     
-    # First pass: handle inline data sections (must be before continuation line merging)
-    # Mark lines that are inside inline data blocks
-    inline_data_markers = {}
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        # Check if this line starts DD * or DD DATA
-        if line.strip() and line.startswith("//") and not line.strip().startswith("//*"):
-            upper_line = line.upper()
-            # Match DD followed by * or DATA (with possible spaces)
-            if " DD " in upper_line or " DD*" in upper_line or "\tDD\t" in upper_line:
-                if (" DD *" in upper_line or " DD*" in upper_line or 
-                    " DD DATA" in upper_line or "\tDD\t*" in upper_line or
-                    ",DLM=" in upper_line):  # DD DATA,DLM=...
-                    # Extract delimiter if specified
-                    delimiter = "/*"  # default
-                    if "DLM=" in upper_line:
-                        dlm_start = upper_line.index("DLM=") + 4
-                        dlm_end = dlm_start
-                        while dlm_end < len(upper_line) and upper_line[dlm_end] not in ",) \t\r\n":
-                            dlm_end += 1
-                        delimiter = line[dlm_start:dlm_end]
-                    
-                    # Mark all following lines until delimiter as inline data
-                    i += 1
-                    while i < len(lines):
-                        if lines[i].strip() == delimiter or lines[i].strip().startswith(delimiter):
-                            inline_data_markers[i] = True  # Mark delimiter line too
-                            break
-                        inline_data_markers[i] = True
-                        i += 1
-        i += 1
-    
-    
-    # Second pass: merge continuation lines using enhanced handler
-    # Filter out inline data lines before merging (they should not be merged)
-    non_inline_lines = []
-    inline_line_map = {}  # Map from non-inline index to original index
-    
+    # Single pass: separate inline data lines from regular lines.
+    # Simultaneously records which original indices are inline data
+    # and builds the non-inline list for continuation merging.
+    inline_data_indices: set[int] = set()
+    non_inline_lines: list[str] = []
+    non_inline_orig_indices: list[int] = []  # parallel to non_inline_lines
+    in_inline_data = False
+    delimiter = "/*"
+
     for i, line in enumerate(lines):
-        if i not in inline_data_markers:
-            inline_line_map[len(non_inline_lines)] = i
+        if in_inline_data:
+            inline_data_indices.add(i)
+            if line.strip() == delimiter or line.strip().startswith(delimiter):
+                in_inline_data = False
+        else:
+            if line.strip() and line.startswith("//") and not line.strip().startswith("//*"):
+                upper_line = line.upper()
+                if " DD " in upper_line or " DD*" in upper_line or "\tDD\t" in upper_line:
+                    if (" DD *" in upper_line or " DD*" in upper_line or
+                            " DD DATA" in upper_line or "\tDD\t*" in upper_line or
+                            ",DLM=" in upper_line):
+                        delimiter = "/*"
+                        if "DLM=" in upper_line:
+                            dlm_start = upper_line.index("DLM=") + 4
+                            dlm_end = dlm_start
+                            while dlm_end < len(upper_line) and upper_line[dlm_end] not in ",) \t\r\n":
+                                dlm_end += 1
+                            delimiter = line[dlm_start:dlm_end]
+                        in_inline_data = True
             non_inline_lines.append(line)
-    
-    # Use enhanced continuation handler
+            non_inline_orig_indices.append(i)
+
+    # Merge continuation lines on the non-inline subset only.
     handler = ContinuationLineHandler()
     merged_non_inline = handler.merge_continuation_lines(non_inline_lines)
-    
-    # Now interleave the merged lines with inline data lines
-    merged_lines = []
-    merged_idx = 0
-    
+
+    # Recombine: build lookup of orig_idx -> merged_line for group-start lines only.
+    # Continuation lines that were folded into a group are simply absent from this map
+    # and will be skipped in the loop below — which is correct.
+    merged_start: dict[int, str] = {}
+    for merged_line, ni_line_num in merged_non_inline:
+        orig_idx = non_inline_orig_indices[ni_line_num - 1]
+        merged_start[orig_idx] = merged_line
+
+    merged_lines: list[tuple[str, int]] = []
     for i, line in enumerate(lines):
-        if i in inline_data_markers:
-            # This is an inline data line - add it directly
+        if i in inline_data_indices:
             merged_lines.append((line, i + 1))
-        else:
-            # This is a regular line - check if we have a merged version
-            # Find the corresponding merged line
-            if merged_idx < len(merged_non_inline):
-                merged_line, orig_line_num = merged_non_inline[merged_idx]
-                # Check if this merged line starts at this position
-                if inline_line_map.get(orig_line_num - 1) == i:
-                    merged_lines.append((merged_line, i + 1))
-                    merged_idx += 1
+        elif i in merged_start:
+            merged_lines.append((merged_start[i], i + 1))
     
     # Now parse the merged lines
     job = None
@@ -161,7 +146,7 @@ def parse_jcl(
                 continue
             
             # Skip lines marked as inline data (line_num is 1-indexed, markers use 0-indexed)
-            if (line_num - 1) in inline_data_markers:
+            if (line_num - 1) in inline_data_indices:
                 continue
             
             # Parse the statement
