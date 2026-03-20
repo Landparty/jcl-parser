@@ -130,3 +130,57 @@ def test_substitute_symbols(benchmark):
         }
     )
     benchmark(substitute_symbols, _SYMBOL_HEAVY, scope, False, True)
+
+# ---------------------------------------------------------------------------
+# Algorithmic-fix benchmark fixtures
+# ---------------------------------------------------------------------------
+
+_LARGE_DD_JCL = "//DDJOB    JOB CLASS=A\n" + "".join(
+    f"//STEP{i:02d}   EXEC PGM=IEFBR14\n"
+    f"//DD{i:02d}     DD   *\n"
+    f"DATA LINE {i}\n"
+    "/*\n"
+    for i in range(1, 51)
+)
+
+_HEAVY_CONTINUATION_JCL = "//CONTJOB  JOB CLASS=A\n" + "".join(
+    f"//STEP{i:02d}   EXEC PGM=IEFBR14\n"
+    f"//DD{i:02d}     DD   DSN=MY.DATASET.{i:02d},\n"
+    f"//             DISP=(NEW,CATLG,DELETE),\n"
+    f"//             SPACE=(CYL,(10,5),RLSE),\n"
+    f"//             DCB=(RECFM=FB,\n"
+    f"//             LRECL=80,\n"
+    f"//             BLKSIZE=27920,\n"
+    f"//             BUFNO=10,\n"
+    f"//             DSORG=PS),\n"
+    f"//             UNIT=SYSDA\n"
+    for i in range(1, 51)
+)
+
+_COMPLEX_PARAMS_JCL = "//PARAMJOB  JOB CLASS=A\n" + "".join(
+    f"//STEP{i:03d}  EXEC PGM=IEFBR14\n"
+    f"//DD{i:03d}    DD   DSN=MY.DS.{i:03d},\n"
+    f"//             DISP=(NEW,CATLG,DELETE),\n"
+    f"//             SPACE=(CYL,(10,5),RLSE),\n"
+    f"//             DCB=(RECFM=FB,LRECL=80,BLKSIZE=27920),\n"
+    f"//             UNIT=SYSDA,LABEL=(1,SL),RETPD=30\n"
+    for i in range(1, 101)
+)
+
+
+@pytest.mark.benchmark
+def test_parse_large_dd_job(benchmark):
+    """Benchmark: 50 DD * inline data blocks (targets inline data scan)."""
+    benchmark(parse_jcl, _LARGE_DD_JCL)
+
+
+@pytest.mark.benchmark
+def test_parse_heavy_continuation_job(benchmark):
+    """Benchmark: 50 steps x 9 continuation lines each (targets context re-analysis)."""
+    benchmark(parse_jcl, _HEAVY_CONTINUATION_JCL)
+
+
+@pytest.mark.benchmark
+def test_parse_complex_params_job(benchmark):
+    """Benchmark: 100 steps x 7 keyword parameters each (targets join overhead)."""
+    benchmark(parse_jcl, _COMPLEX_PARAMS_JCL)
