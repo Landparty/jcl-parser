@@ -176,7 +176,7 @@ def parse_jcl(
                 job = _create_job_from_statement(stmt)
             
             elif stmt.type == "EXEC":
-                if job is None:
+                if job is None and current_procedure is None:
                     raise JCLSyntaxError("EXEC statement before JOB statement", line_num)
                 
                 # Basic syntax check for EXEC - must have program, procedure, or positional parameter
@@ -382,7 +382,7 @@ def parse_jcl(
         # Try to load any external PROCs that were referenced but not found inline
         # This happens when EXEC PROC is used but PROC is not defined inline
         for step in job.steps:
-            if step.procedure and not job.get_procedure(step.procedure):
+            if isinstance(step, Step) and step.procedure and not job.get_procedure(step.procedure):
                 # Try to load external PROC
                 # Convert list to tuple for caching (CompositeProcedureLoader requires hashable)
                 libraries_tuple = tuple(job.jcllib_order) if job.jcllib_order else None
@@ -400,7 +400,7 @@ def parse_jcl(
         # External loading disabled or no JCLLIB - check for missing PROCs in strict mode
         if strict_mode:
             for step in job.steps:
-                if step.procedure and not job.get_procedure(step.procedure):
+                if isinstance(step, Step) and step.procedure and not job.get_procedure(step.procedure):
                     reason = "external PROC loading is disabled" if not enable_external_procs else "no JCLLIB ORDER specified"
                     raise JCLSyntaxError(
                         f"Procedure '{step.procedure}' not found ({reason}). "
@@ -483,6 +483,7 @@ def validate_jcl(source: Union[str, Path, IO], level: str = "basic") -> List[Par
     handler = ContinuationLineHandler()
     merged_pairs = handler.merge_continuation_lines(raw_lines)
     has_job = False
+    in_proc = False
     current_step = None
 
     for line, line_num in merged_pairs:
@@ -506,9 +507,15 @@ def validate_jcl(source: Union[str, Path, IO], level: str = "basic") -> List[Par
                             severity=ErrorSeverity.ERROR
                         ))
                     has_job = True
-                
+
+                elif stmt.type == "PROC":
+                    in_proc = True
+
+                elif stmt.type == "PEND":
+                    in_proc = False
+
                 elif stmt.type == "EXEC":
-                    if not has_job:
+                    if not has_job and not in_proc:
                         errors.append(ParseError(
                             error_type=ErrorType.SYNTAX_ERROR,
                             message="EXEC statement before JOB statement",
