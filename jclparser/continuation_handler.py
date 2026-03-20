@@ -4,7 +4,7 @@ Enhanced continuation line handling for JCL parsing.
 Handles complex multi-line statements with proper context awareness.
 """
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from dataclasses import dataclass
 import re
 
@@ -83,7 +83,9 @@ class ContinuationLineHandler:
             return first_keyword
         return ""
 
-    def is_continuation_line(self, line: str, previous_line: str = "") -> bool:
+    def is_continuation_line(
+        self, line: str, previous_line: str = "", ctx: Optional[ContinuationContext] = None
+    ) -> bool:
         """
         Determine if a line is a continuation of the previous line.
 
@@ -101,7 +103,13 @@ class ContinuationLineHandler:
             return True
 
         has_implicit_continuation = self._has_implicit_continuation(previous_line)
-        has_unclosed_context = self._has_unclosed_context(previous_line)
+        # Use provided context if available (avoids re-scanning the full merged line).
+        # ctx replaces only the _has_unclosed_context check; implicit continuation
+        # still uses previous_line directly (trivial endswith check, no growing-string cost).
+        if ctx is not None:
+            has_unclosed_context = ctx.paren_depth > 0 or ctx.in_quotes
+        else:
+            has_unclosed_context = self._has_unclosed_context(previous_line)
 
         if self.CONTINUATION_PATTERN.match(line):
             if has_implicit_continuation or has_unclosed_context:
@@ -148,6 +156,8 @@ class ContinuationLineHandler:
 
             # Start building merged line
             merged_line = line.rstrip()
+            # Compute initial context for this statement line once.
+            cached_ctx = self._analyze_line_context(merged_line)
             j = i + 1
 
             # Look ahead for continuation lines
@@ -159,10 +169,9 @@ class ContinuationLineHandler:
                 if not next_line.strip() or next_line.strip().startswith("//*"):
                     break
 
-                # Check if next line is a continuation
-                if self.is_continuation_line(next_line, merged_line):
-                    # Check if the continuation line has a leading comma (ALT form: //   ,content)
-                    # before extraction strips it, so we know whether to restore the separator.
+                # Check if next line is a continuation, passing cached context
+                # to avoid re-scanning the full (growing) merged_line.
+                if self.is_continuation_line(next_line, merged_line, ctx=cached_ctx):
                     raw_after_slashes = (next_line[2:] if next_line.startswith("//") else next_line).lstrip()
                     had_leading_comma = raw_after_slashes.startswith(",")
 
@@ -172,15 +181,15 @@ class ContinuationLineHandler:
                     # Merge with proper separator
                     stripped = merged_line.rstrip()
                     if stripped.endswith(","):
-                        # Comma already present at end of previous fragment
                         merged_line = stripped + cont_content
                     elif had_leading_comma:
-                        # ALT continuation: comma was at start of next line — restore it
                         merged_line = stripped + "," + cont_content
                     else:
-                        # Mid-word or direct continuation — join without inserting a comma
                         merged_line = stripped + cont_content
 
+                    # Incrementally update context: scan only the new content
+                    # starting from the prior cached state (not the full merged line).
+                    cached_ctx = self._analyze_line_context(cont_content, starting_ctx=cached_ctx)
                     j += 1
                 else:
                     # Not a continuation, stop merging
@@ -216,17 +225,31 @@ class ContinuationLineHandler:
 
         return content
 
-    def _analyze_line_context(self, line: str) -> ContinuationContext:
+    def _analyze_line_context(
+        self, line: str, starting_ctx: Optional[ContinuationContext] = None
+    ) -> ContinuationContext:
         """
         Analyze a line to determine if it has unclosed quotes/parens.
 
         Args:
             line: Line to analyze
+            starting_ctx: Optional starting state. When provided the scan
+                continues from this context rather than from a blank state.
+                Used for incremental updates in merge_continuation_lines().
 
         Returns:
             ContinuationContext with state information
         """
-        ctx = ContinuationContext()
+        if starting_ctx is not None:
+            ctx = ContinuationContext(
+                in_quotes=starting_ctx.in_quotes,
+                paren_depth=starting_ctx.paren_depth,
+                bracket_depth=starting_ctx.bracket_depth,
+                last_char=starting_ctx.last_char,
+                is_complete=False,
+            )
+        else:
+            ctx = ContinuationContext()
 
         i = 0
         while i < len(line):
