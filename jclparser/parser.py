@@ -715,9 +715,9 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]
     
     # Enhanced parameter parsing with better list and parentheses handling
     parts = []
-    current_parts: list[str] = []
     in_quotes = False
     paren_depth = 0
+    start = 0
 
     i = 0
     while i < len(param_string):
@@ -725,29 +725,22 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]
         if char == "'":
             # Handle escaped quotes: '' inside a quoted string represents a single quote
             if in_quotes and i + 1 < len(param_string) and param_string[i + 1] == "'":
-                # Escaped quote - add only one quote to current and skip the next quote
-                current_parts.append("'")
-                i += 2  # Skip both quotes
+                i += 2  # Skip both quote chars; both remain in the current slice
                 continue
             # Regular quote - toggle state
             in_quotes = not in_quotes
-            current_parts.append(char)
         elif char == "(" and not in_quotes:
             paren_depth += 1
-            current_parts.append(char)
         elif char == ")" and not in_quotes:
             paren_depth -= 1
-            current_parts.append(char)
         elif char == "," and not in_quotes and paren_depth == 0:
-            current = "".join(current_parts).strip()
+            current = param_string[start:i].strip()
             if current:
                 parts.append(current)
-            current_parts = []
-        else:
-            current_parts.append(char)
+            start = i + 1
         i += 1
 
-    current = "".join(current_parts).strip()
+    current = param_string[start:].strip()
     if current:
         parts.append(current)
     
@@ -803,9 +796,9 @@ def _parse_list_parameter(list_content: str) -> List[str]:
     Trailing empty elements are stripped (from trailing commas).
     """
     items = []
-    current_parts: list[str] = []
     in_quotes = False
     paren_depth = 0
+    start = 0
 
     i = 0
     while i < len(list_content):
@@ -813,29 +806,23 @@ def _parse_list_parameter(list_content: str) -> List[str]:
         if char == "'":
             # Handle escaped quotes
             if in_quotes and i + 1 < len(list_content) and list_content[i + 1] == "'":
-                current_parts.append("'")
                 i += 2
                 continue
             in_quotes = not in_quotes
-            current_parts.append(char)
         elif char == "(" and not in_quotes:
             paren_depth += 1
-            current_parts.append(char)
         elif char == ")" and not in_quotes:
             paren_depth -= 1
-            current_parts.append(char)
         elif char == "," and not in_quotes and paren_depth == 0:
-            item = "".join(current_parts).strip()
+            item = list_content[start:i].strip()
             if item.startswith("'") and item.endswith("'"):
                 item = item[1:-1].replace("''", "'")
             items.append(item)  # preserve empty strings for omitted positional subfields
-            current_parts = []
-        else:
-            current_parts.append(char)
+            start = i + 1
         i += 1
 
     # Append final element
-    item = "".join(current_parts).strip()
+    item = list_content[start:].strip()
     if item.startswith("'") and item.endswith("'"):
         item = item[1:-1].replace("''", "'")
     items.append(item)
