@@ -75,7 +75,9 @@ class TestContinuationContextCaching:
         dd = job.steps[0].dd_statements[0]
         assert dd.parameters["DSN"] == "MY.DATASET"
         assert dd.parameters["DISP"] == ["NEW", "CATLG", "DELETE"]
-        assert "BLKSIZE" in str(dd.parameters.get("DCB", ""))
+        dcb = dd.parameters["DCB"]
+        assert isinstance(dcb, list)
+        assert any("BLKSIZE" in item for item in dcb)
 
     def test_analyze_line_context_accepts_starting_ctx(self):
         """_analyze_line_context must accept and use a starting_ctx parameter."""
