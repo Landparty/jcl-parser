@@ -161,20 +161,25 @@ class ContinuationLineHandler:
 
                 # Check if next line is a continuation
                 if self.is_continuation_line(next_line, merged_line):
+                    # Check if the continuation line has a leading comma (ALT form: //   ,content)
+                    # before extraction strips it, so we know whether to restore the separator.
+                    raw_after_slashes = (next_line[2:] if next_line.startswith("//") else next_line).lstrip()
+                    had_leading_comma = raw_after_slashes.startswith(",")
+
                     # Extract continuation content
                     cont_content = self._extract_continuation_content(next_line)
 
                     # Merge with proper separator
                     stripped = merged_line.rstrip()
                     if stripped.endswith(","):
-                        # Already has comma separator
+                        # Comma already present at end of previous fragment
                         merged_line = stripped + cont_content
+                    elif had_leading_comma:
+                        # ALT continuation: comma was at start of next line — restore it
+                        merged_line = stripped + "," + cont_content
                     else:
-                        # Add comma separator if needed
-                        if cont_content and not cont_content.startswith(","):
-                            merged_line = stripped + "," + cont_content
-                        else:
-                            merged_line = stripped + cont_content
+                        # Mid-word or direct continuation — join without inserting a comma
+                        merged_line = stripped + cont_content
 
                     j += 1
                 else:
