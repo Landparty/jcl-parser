@@ -139,12 +139,18 @@ class JCLLIBProcedureLoader(ProcedureLoader):
         if not library_path.exists() or not library_path.is_dir():
             return None
         
-        # Try different file name variations
+        # Try different file name variations (case-insensitive on case-sensitive fs)
+        name_upper = name.upper()
+        name_lower = name.lower()
         candidates = [
+            library_path / f"{name_upper}.jcl",
+            library_path / f"{name_upper}.JCL",
             library_path / f"{name}.jcl",
             library_path / f"{name}.JCL",
-            library_path / name.lower(),
-            library_path / name.upper(),
+            library_path / f"{name_lower}.jcl",
+            library_path / f"{name_lower}.JCL",
+            library_path / name_lower,
+            library_path / name_upper,
         ]
         
         for candidate in candidates:
