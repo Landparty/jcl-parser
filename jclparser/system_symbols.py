@@ -124,31 +124,26 @@ class RuntimeSystemSymbolProvider(SystemSymbolProvider):
         self.node = node or 'NODE01'
         self.sysplex = sysplex
         self.clone = clone
-    
-    def get_symbol(self, symbol_name: str) -> Optional[str]:
-        """Get runtime symbol value"""
-        symbol_name = symbol_name.upper()
-        
-        # Dynamic date/time symbols
+
+        # Build symbol map once at init time (date/time captured at construction)
         now = datetime.now()
-        
-        symbol_map = {
-            'SYSUID': self.userid.upper()[:8],  # Max 8 chars
-            'SYSDATE': now.strftime('%y/%m/%d'),  # YY/MM/DD
-            'SYSTIME': now.strftime('%H:%M'),     # HH:MM
-            'SYSJOBID': self.jobid,
-            'SYSJOBNAME': self.jobname.upper()[:8],  # Max 8 chars
-            'SYSNODE': self.node,
+        self._symbol_map = {
+            'SYSUID':    self.userid.upper()[:8],       # Max 8 chars
+            'SYSDATE':   now.strftime('%y/%m/%d'),       # YY/MM/DD
+            'SYSTIME':   now.strftime('%H:%M'),           # HH:MM
+            'SYSJOBID':  self.jobid,
+            'SYSJOBNAME': self.jobname.upper()[:8],      # Max 8 chars
+            'SYSNODE':   self.node,
             'SYSSYMDEF': 'DYNAMIC',
         }
-        
-        # Optional symbols
         if self.sysplex:
-            symbol_map['SYSPLEX'] = self.sysplex
+            self._symbol_map['SYSPLEX'] = self.sysplex
         if self.clone:
-            symbol_map['SYSCLONE'] = self.clone
-        
-        return symbol_map.get(symbol_name)
+            self._symbol_map['SYSCLONE'] = self.clone
+
+    def get_symbol(self, symbol_name: str) -> Optional[str]:
+        """Get runtime symbol value"""
+        return self._symbol_map.get(symbol_name.upper())
 
 
 class EnvironmentSystemSymbolProvider(SystemSymbolProvider):

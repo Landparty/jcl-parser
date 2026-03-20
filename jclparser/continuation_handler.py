@@ -165,15 +165,16 @@ class ContinuationLineHandler:
                     cont_content = self._extract_continuation_content(next_line)
 
                     # Merge with proper separator
-                    if merged_line.rstrip().endswith(","):
+                    stripped = merged_line.rstrip()
+                    if stripped.endswith(","):
                         # Already has comma separator
-                        merged_line = merged_line.rstrip() + cont_content
+                        merged_line = stripped + cont_content
                     else:
                         # Add comma separator if needed
                         if cont_content and not cont_content.startswith(","):
-                            merged_line = merged_line.rstrip() + "," + cont_content
+                            merged_line = stripped + "," + cont_content
                         else:
-                            merged_line = merged_line.rstrip() + cont_content
+                            merged_line = stripped + cont_content
 
                     j += 1
                 else:

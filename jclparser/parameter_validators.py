@@ -8,6 +8,10 @@ import re
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
 
+# Module-level frozensets for character validation (avoids per-call set construction)
+_VALID_QUALIFIER_CHARS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$#@-')
+_VALID_VOLUME_CHARS    = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+
 
 @dataclass
 class ValidationResult:
@@ -34,7 +38,12 @@ class DISPValidator:
     VALID_STATUS = {'NEW', 'OLD', 'SHR', 'MOD'}
     VALID_NORMAL_TERM = {'DELETE', 'KEEP', 'CATLG', 'UNCATLG', 'PASS'}
     VALID_ABNORMAL_TERM = {'DELETE', 'KEEP', 'CATLG', 'UNCATLG'}
-    
+
+    # Precomputed sorted join strings (built once at class definition time)
+    _VALID_STATUS_STR        = ', '.join(sorted(VALID_STATUS))
+    _VALID_NORMAL_TERM_STR   = ', '.join(sorted(VALID_NORMAL_TERM))
+    _VALID_ABNORMAL_TERM_STR = ', '.join(sorted(VALID_ABNORMAL_TERM))
+
     @classmethod
     def validate(cls, disp_value: str) -> ValidationResult:
         """
@@ -66,12 +75,12 @@ class DISPValidator:
         
         # Validate status (first parameter)
         if parts[0] and parts[0] not in cls.VALID_STATUS:
-            errors.append(f"Invalid DISP status: {parts[0]}. Valid values: {', '.join(sorted(cls.VALID_STATUS))}")
+            errors.append(f"Invalid DISP status: {parts[0]}. Valid values: {cls._VALID_STATUS_STR}")
         
         # Validate normal termination (second parameter)
         if len(parts) >= 2 and parts[1]:
             if parts[1] not in cls.VALID_NORMAL_TERM:
-                errors.append(f"Invalid DISP normal termination: {parts[1]}. Valid values: {', '.join(sorted(cls.VALID_NORMAL_TERM))}")
+                errors.append(f"Invalid DISP normal termination: {parts[1]}. Valid values: {cls._VALID_NORMAL_TERM_STR}")
             
             # Warning: PASS with NEW should usually be CATLG or KEEP
             if len(parts) >= 1 and parts[0] == 'NEW' and parts[1] == 'PASS':
@@ -80,7 +89,7 @@ class DISPValidator:
         # Validate abnormal termination (third parameter)
         if len(parts) >= 3 and parts[2]:
             if parts[2] not in cls.VALID_ABNORMAL_TERM:
-                errors.append(f"Invalid DISP abnormal termination: {parts[2]}. Valid values: {', '.join(sorted(cls.VALID_ABNORMAL_TERM))}")
+                errors.append(f"Invalid DISP abnormal termination: {parts[2]}. Valid values: {cls._VALID_ABNORMAL_TERM_STR}")
         
         # Too many parameters
         if len(parts) > 3:
@@ -184,7 +193,7 @@ class DatasetNameValidator:
                 if not qualifier[0].isalpha() and qualifier[0] not in '$#@':
                     errors.append(f"Qualifier '{qualifier}' must start with A-Z, $, #, or @")
                 else:
-                    invalid_chars = set(qualifier) - set('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$#@-')
+                    invalid_chars = set(qualifier) - _VALID_QUALIFIER_CHARS
                     if invalid_chars:
                         errors.append(f"Qualifier '{qualifier}' contains invalid characters: {', '.join(sorted(invalid_chars))}")
         
@@ -273,7 +282,7 @@ class ParameterValidator:
         
         # Check characters (alphanumeric)
         if not volume.isalnum():
-            invalid_chars = set(volume) - set('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+            invalid_chars = set(volume) - _VALID_VOLUME_CHARS
             errors.append(f"Volume serial contains invalid characters: {', '.join(sorted(invalid_chars))}")
         
         return ValidationResult(

@@ -14,6 +14,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Union, IO, Optional
 
+# Module-level constants (avoids per-call set/list construction)
+_PREAMBLE_STATEMENTS = frozenset({'SET', 'JCLLIB', 'IF', 'THEN', 'ELSE', 'ENDIF', 'INCLUDE'})
+_KNOWN_TYPES = frozenset({'JOB', 'EXEC', 'DD', 'PROC', 'PEND', 'JCLLIB',
+                          'INCLUDE', 'SET', 'IF', 'THEN', 'ELSE', 'ENDIF'})
+
 
 class FileType(Enum):
     """Enumeration of JCL file types."""
@@ -74,6 +79,28 @@ def detect_file_type(source: Union[str, Path, IO]) -> FileType:
         return FileType.JCL
     else:
         # Any other statement type (PROC, EXEC, DD, SET, etc.) indicates PROC
+        return FileType.PROC
+
+
+def detect_file_type_from_content(content: str) -> FileType:
+    """
+    Detect whether content is JCL or PROC without reading from a file path.
+
+    This mirrors ``detect_file_type()`` but accepts already-read content,
+    avoiding a second disk read when the caller already has the content in memory.
+
+    Args:
+        content: JCL file content as a string
+
+    Returns:
+        FileType enum value (JCL, PROC, or UNKNOWN)
+    """
+    first_statement_type = _find_first_statement_type(content)
+    if first_statement_type is None:
+        return FileType.UNKNOWN
+    elif first_statement_type == "JOB":
+        return FileType.JCL
+    else:
         return FileType.PROC
 
 
@@ -230,10 +257,7 @@ def _find_first_statement_type(content: str) -> Optional[str]:
         Statement type (e.g., "JOB", "PROC", "EXEC", "DD") or None if no valid statement
     """
     lines = content.split('\n')
-    
-    # Statements that can appear before JOB card and should be skipped
-    preamble_statements = {'SET', 'JCLLIB', 'IF', 'THEN', 'ELSE', 'ENDIF', 'INCLUDE'}
-    
+
     for line in lines:
         # Remove carriage return if present
         line = line.rstrip('\r')
@@ -255,7 +279,7 @@ def _find_first_statement_type(content: str) -> Optional[str]:
         
         if statement_type:
             # If it's a preamble statement, skip it and continue looking
-            if statement_type in preamble_statements:
+            if statement_type in _PREAMBLE_STATEMENTS:
                 continue
             
             # Found a meaningful statement
@@ -314,16 +338,13 @@ def _extract_statement_type(line: str) -> Optional[str]:
     
     # parts[0] is the name, parts[1] is the type
     statement_type = parts[1].upper()
-    
+
     # Validate it's a known statement type
-    known_types = ['JOB', 'EXEC', 'DD', 'PROC', 'PEND', 'JCLLIB', 'INCLUDE', 
-                   'SET', 'IF', 'THEN', 'ELSE', 'ENDIF']
-    
-    if statement_type in known_types:
+    if statement_type in _KNOWN_TYPES:
         return statement_type
-    
+
     # Check if parts[1] contains a statement type (e.g., "JOB(ACCT)")
-    for known_type in known_types:
+    for known_type in _KNOWN_TYPES:
         if statement_type.startswith(known_type):
             return known_type
     

@@ -609,7 +609,8 @@ def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
     if content.startswith(" ") and content.strip():
         # Check if this might be a statement without a name field (like // SET, // IF, // EXEC, // DD, etc.)
         content_stripped = content.strip()
-        first_token = content_stripped.split()[0].upper() if content_stripped.split() else ""
+        _cs_parts = content_stripped.split()
+        first_token = _cs_parts[0].upper() if _cs_parts else ""
         # All valid JCL statement types that can appear without a name field
         if first_token not in _STATEMENT_TYPES:
             # This is a true continuation line - return None
@@ -635,7 +636,8 @@ def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
         return None
     
     # Check if first token is a statement type (no name field)
-    first_token = content_stripped.split()[0] if content_stripped.split() else ""
+    _cs_parts2 = content_stripped.split()
+    first_token = _cs_parts2[0] if _cs_parts2 else ""
 
     if first_token.upper() in _STATEMENT_TYPES:
         # No name field - statement starts directly with type
@@ -655,8 +657,8 @@ def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
         statement_type = rest.upper()
         parameters_part = ""
     else:
-        # Special handling for SET statements - syntax is: //  SET VAR=VALUE
-        if rest.upper().startswith("SET "):
+        rest_upper = rest.upper()
+        if rest_upper.startswith("SET "):
             statement_type = "SET"
             parameters_part = rest[4:].strip()  # Everything after "SET "
         else:
@@ -728,10 +730,10 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]
     
     # Enhanced parameter parsing with better list and parentheses handling
     parts = []
-    current = ""
+    current_parts: list[str] = []
     in_quotes = False
     paren_depth = 0
-    
+
     i = 0
     while i < len(param_string):
         char = param_string[i]
@@ -739,28 +741,30 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]
             # Handle escaped quotes: '' inside a quoted string represents a single quote
             if in_quotes and i + 1 < len(param_string) and param_string[i + 1] == "'":
                 # Escaped quote - add only one quote to current and skip the next quote
-                current += "'"
+                current_parts.append("'")
                 i += 2  # Skip both quotes
                 continue
             # Regular quote - toggle state
             in_quotes = not in_quotes
-            current += char
+            current_parts.append(char)
         elif char == "(" and not in_quotes:
             paren_depth += 1
-            current += char
+            current_parts.append(char)
         elif char == ")" and not in_quotes:
             paren_depth -= 1
-            current += char
+            current_parts.append(char)
         elif char == "," and not in_quotes and paren_depth == 0:
-            if current.strip():
-                parts.append(current.strip())
-            current = ""
+            current = "".join(current_parts).strip()
+            if current:
+                parts.append(current)
+            current_parts = []
         else:
-            current += char
+            current_parts.append(char)
         i += 1
-    
-    if current.strip():
-        parts.append(current.strip())
+
+    current = "".join(current_parts).strip()
+    if current:
+        parts.append(current)
     
     # Check for unclosed quotes
     if in_quotes:
@@ -814,7 +818,7 @@ def _parse_list_parameter(list_content: str) -> List[str]:
     Trailing empty elements are stripped (from trailing commas).
     """
     items = []
-    current = ""
+    current_parts: list[str] = []
     in_quotes = False
     paren_depth = 0
 
@@ -824,29 +828,29 @@ def _parse_list_parameter(list_content: str) -> List[str]:
         if char == "'":
             # Handle escaped quotes
             if in_quotes and i + 1 < len(list_content) and list_content[i + 1] == "'":
-                current += "'"
+                current_parts.append("'")
                 i += 2
                 continue
             in_quotes = not in_quotes
-            current += char
+            current_parts.append(char)
         elif char == "(" and not in_quotes:
             paren_depth += 1
-            current += char
+            current_parts.append(char)
         elif char == ")" and not in_quotes:
             paren_depth -= 1
-            current += char
+            current_parts.append(char)
         elif char == "," and not in_quotes and paren_depth == 0:
-            item = current.strip()
+            item = "".join(current_parts).strip()
             if item.startswith("'") and item.endswith("'"):
                 item = item[1:-1].replace("''", "'")
             items.append(item)  # preserve empty strings for omitted positional subfields
-            current = ""
+            current_parts = []
         else:
-            current += char
+            current_parts.append(char)
         i += 1
 
     # Append final element
-    item = current.strip()
+    item = "".join(current_parts).strip()
     if item.startswith("'") and item.endswith("'"):
         item = item[1:-1].replace("''", "'")
     items.append(item)

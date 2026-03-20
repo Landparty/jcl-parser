@@ -18,6 +18,7 @@ Public utility API (used externally, not on the hot path):
 """
 
 import re
+from collections import deque
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional, Union
 
@@ -28,6 +29,9 @@ POSITIONAL_PARAM_PREFIX: str = "_pos_"
 _RE_SPECIAL_CHARS = re.compile(r"[,()=\s']")
 _RE_JCL_NAME_START = re.compile(r'^[A-Za-z@#$]')
 _RE_JCL_NAME_FULL = re.compile(r'^[A-Za-z0-9@#$]+$')
+
+# Module-level ParameterParser singleton (ParameterParser is stateless)
+_PARAMETER_PARSER: Optional['Any'] = None
 
 
 def is_positional_key(key: str) -> bool:
@@ -136,8 +140,11 @@ def split_jcl_parameters(param_string: str) -> List[str]:
     """
     if not param_string.strip():
         return []
-    from .parameter_ast import ParameterParser
-    return ParameterParser()._split_parameters(param_string)
+    global _PARAMETER_PARSER
+    if _PARAMETER_PARSER is None:
+        from .parameter_ast import ParameterParser
+        _PARAMETER_PARSER = ParameterParser()
+    return _PARAMETER_PARSER._split_parameters(param_string)
 
 
 def parse_jcl_parameter(param: str) -> Tuple[str, Any]:
@@ -296,10 +303,10 @@ def format_jcl_line(statement_type: str, name: str, parameters: Dict[str, Any],
     
     # Add parameters with continuation
     current_line = "//"
-    remaining_params = param_parts.copy()
-    
+    remaining_params = deque(param_parts)
+
     while remaining_params:
-        param = remaining_params.pop(0)
+        param = remaining_params.popleft()
         
         # Check if we can fit this parameter
         test_line = current_line + (" " if len(current_line) > 2 else "") + param
@@ -374,37 +381,39 @@ def merge_continuation_lines(lines: List[str]) -> List[str]:
         List of complete JCL statements
     """
     merged_lines = []
-    current_statement = ""
-    
+    current_parts: list[str] = []
+
     for line in lines:
         normalized = normalize_jcl_line(line)
-        
+
         # Skip empty lines and comments
         if not normalized or normalized.strip().startswith("//*"):
-            if current_statement:
-                merged_lines.append(current_statement)
-                current_statement = ""
+            if current_parts:
+                merged_lines.append("".join(current_parts))
+                current_parts = []
             merged_lines.append(normalized)
             continue
-        
+
         # Check if this is a continuation
         if is_continuation_line(normalized):
             # Add to current statement
             continuation_part = normalized[2:].strip()  # Remove // prefix
-            if current_statement:
-                current_statement += " " + continuation_part
+            if current_parts:
+                current_parts.append(" ")
+                current_parts.append(continuation_part)
             else:
                 # Continuation without previous statement - treat as new statement
-                current_statement = "//" + continuation_part
+                current_parts.append("//")
+                current_parts.append(continuation_part)
         else:
             # New statement
-            if current_statement:
-                merged_lines.append(current_statement)
-            current_statement = normalized
-    
+            if current_parts:
+                merged_lines.append("".join(current_parts))
+            current_parts = [normalized]
+
     # Don't forget the last statement
-    if current_statement:
-        merged_lines.append(current_statement)
+    if current_parts:
+        merged_lines.append("".join(current_parts))
     
     return merged_lines
 

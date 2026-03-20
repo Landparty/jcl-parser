@@ -119,8 +119,9 @@ class DDStatement:
     line_number: int = 0
     
     # Cached parsed parameters (not included in __init__)
-    _dcb_parsed: Optional[DCBParameter] = field(default=None, init=False, repr=False)
-    _space_parsed: Optional[SPACEParameter] = field(default=None, init=False, repr=False)
+    _dcb_parsed: Optional[DCBParameter] = field(default=None, init=False, repr=False, compare=False)
+    _space_parsed: Optional[SPACEParameter] = field(default=None, init=False, repr=False, compare=False)
+    _disp_tokens_cache: Optional[list] = field(default=None, init=False, repr=False, compare=False)
     
     @property
     def dcb(self) -> Optional[DCBParameter]:
@@ -458,17 +459,21 @@ class DDStatement:
     _OUTPUT_DISPOSITIONS: frozenset = frozenset({"NEW", "MOD", "CATLG", "UNCATLG"})
 
     def _disp_tokens(self) -> List[str]:
-        """Return disposition as an uppercase list of individual tokens."""
-        if isinstance(self.disposition, list):
-            return [
-                (d.upper() if isinstance(d, str) else str(d).upper())
-                for d in self.disposition
-            ]
-        # String form: may be bare "SHR", "(NEW,CATLG,DELETE)", or "NEW,CATLG"
-        return [
-            t.strip()
-            for t in str(self.disposition).upper().strip("()").split(",")
-        ]
+        """Return disposition as an uppercase list of individual tokens (cached)."""
+        if self._disp_tokens_cache is None:
+            if isinstance(self.disposition, list):
+                result = [
+                    (d.upper() if isinstance(d, str) else str(d).upper())
+                    for d in self.disposition
+                ]
+            else:
+                # String form: may be bare "SHR", "(NEW,CATLG,DELETE)", or "NEW,CATLG"
+                result = [
+                    t.strip()
+                    for t in str(self.disposition).upper().strip("()").split(",")
+                ]
+            self._disp_tokens_cache = result
+        return self._disp_tokens_cache
 
     def is_input(self) -> bool:
         """True if this DD defines input data (DISP status is OLD or SHR)."""

@@ -12,8 +12,7 @@ from .errors import ValidationError, ErrorType
 from .parameter_validators import DatasetNameValidator, DISPValidator
 
 # Precompiled regex patterns for performance
-_RE_JCL_ID_START = re.compile(r'^[A-Za-z@#$]')
-_RE_JCL_ID_FULL = re.compile(r'^[A-Za-z0-9@#$]+$')
+_RE_JCL_ID_VALID = re.compile(r'^[A-Za-z@#$][A-Za-z0-9@#$]*$')
 _RE_PARAM_NAME = re.compile(r'^[A-Za-z][A-Za-z0-9]*$')
 
 
@@ -31,13 +30,8 @@ def validate_jcl_identifier(name: str) -> bool:
     """
     if not name or len(name) > 8:
         return False
-    
-    # Must start with letter or @, #, $
-    if not _RE_JCL_ID_START.match(name):
-        return False
 
-    # Remaining characters can be alphanumeric or @, #, $
-    return _RE_JCL_ID_FULL.match(name) is not None
+    return _RE_JCL_ID_VALID.match(name) is not None
 
 
 def validate_dataset_name(dsn: str) -> bool:

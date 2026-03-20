@@ -7,6 +7,10 @@ Provides structured representation of complex parameters like DCB, SPACE, etc.
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
+# Module-level frozensets for DCB/SPACE validation (avoids per-call list construction)
+_VALID_RECFM = frozenset({'F', 'FB', 'FBA', 'FBM', 'FBS', 'V', 'VB', 'VBA', 'VBM', 'VBS', 'U', 'D', 'DB'})
+_VALID_DSORG = frozenset({'PS', 'PO', 'DA', 'IS', 'VS'})
+
 
 @dataclass
 class ParameterNode:
@@ -89,9 +93,7 @@ class DCBParameter(NestedParameter):
         
         # Validate RECFM
         if self.recfm:
-            valid_recfm = ['F', 'FB', 'FBA', 'FBM', 'FBS', 'V', 'VB', 'VBA', 
-                          'VBM', 'VBS', 'U', 'D', 'DB']
-            if self.recfm not in valid_recfm:
+            if self.recfm not in _VALID_RECFM:
                 errors.append(f"Invalid RECFM value: {self.recfm}")
         
         # Validate LRECL
@@ -114,8 +116,7 @@ class DCBParameter(NestedParameter):
         
         # Validate DSORG
         if self.dsorg:
-            valid_dsorg = ['PS', 'PO', 'DA', 'IS', 'VS']
-            if self.dsorg not in valid_dsorg:
+            if self.dsorg not in _VALID_DSORG:
                 errors.append(f"Invalid DSORG value: {self.dsorg}")
         
         return errors
@@ -310,7 +311,7 @@ class ParameterParser:
             List of parameter parts
         """
         parts = []
-        current = ""
+        current_parts: list[str] = []
         paren_depth = 0
         in_quotes = False
         i = 0
@@ -323,35 +324,37 @@ class ParameterParser:
                     # Look-ahead: is this the start of an escaped '' pair?
                     if i + 1 < len(param_string) and param_string[i + 1] == "'":
                         # Escaped apostrophe — consume both and stay in-quotes
-                        current += "''"
+                        current_parts.append("''")
                         i += 2
                         continue
                     else:
                         # Closing quote
                         in_quotes = False
-                        current += char
+                        current_parts.append(char)
                 else:
-                    current += char
+                    current_parts.append(char)
             else:
                 if char == "'":
                     in_quotes = True
-                    current += char
+                    current_parts.append(char)
                 elif char == "(":
                     paren_depth += 1
-                    current += char
+                    current_parts.append(char)
                 elif char == ")":
                     paren_depth -= 1
-                    current += char
+                    current_parts.append(char)
                 elif char == "," and paren_depth == 0:
-                    if current.strip():
-                        parts.append(current.strip())
-                    current = ""
+                    current = "".join(current_parts).strip()
+                    if current:
+                        parts.append(current)
+                    current_parts = []
                 else:
-                    current += char
+                    current_parts.append(char)
 
             i += 1
 
-        if current.strip():
-            parts.append(current.strip())
+        current = "".join(current_parts).strip()
+        if current:
+            parts.append(current)
 
         return parts

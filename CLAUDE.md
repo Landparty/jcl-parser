@@ -28,7 +28,7 @@ ruff check .
 ruff format .
 ```
 
-Coverage is enforced at 87% minimum (configured in `pytest.ini`). Tests always generate HTML coverage to `htmlcov/` and XML to `coverage.xml`.
+Coverage is enforced at 90% minimum (configured in `pyproject.toml` under `[tool.coverage.report]`). Tests always generate HTML coverage to `htmlcov/` and XML to `coverage.xml`.
 
 ## Architecture
 
@@ -56,11 +56,13 @@ The package is `jclparser/` — a pure Python library with no runtime dependenci
 
 10. **`jcl_file_type.py`** — Heuristic detection of whether a file is JCL, a PROC, or neither (`detect_file_type()`, `is_jcl_file()`, `is_proc_file()`).
 
-11. **`plugins/`** — Extension points: `StatementPlugin` (custom statement parsing), `ValidationPlugin` (custom validation rules), `PluginRegistry`, `ParserConfig`. Get the global registry via `get_plugin_registry()`.
+11. **`condition_parser.py`** — Parses `// IF condition THEN` expressions into an AST (`parse_condition()`). Supports `AND`/`OR`/`NOT`, step RC comparisons, `ABEND`, and `RUN` atoms. Returns `None` for unparseable conditions; the raw string on `ConditionalBlock.condition` remains authoritative.
 
-12. **`errors.py`** — Exception hierarchy: `JCLSyntaxError`, `JCLValidationError`, `JCLStructureError`, plus `UndefinedSymbolError`, `CircularProcedureError`, `ExplosionDepthError`, `ProcedureNotFoundError`.
+12. **`plugins/`** — Extension points: `StatementPlugin` (custom statement parsing), `ValidationPlugin` (custom validation rules), `PluginRegistry`, `ParserConfig`. Get the global registry via `get_plugin_registry()`.
 
-13. **`utils.py`** — Internal parsing helpers (column splitting, identifier extraction, etc.).
+13. **`errors.py`** — Exception hierarchy: `JCLSyntaxError`, `JCLValidationError`, `JCLStructureError`, plus `UndefinedSymbolError`, `CircularProcedureError`, `ExplosionDepthError`, `ProcedureNotFoundError`.
+
+14. **`utils.py`** — Internal parsing helpers (column splitting, identifier extraction, etc.).
 
 ### Public API tiers (from `__init__.py`)
 

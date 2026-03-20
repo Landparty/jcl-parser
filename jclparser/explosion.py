@@ -22,8 +22,11 @@ from .proc_loader import ProcedureLoader, create_default_loader
 from .system_symbols import SystemSymbolProvider, get_default_provider
 
 
-# Regex pattern for symbolic parameters
+# Regex pattern for symbolic parameters (kept for backwards compatibility)
 SYMBOL_PATTERN = re.compile(r'&([A-Z0-9@#$]+)')
+
+# Single-pass pattern: matches && (escaped ampersand) OR &SYMBOL with optional trailing period
+_SYMBOL_SUB_PATTERN = re.compile(r'&&|&([A-Z0-9@#$]+)\.?')
 
 
 @dataclass
@@ -121,94 +124,73 @@ class ProcExpansionInfo:
     expanded_step_names: List[str]
 
 
+def _make_replacer(scope: 'SymbolScope', strict: bool, allow_undefined: bool):
+    """Create a regex replacer function for symbol substitution."""
+    def _replacer(m: re.Match) -> str:
+        if m.group(0) == '&&':
+            return '&'
+        symbol_name = m.group(1)
+        value = scope.resolve(symbol_name, strict=strict)
+        if value is None:
+            if allow_undefined:
+                return m.group(0)    # leave as-is
+            if strict:
+                raise UndefinedSymbolError(symbol_name)
+            return ''
+        return value
+    return _replacer
+
+
 def substitute_symbols(
     text: str,
-    scope: SymbolScope,
+    scope: 'SymbolScope',
     strict: bool = False,
     allow_undefined: bool = False
 ) -> str:
     """
     Substitute symbolic parameters in text.
-    
+
     Replaces &SYMBOL references with resolved values from scope.
-    Handles escaped symbols (&&) and nested references.
-    
+    Handles escaped symbols (&&) and trailing-period concatenation (&VAR.SUFFIX).
+
     Args:
         text: Text containing symbolic parameters
         scope: Symbol resolution scope
         strict: If True, raise error for undefined symbols
         allow_undefined: If True, leave undefined symbols as-is
-        
+
     Returns:
         Text with symbols substituted
-        
+
     Raises:
         UndefinedSymbolError: If strict=True and symbol undefined
     """
     if not text or not isinstance(text, str):
         return text
-    
-    # Handle escaped symbols first (&&)
-    text = text.replace('&&', '\x00')  # Temporary marker
-    
-    result = text
-    
-    # Find and replace all symbols
-    matches = list(SYMBOL_PATTERN.finditer(result))
-    
-    # Process in reverse to maintain positions
-    for match in reversed(matches):
-        symbol_name = match.group(1)
-        
-        # Resolve symbol value
-        value = scope.resolve(symbol_name, strict=strict)
-        
-        if value is None:
-            if not allow_undefined:
-                if strict:
-                    raise UndefinedSymbolError(symbol_name)
-                # Use empty string for undefined symbols
-                value = ''
-            else:
-                # Leave symbol as-is
-                continue
-        
-        # Replace this occurrence
-        start = match.start()
-        end = match.end()
-        
-        # In JCL, periods after symbols are concatenation operators
-        # Single period: &VAR.DATA → VALUEDATA (period consumed)
-        # Double period: &VAR..DATA → VALUE.DATA (one period consumed, one remains)
-        if end < len(result) and result[end] == '.':
-            # Skip one period (concatenation operator)
-            end += 1
-        
-        result = result[:start] + value + result[end:]
-    
-    # Restore escaped symbols
-    result = result.replace('\x00', '&')
-    
-    return result
+    return _SYMBOL_SUB_PATTERN.sub(_make_replacer(scope, strict, allow_undefined), text)
 
 
 def detect_circular_refs(
     proc_name: str,
-    call_chain: List[str]
+    call_chain: List[str],
+    call_chain_upper: Optional[frozenset] = None,
 ) -> None:
     """
     Detect circular procedure references.
-    
+
     Args:
         proc_name: Procedure being called
         call_chain: Current call chain
-        
+        call_chain_upper: Optional pre-built frozenset of uppercased chain names
+                          for O(1) membership testing.
+
     Raises:
         CircularProcedureError: If circular reference detected
     """
     proc_upper = proc_name.upper()
-    
-    if proc_upper in [p.upper() for p in call_chain]:
+
+    chain_set = call_chain_upper if call_chain_upper is not None else frozenset(p.upper() for p in call_chain)
+    if proc_upper in chain_set:
         raise CircularProcedureError(proc_name, call_chain + [proc_name])
 
 
@@ -469,6 +451,7 @@ def explode_job(
                     proc_loader=proc_loader,
                     base_scope=base_scope,
                     call_chain=[],
+                    call_chain_upper=frozenset(),
                     depth=0,
                     max_depth=max_depth,
                     audit_records=explosion_audit if audit else None,
@@ -535,47 +518,55 @@ def _explode_step(
     expansion_map: Dict[str, ProcExpansionInfo],
     strict_symbols: bool,
     jcllib_order: Optional[List[str]] = None,
+    call_chain_upper: Optional[frozenset] = None,
 ) -> List[Step]:
     """
-    Recursively explode a single step (internal implementation).
-    
+    Recursively explode a single step.
+
     Args:
         step: Step to explode
         proc_loader: Procedure loader
         base_scope: Base symbol scope
-        call_chain: Current procedure call chain
+        call_chain: Current procedure call chain (list, for audit purposes)
         depth: Current nesting depth
         max_depth: Maximum allowed depth
         audit_records: List to append audit records (if auditing)
         expansion_map: Dictionary to populate with expansion info
         strict_symbols: Whether to enforce strict symbol resolution
-        
+        jcllib_order: JCLLIB library order for external PROC loading
+        call_chain_upper: Frozenset of uppercased call chain names (O(1) membership);
+                          computed from call_chain if not provided (backward-compat).
+
     Returns:
         List of exploded steps
     """
+    # Backfill call_chain_upper if not provided (backward-compatible callers)
+    if call_chain_upper is None:
+        call_chain_upper = frozenset(p.upper() for p in call_chain)
+
     # Check depth limit
     if depth > max_depth:
         raise ExplosionDepthError(depth, max_depth, call_chain)
-    
+
     proc_name = step.procedure
     if not proc_name:
         return [step]
-    
-    # Check for circular references
-    detect_circular_refs(proc_name, call_chain)
-    
+
+    # Check for circular references (O(1) with frozenset)
+    detect_circular_refs(proc_name, call_chain, call_chain_upper)
+
     # Load procedure definition
     # CompositeProcedureLoader requires a tuple (hashable) for its LRU cache;
     # other loaders accept both.  Always pass a tuple or None.
     _libs = tuple(jcllib_order) if jcllib_order else None
     procedure = proc_loader.load_procedure(proc_name, _libs)
-    
+
     if procedure is None:
         raise ProcedureNotFoundError(proc_name, step.line_number)
-    
+
     # Extract parameter overrides from step
     overrides = step.parameters.copy()
-    
+
     # Expand this procedure
     expanded = expand_proc_invocation(
         step=step,
@@ -584,11 +575,11 @@ def _explode_step(
         scope=base_scope,
         step_prefix=step.name
     )
-    
+
     # Apply DD overrides if present
     if hasattr(step, 'dd_overrides') and step.dd_overrides:
         apply_dd_overrides(expanded, step.dd_overrides, step.name or 'PROC')
-    
+
     # Record audit information
     if audit_records is not None:
         record = ExplosionRecord(
@@ -600,7 +591,7 @@ def _explode_step(
             expanded_steps=[s.name for s in expanded if hasattr(s, 'name') and s.name]
         )
         audit_records.append(record)
-    
+
     # Record expansion info
     if step.name:
         expansion_map[step.name] = ProcExpansionInfo(
@@ -610,11 +601,11 @@ def _explode_step(
             source_line_numbers=[step.line_number],
             expanded_step_names=[s.name for s in expanded if hasattr(s, 'name') and s.name]
         )
-    
+
     # Recursively explode any nested procedure calls
-    final_steps = []
     new_call_chain = call_chain + [proc_name]
-    
+    new_call_chain_upper = call_chain_upper | {proc_name.upper()}
+
     def _explode_nested(steps_list):
         result = []
         for s in steps_list:
@@ -630,6 +621,7 @@ def _explode_step(
                     proc_loader=proc_loader,
                     base_scope=base_scope,
                     call_chain=new_call_chain,
+                    call_chain_upper=new_call_chain_upper,
                     depth=depth + 1,
                     max_depth=max_depth,
                     audit_records=audit_records,
@@ -641,7 +633,5 @@ def _explode_step(
             else:
                 result.append(s)
         return result
-        
-    final_steps = _explode_nested(expanded)
-    
-    return final_steps
+
+    return _explode_nested(expanded)
