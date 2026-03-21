@@ -12,7 +12,7 @@ from datetime import datetime
 from jclparser.explosion import (
     ExplosionRecord, substitute_symbols, explode_job, SymbolScope
 )
-from jclparser.model import Job, Step, Procedure, DDStatement
+from jclparser.model import Job, Step, Procedure
 from jclparser.errors import ExplosionDepthError, UndefinedSymbolError, CircularProcedureError
 from jclparser.proc_loader import InlineProcedureLoader
 

@@ -9,15 +9,13 @@ Regression tests for the audit bug fixes:
   5. CompositeProcedureLoader does not cache None results
   6. Three-part DD overrides (PROCSTEP.INNERST.DDNAME) applied during explosion
 """
-import pytest
 from jclparser import parse_jcl, validate_jcl
-from jclparser.model import DDStatement, Job
+from jclparser.model import DDStatement
 from jclparser.proc_loader import (
     CompositeProcedureLoader,
-    InlineProcedureLoader,
     ProcedureLoader,
 )
-from jclparser.model import Procedure, Step
+from jclparser.model import Procedure
 
 
 # ---------------------------------------------------------------------------

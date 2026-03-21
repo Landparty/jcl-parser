@@ -5,9 +5,7 @@ Tests NULL, COMMAND, CNTL/ENDCNTL statements and unknown statement handling
 to ensure parser doesn't crash when encountering them.
 """
 
-import pytest
 from jclparser import parse_jcl
-from jclparser.errors import JCLSyntaxError
 
 
 class TestNULLStatement:

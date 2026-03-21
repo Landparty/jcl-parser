@@ -408,5 +408,5 @@ def parse_condition(condition_str: str) -> Optional[ConditionNode]:
             return None
         parser = _Parser(tokens)
         return parser.parse()
-    except Exception:
+    except (ValueError, TypeError, IndexError, AttributeError):
         return None

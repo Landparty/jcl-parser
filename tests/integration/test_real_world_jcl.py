@@ -1,10 +1,8 @@
 """
 Tests for real-world JCL examples covering PROCs, conditionals, and edge cases.
 """
-import pytest
 from pathlib import Path
 from jclparser import parse_jcl
-from jclparser.model import Job, Step
 
 # Path to fixtures
 FIXTURES_DIR = Path(__file__).parent.parent / 'fixtures' / 'real_world'
@@ -124,7 +122,7 @@ def test_edge_cases():
     # Validating that we parsed 3 DDs for this block
     
     # Check Inline Data (DD3)
-    step2_idx = next(i for i, s in enumerate(job.steps) if s.program == 'UTILITY') # Actually STEP2 is the one? 
+    next(i for i, s in enumerate(job.steps) if s.program == 'UTILITY') # Actually STEP2 is the one? 
     # Wait, in edge_cases.jcl:
     # STEP1 has DD1, DD2(concat) and DD3
     # STEP2 has DD4

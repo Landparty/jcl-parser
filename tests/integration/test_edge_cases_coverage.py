@@ -2,14 +2,11 @@
 Additional edge case tests to push coverage over 90%.
 """
 
-import pytest
 from pathlib import Path
 import tempfile
 import os
 from jclparser import parse_jcl
 from jclparser.model import Job, Step, DDStatement
-from jclparser.parser import parse_statement
-from jclparser.errors import JCLSyntaxError
 from jclparser.utils import split_jcl_parameters
 from jclparser.validators import validate_job_structure
 
@@ -42,8 +39,8 @@ class TestParserEdgeCases:
 //"""
         # Should parse without errors even if not fully implemented
         try:
-            job = parse_jcl(jcl, strict_mode=False)
-        except:
+            parse_jcl(jcl, strict_mode=False)
+        except Exception:
             pass  # Not all conditional logic may be implemented
     
     def test_very_long_line(self):
@@ -54,8 +51,8 @@ class TestParserEdgeCases:
 //STEP1 EXEC PGM=PROG
 //"""
         try:
-            job = parse_jcl(jcl, strict_mode=False)
-        except:
+            parse_jcl(jcl, strict_mode=False)
+        except Exception:
             pass  # May fail on overly long lines
     
     def test_special_characters_in_strings(self):

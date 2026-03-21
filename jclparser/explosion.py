@@ -7,7 +7,7 @@ support for nested procedures, circular dependency detection, and audit logging.
 
 import re
 from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional, Set, Tuple
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from copy import deepcopy
 
@@ -434,8 +434,6 @@ def explode_job(
     explosion_map: Dict[str, ProcExpansionInfo] = {}
     
     # Process steps
-    expanded_steps: List[Step] = []
-    
     def _process_steps(steps_list):
         result = []
         for step in steps_list:

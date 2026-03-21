@@ -5,7 +5,6 @@ SMS parameters: DATACLAS, MGMTCLAS, STORCLAS
 These are used in modern z/OS environments for automated storage management.
 """
 
-import pytest
 from jclparser import parse_jcl
 
 

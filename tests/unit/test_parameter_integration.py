@@ -1,7 +1,6 @@
 """
 Integration tests for parameter parsing with the model.
 """
-import pytest
 from jclparser import parse_jcl
 
 

@@ -11,7 +11,7 @@ from typing import Optional, List, Dict
 import os
 
 from .model import Procedure
-from .errors import ProcedureNotFoundError
+from .errors import JCLSyntaxError, JCLValidationError
 
 
 class ProcedureLoader(ABC):
@@ -154,6 +154,13 @@ class JCLLIBProcedureLoader(ProcedureLoader):
         ]
         
         for candidate in candidates:
+            # Guard against path traversal (e.g. name="../../secret")
+            try:
+                resolved = candidate.resolve()
+                if not resolved.is_relative_to(library_path.resolve()):
+                    continue
+            except (OSError, ValueError):
+                continue
             if candidate.exists() and candidate.is_file():
                 return self._parse_procedure_file(candidate, name)
         
@@ -212,7 +219,7 @@ class JCLLIBProcedureLoader(ProcedureLoader):
                     line_number=0
                 )
             
-        except Exception:
+        except (JCLSyntaxError, JCLValidationError, OSError, ValueError):
             # Parsing failed - return None
             pass
         

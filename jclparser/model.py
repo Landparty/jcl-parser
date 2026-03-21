@@ -5,10 +5,15 @@ Contains dataclasses for Job, Step, DDStatement, and Parameter entities
 with validation methods and type safety.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Union, Iterator
+from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union, Iterator
 from .errors import ValidationError, ErrorType
 from .parameter_ast import DCBParameter, SPACEParameter, ParameterParser
+
+if TYPE_CHECKING:
+    from .sql_detector import SQLDetectionResult
 
 
 @dataclass

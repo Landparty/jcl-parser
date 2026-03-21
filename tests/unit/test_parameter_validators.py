@@ -1,7 +1,6 @@
 """
 Tests for parameter value validators.
 """
-import pytest
 from jclparser.parameter_validators import (
     ParameterValidator,
     DISPValidator,

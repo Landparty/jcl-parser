@@ -6,8 +6,7 @@ All tests should FAIL initially, then pass as implementation is added.
 """
 
 import pytest
-from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List
 
 # Import the plugin system classes we expect to exist
 from jclparser.plugins import (
@@ -94,9 +93,9 @@ class TestStatementPluginInterface:
         plugin = MockStatementPlugin()
         
         # Test can_parse method
-        assert plugin.can_parse("//MOCK STATEMENT") == True
-        assert plugin.can_parse("//REGULAR JOB") == False
-        assert plugin.can_parse("//* COMMENT") == False
+        assert plugin.can_parse("//MOCK STATEMENT")
+        assert not plugin.can_parse("//REGULAR JOB")
+        assert not plugin.can_parse("//* COMMENT")
         
         # Test parse_statement method
         stmt = plugin.parse_statement("//MOCK TEST", 10)
@@ -226,7 +225,7 @@ class TestPluginRegistry:
         assert registry.get_parser_for_line("//MOCK TEST") is not None
         
         # Unregister plugin (implementation might vary on how plugins are named)
-        success = registry.unregister_plugin("MockStatementPlugin")
+        registry.unregister_plugin("MockStatementPlugin")
         
         # Plugin should no longer be found
         assert registry.get_parser_for_line("//MOCK TEST") is None
@@ -254,7 +253,7 @@ class TestParserConfig:
         """GIVEN ParserConfig class WHEN instantiated THEN has correct default values"""
         config = ParserConfig()
         
-        assert config.strict_mode == False
+        assert not config.strict_mode
         assert config.dialect == "standard"
         assert isinstance(config.enabled_plugins, list)
         assert len(config.enabled_plugins) == 0
@@ -268,7 +267,7 @@ class TestParserConfig:
             enabled_plugins=["plugin1", "plugin2"]
         )
         
-        assert config.strict_mode == True
+        assert config.strict_mode
         assert config.dialect == "custom"
         assert config.enabled_plugins == ["plugin1", "plugin2"]
     

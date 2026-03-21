@@ -619,11 +619,11 @@ class TestValidationAPI:
         # Validation should either return errors or raise exception
         # The parser may raise an error during parse rather than during validate
         try:
-            job = parse_jcl(jcl_file)
+            parse_jcl(jcl_file)
             # If it parsed, validation may or may not find issues
             # This is acceptable behavior
             pytest.skip("Parser accepted the JCL, validation may not flag it")
-        except (JCLSyntaxError, JCLValidationError) as e:
+        except (JCLSyntaxError, JCLValidationError):
             # Expected - error was raised during parsing
             assert True
 

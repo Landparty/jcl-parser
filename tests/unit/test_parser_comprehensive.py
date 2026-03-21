@@ -4,7 +4,6 @@ Additional comprehensive tests for jclparser.parser module.
 
 import pytest
 from io import StringIO
-from pathlib import Path
 from jclparser.parser import parse_jcl, parse_statement
 from jclparser.errors import JCLSyntaxError, JCLValidationError
 

@@ -1,7 +1,6 @@
 """
 Tests for the JCL IF condition parser (condition_parser.py).
 """
-import pytest
 from jclparser.condition_parser import (
     parse_condition,
     ReturnCodeCondition,
