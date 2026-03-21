@@ -336,8 +336,8 @@ MISSING SLASHES
         assert job.get_procedure('PROC1') is not None
     
     @pytest.mark.skipif(
-        __import__('sys').platform == 'win32',
-        reason="File permissions work differently on Windows"
+        __import__('sys').platform == 'win32' or __import__('os').getuid() == 0,
+        reason="File permissions work differently on Windows and root ignores them"
     )
     def test_permission_denied_proc_file(self, tmp_path):
         """Test handling when PROC file is not readable."""

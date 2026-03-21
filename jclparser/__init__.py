@@ -44,6 +44,15 @@ from .system_symbols import (
 from .jcl_file_type import (
     FileType, detect_file_type, detect_file_type_from_content, is_jcl_file, is_proc_file
 )
+from .sql_detector import (
+    SQLDetectionResult,
+    detect_sql_in_step,
+    detect_sql_in_job,
+    detect_sql_in_dd,
+    detect_sql_in_text,
+    is_db2_program,
+    DB2_PROGRAMS,
+)
 from .condition_parser import (
     parse_condition,
     ConditionNode,
@@ -108,6 +117,13 @@ __all__ = [
     'detect_file_type_from_content',
     'is_jcl_file',
     'is_proc_file',
+    'SQLDetectionResult',
+    'detect_sql_in_step',
+    'detect_sql_in_job',
+    'detect_sql_in_dd',
+    'detect_sql_in_text',
+    'is_db2_program',
+    'DB2_PROGRAMS',
 
     # ── Tier 3: Internal / backwards-compatibility exports ───────────────────
     # Exported for existing consumers; may be removed in a future major version.
