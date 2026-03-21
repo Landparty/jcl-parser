@@ -213,40 +213,6 @@ class DDStatement:
         return self.parameters.get('STORCLAS')
     
     @property
-    def amp(self) -> Optional[Union[str, List[str]]]:
-        """
-        Get AMP (Access Method Parameters) for VSAM.
-        
-        Returns:
-            AMP value or None if not specified
-            
-        Example:
-            >>> dd.amp  # "('BUFND=10','BUFNI=5')"
-
-        .. deprecated::
-            Use ``dd.parameters.get('AMP')`` directly.
-            This property will be removed in a future release.
-        """
-        return self.parameters.get('AMP')
-    
-    @property
-    def subsys(self) -> Optional[Union[str, List[str]]]:
-        """
-        Get SUBSYS (Subsystem) parameter.
-        
-        Returns:
-            SUBSYS value or None if not specified
-            
-        Example:
-            >>> dd.subsys  # "(DB2,PLAN=MYPLAN)"
-
-        .. deprecated::
-            Use ``dd.parameters.get('SUBSYS')`` directly.
-            This property will be removed in a future release.
-        """
-        return self.parameters.get('SUBSYS')
-    
-    @property
     def dsntype(self) -> Optional[str]:
         """
         Get DSNTYPE (Dataset Type) parameter.
@@ -258,195 +224,6 @@ class DDStatement:
             >>> dd.dsntype  # 'LIBRARY'
         """
         return self.parameters.get('DSNTYPE')
-    
-    @property
-    def avgrec(self) -> Optional[str]:
-        """
-        Get AVGREC (Average Record) parameter for space allocation.
-        
-        Returns:
-            AVGREC value or None if not specified
-            
-        Example:
-            >>> dd.avgrec  # 'K'
-
-        .. deprecated::
-            Use ``dd.parameters.get('AVGREC')`` directly.
-            This property will be removed in a future release.
-        """
-        return self.parameters.get('AVGREC')
-    
-    @property
-    def path(self) -> Optional[str]:
-        """
-        Get PATH parameter for Unix files.
-        
-        Returns:
-            PATH value or None if not specified
-            
-        Example:
-            >>> dd.path  # '/u/user/file.txt'
-
-        .. deprecated::
-            Use ``dd.parameters.get('PATH')`` directly.
-            This property will be removed in a future release.
-        """
-        return self.parameters.get('PATH')
-    
-    @property
-    def pathdisp(self) -> Optional[Union[str, List[str]]]:
-        """
-        Get PATHDISP parameter for Unix file disposition.
-        
-        Returns:
-            PATHDISP value or None if not specified
-            
-        Example:
-            >>> dd.pathdisp  # ['KEEP', 'DELETE']
-
-        .. deprecated::
-            Use ``dd.parameters.get('PATHDISP')`` directly.
-            This property will be removed in a future release.
-        """
-        return self.parameters.get('PATHDISP')
-    
-    @property
-    def pathopts(self) -> Optional[Union[str, List[str]]]:
-        """
-        Get PATHOPTS parameter for Unix file options.
-        
-        Returns:
-            PATHOPTS value or None if not specified
-            
-        Example:
-            >>> dd.pathopts  # ['ORDONLY', 'OCREAT']
-
-        .. deprecated::
-            Use ``dd.parameters.get('PATHOPTS')`` directly.
-            This property will be removed in a future release.
-        """
-        return self.parameters.get('PATHOPTS')
-    
-    @property
-    def pathmode(self) -> Optional[str]:
-        """
-        Get PATHMODE parameter for Unix file permissions.
-        
-        Returns:
-            PATHMODE value or None if not specified
-            
-        Example:
-            >>> dd.pathmode  # 'SIRWXU'
-
-        .. deprecated::
-            Use ``dd.parameters.get('PATHMODE')`` directly.
-            This property will be removed in a future release.
-        """
-        return self.parameters.get('PATHMODE')
-    
-    @property
-    def like(self) -> Optional[str]:
-        """
-        Get LIKE parameter (model dataset).
-        
-        Returns:
-            LIKE value or None if not specified
-            
-        Example:
-            >>> dd.like  # 'MODEL.DATASET'
-
-        .. deprecated::
-            Use ``dd.parameters.get('LIKE')`` directly.
-            This property will be removed in a future release.
-        """
-        return self.parameters.get('LIKE')
-    
-    @property
-    def refdd(self) -> Optional[str]:
-        """
-        Get REFDD parameter (reference DD).
-        
-        Returns:
-            REFDD value or None if not specified
-            
-        Example:
-            >>> dd.refdd  # 'DD1'
-
-        .. deprecated::
-            Use ``dd.parameters.get('REFDD')`` directly.
-            This property will be removed in a future release.
-        """
-        return self.parameters.get('REFDD')
-    
-    @property
-    def keyoff(self) -> Optional[int]:
-        """
-        Get KEYOFF parameter (key offset for KSDS).
-        
-        Returns:
-            KEYOFF value as integer or None if not specified
-            
-        Example:
-            >>> dd.keyoff  # 0
-
-        .. deprecated::
-            Use ``int(dd.parameters['KEYOFF'])`` directly.
-            This property will be removed in a future release.
-        """
-        val = self.parameters.get('KEYOFF')
-        return int(val) if val else None
-    
-    @property
-    def keylen(self) -> Optional[int]:
-        """
-        Get KEYLEN parameter (key length for KSDS).
-        
-        Returns:
-            KEYLEN value as integer or None if not specified
-            
-        Example:
-            >>> dd.keylen  # 10
-
-        .. deprecated::
-            Use ``int(dd.parameters['KEYLEN'])`` directly.
-            This property will be removed in a future release.
-        """
-        val = self.parameters.get('KEYLEN')
-        return int(val) if val else None
-    
-    @property
-    def recorg(self) -> Optional[str]:
-        """
-        Get RECORG parameter (record organization for VSAM).
-        
-        Returns:
-            RECORG value or None if not specified
-            
-        Example:
-            >>> dd.recorg  # 'KS'
-
-        .. deprecated::
-            Use ``dd.parameters.get('RECORG')`` directly.
-            This property will be removed in a future release.
-        """
-        return self.parameters.get('RECORG')
-    
-    @property
-    def label(self) -> Optional[Union[str, List]]:
-        """
-        Get LABEL parameter (tape label information).
-        
-        Returns:
-            LABEL value or None if not specified
-            
-        Example:
-            >>> dd.label  # [3, 'SL', 'RETPD=30']
-
-        .. deprecated::
-            Use ``dd.parameters.get('LABEL')`` directly.
-            This property will be removed in a future release.
-        """
-        return self.parameters.get('LABEL')
     
     @property
     def has_inline_data(self) -> bool:
@@ -525,11 +302,6 @@ class Step:
         """True if step executes a procedure"""
         return self.procedure is not None
     
-    @property
-    def is_proc_invocation(self) -> bool:
-        """True if step is a procedure invocation (alias for :attr:`is_procedure`)."""
-        return self.is_procedure
-    
     def add_dd(self, dd_statement: DDStatement) -> None:
         """Add a DD statement to this step"""
         self.dd_statements.append(dd_statement)
@@ -540,7 +312,12 @@ class Step:
             if dd.name == name:
                 return dd
         return None
-    
+
+    @property
+    def sysin(self) -> Optional[DDStatement]:
+        """Return the SYSIN DD statement for this step, or None if not present."""
+        return self.get_dd("SYSIN")
+
     def get_input_datasets(self) -> List[str]:
         """Get all input dataset names"""
         datasets = []
@@ -668,6 +445,10 @@ class Job:
         for step in iter_execution_steps(self.steps):
             all_dds.extend(step.dd_statements)
         return all_dds
+
+    def get_sysin_statements(self) -> List[DDStatement]:
+        """Return all SYSIN DD statements across every step in the job."""
+        return [dd for dd in self.get_dd_statements() if dd.name == "SYSIN"]
     
     def validate(self) -> List[ValidationError]:
         """
@@ -720,30 +501,6 @@ class Job:
             strict_symbols=strict_symbols
         )
     
-    def _validate_step(self, step: Step) -> List[ValidationError]:
-        """Validate a single step"""
-        errors = []
-        
-        # Step must have program or procedure
-        if not step.program and not step.procedure:
-            errors.append(ValidationError(
-                f"Step {step.name or '(unnamed)'} must specify a program or procedure",
-                ErrorType.VALIDATION_ERROR
-            ))
-        
-        # Validate DD names are unique within step (except for empty names used in concatenation)
-        dd_names = []
-        for dd in step.dd_statements:
-            # Empty DD names are allowed for concatenation - skip duplicate check
-            if dd.name and dd.name in dd_names:
-                errors.append(ValidationError(
-                    f"Duplicate DD name in step {step.name or '(unnamed)'}: {dd.name}",
-                    ErrorType.VALIDATION_ERROR
-                ))
-            elif dd.name:  # Only add non-empty names to the list
-                dd_names.append(dd.name)
-        
-        return errors
     # JOB Parameter Properties (KISS - simple accessors)
     
     @property

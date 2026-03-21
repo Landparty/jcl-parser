@@ -19,9 +19,10 @@ class TestLABELParameter:
         
         job = parse_jcl(jcl)
         dd = job.steps[0].get_dd('DD1')
-        assert dd.label is not None
+        label = dd.parameters.get('LABEL')
+        assert label is not None
         # LABEL is stored as a list: [3, 'SL']
-        assert isinstance(dd.label, list)
+        assert isinstance(label, list)
     
     def test_label_with_retpd(self):
         """Test LABEL with RETPD."""
@@ -31,7 +32,7 @@ class TestLABELParameter:
         
         job = parse_jcl(jcl)
         dd = job.steps[0].get_dd('DD1')
-        assert dd.label is not None
+        assert dd.parameters.get('LABEL') is not None
     
     def test_label_with_expdt(self):
         """Test LABEL with EXPDT."""
@@ -41,7 +42,7 @@ class TestLABELParameter:
         
         job = parse_jcl(jcl)
         dd = job.steps[0].get_dd('DD1')
-        assert dd.label is not None
+        assert dd.parameters.get('LABEL') is not None
     
     def test_label_none_when_not_specified(self):
         """Test LABEL is None when not specified."""
@@ -51,7 +52,7 @@ class TestLABELParameter:
         
         job = parse_jcl(jcl)
         dd = job.steps[0].get_dd('DD1')
-        assert dd.label is None
+        assert dd.parameters.get('LABEL') is None
 
 
 class TestLABELRealWorld:
@@ -76,7 +77,7 @@ class TestLABELRealWorld:
         
         # LABEL parameter is accessible
         sysut1 = job.steps[0].get_dd('SYSUT1')
-        assert sysut1.label is not None
+        assert sysut1.parameters.get('LABEL') is not None
         # Can access via parameters dict too
         assert 'LABEL' in sysut1.parameters
     
@@ -89,6 +90,6 @@ class TestLABELRealWorld:
 //TAPE3 DD DSN=TAPE.FILE3,LABEL=(3,NL),UNIT=TAPE"""
         
         job = parse_jcl(jcl)
-        assert job.steps[0].get_dd('TAPE1').label is not None
-        assert job.steps[0].get_dd('TAPE2').label is not None
-        assert job.steps[0].get_dd('TAPE3').label is not None
+        assert job.steps[0].get_dd('TAPE1').parameters.get('LABEL') is not None
+        assert job.steps[0].get_dd('TAPE2').parameters.get('LABEL') is not None
+        assert job.steps[0].get_dd('TAPE3').parameters.get('LABEL') is not None

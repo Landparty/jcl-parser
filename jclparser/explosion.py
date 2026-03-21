@@ -444,7 +444,7 @@ def explode_job(
                 new_cond.then_steps = _process_steps(step.then_steps)
                 new_cond.else_steps = _process_steps(step.else_steps)
                 result.append(new_cond)
-            elif step.is_proc_invocation:
+            elif step.is_procedure:
                 # Expand procedure
                 expanded = _explode_step(
                     step=step,
@@ -614,7 +614,7 @@ def _explode_step(
                 new_cond.then_steps = _explode_nested(s.then_steps)
                 new_cond.else_steps = _explode_nested(s.else_steps)
                 result.append(new_cond)
-            elif s.is_proc_invocation:
+            elif s.is_procedure:
                 # Nested procedure - recurse
                 nested = _explode_step(
                     step=s,

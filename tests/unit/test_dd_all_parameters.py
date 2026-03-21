@@ -20,8 +20,8 @@ class TestAMPParameter:
         dd = job.steps[0].get_dd('VSAMDD')
         
         assert dd is not None
-        assert dd.amp == 'AMORG'
-    
+        assert dd.parameters.get('AMP') == 'AMORG'
+
     def test_amp_with_quotes(self):
         """Test AMP=('BUFND=10','BUFNI=5')."""
         jcl = """//TEST JOB (ACCT),'TEST'
@@ -29,15 +29,15 @@ class TestAMPParameter:
 //VSAMDD DD DSN=MY.VSAM.CLUSTER,
 //       AMP=('BUFND=20','BUFNI=10','STRNO=3'),
 //       DISP=SHR"""
-        
+
         job = parse_jcl(jcl)
         dd = job.steps[0].get_dd('VSAMDD')
-        
+
         assert dd is not None
-        assert dd.amp is not None
+        assert dd.parameters.get('AMP') is not None
         # AMP should be parsed as a list
-        assert isinstance(dd.amp, list)
-        assert len(dd.amp) == 3
+        assert isinstance(dd.parameters.get('AMP'), list)
+        assert len(dd.parameters.get('AMP')) == 3
 
 
 class TestSUBSYSParameter:
@@ -53,7 +53,7 @@ class TestSUBSYSParameter:
         dd = job.steps[0].get_dd('SYSTSIN')
         
         assert dd is not None
-        assert dd.subsys is not None
+        assert dd.parameters.get('SUBSYS') is not None
 
 
 class TestDSNTYPEParameter:
@@ -121,7 +121,7 @@ class TestAVGRECParameter:
         dd = job.steps[0].get_dd('DD1')
         
         assert dd is not None
-        assert dd.avgrec == 'M'
+        assert dd.parameters.get('AVGREC') == 'M'
 
 
 class TestUnixParameters:
@@ -137,45 +137,45 @@ class TestUnixParameters:
         dd = job.steps[0].get_dd('STDOUT')
         
         assert dd is not None
-        assert dd.path == '/u/user/output.txt'
-    
+        assert dd.parameters.get('PATH') == '/u/user/output.txt'
+
     def test_pathdisp_parameter(self):
         """Test PATHDISP parameter."""
         jcl = """//TEST JOB (ACCT),'TEST'
 //STEP1 EXEC PGM=BPXBATCH
 //STDOUT DD PATH='/u/user/output.txt',PATHDISP=(KEEP,DELETE)"""
-        
+
         job = parse_jcl(jcl)
         dd = job.steps[0].get_dd('STDOUT')
-        
+
         assert dd is not None
-        assert dd.pathdisp is not None
-    
+        assert dd.parameters.get('PATHDISP') is not None
+
     def test_pathopts_parameter(self):
         """Test PATHOPTS parameter."""
         jcl = """//TEST JOB (ACCT),'TEST'
 //STEP1 EXEC PGM=BPXBATCH
 //STDOUT DD PATH='/u/user/output.txt',
 //       PATHOPTS=(OWRONLY,OCREAT,OTRUNC)"""
-        
+
         job = parse_jcl(jcl)
         dd = job.steps[0].get_dd('STDOUT')
-        
+
         assert dd is not None
-        assert dd.pathopts is not None
-    
+        assert dd.parameters.get('PATHOPTS') is not None
+
     def test_pathmode_parameter(self):
         """Test PATHMODE parameter."""
         jcl = """//TEST JOB (ACCT),'TEST'
 //STEP1 EXEC PGM=BPXBATCH
 //STDOUT DD PATH='/u/user/output.txt',PATHMODE=SIRWXU"""
-        
+
         job = parse_jcl(jcl)
         dd = job.steps[0].get_dd('STDOUT')
-        
+
         assert dd is not None
-        assert dd.pathmode == 'SIRWXU'
-    
+        assert dd.parameters.get('PATHMODE') == 'SIRWXU'
+
     def test_unix_file_complete(self):
         """Test complete Unix file DD statement (from audit example)."""
         jcl = """//UNIX JOB (ACCT),'UNIX FILE ACCESS'
@@ -184,15 +184,15 @@ class TestUnixParameters:
 //       PATHOPTS=(OWRONLY,OCREAT,OTRUNC),
 //       PATHMODE=SIRWXU,
 //       PATHDISP=(KEEP,DELETE)"""
-        
+
         job = parse_jcl(jcl)
         dd = job.steps[0].get_dd('STDOUT')
-        
+
         assert dd is not None
-        assert dd.path == '/u/user/output.txt'
-        assert dd.pathmode == 'SIRWXU'
-        assert dd.pathdisp is not None
-        assert dd.pathopts is not None
+        assert dd.parameters.get('PATH') == '/u/user/output.txt'
+        assert dd.parameters.get('PATHMODE') == 'SIRWXU'
+        assert dd.parameters.get('PATHDISP') is not None
+        assert dd.parameters.get('PATHOPTS') is not None
 
 
 class TestRemainingParameters:
@@ -208,45 +208,45 @@ class TestRemainingParameters:
         dd = job.steps[0].get_dd('DD1')
         
         assert dd is not None
-        assert dd.like == 'MODEL.FILE'
-    
+        assert dd.parameters.get('LIKE') == 'MODEL.FILE'
+
     def test_refdd_parameter(self):
         """Test REFDD parameter."""
         jcl = """//TEST JOB (ACCT),'TEST'
 //STEP1 EXEC PGM=IEFBR14
 //DD1 DD DSN=FIRST.FILE,DISP=(NEW,CATLG),SPACE=(CYL,(10,5))
 //DD2 DD DSN=SECOND.FILE,REFDD=DD1,DISP=(NEW,CATLG)"""
-        
+
         job = parse_jcl(jcl)
         dd2 = job.steps[0].get_dd('DD2')
-        
+
         assert dd2 is not None
-        assert dd2.refdd == 'DD1'
-    
+        assert dd2.parameters.get('REFDD') == 'DD1'
+
     def test_keyoff_keylen_parameters(self):
         """Test KEYOFF and KEYLEN for KSDS."""
         jcl = """//TEST JOB (ACCT),'TEST'
 //STEP1 EXEC PGM=IDCAMS
 //DD1 DD DSN=MY.KSDS,KEYOFF=0,KEYLEN=10,DISP=(NEW,CATLG)"""
-        
+
         job = parse_jcl(jcl)
         dd = job.steps[0].get_dd('DD1')
-        
+
         assert dd is not None
-        assert dd.keyoff == 0
-        assert dd.keylen == 10
-    
+        assert int(dd.parameters['KEYOFF']) == 0
+        assert int(dd.parameters['KEYLEN']) == 10
+
     def test_recorg_parameter(self):
         """Test RECORG parameter."""
         jcl = """//TEST JOB (ACCT),'TEST'
 //STEP1 EXEC PGM=IDCAMS
 //DD1 DD DSN=MY.VSAM,RECORG=KS,DISP=(NEW,CATLG)"""
-        
+
         job = parse_jcl(jcl)
         dd = job.steps[0].get_dd('DD1')
-        
+
         assert dd is not None
-        assert dd.recorg == 'KS'
+        assert dd.parameters.get('RECORG') == 'KS'
 
 
 class TestRealWorldScenarios:
@@ -266,7 +266,7 @@ class TestRealWorldScenarios:
         
         assert dd is not None
         assert dd.dataset_name == 'MY.VSAM.CLUSTER'
-        assert dd.amp is not None
+        assert dd.parameters.get('AMP') is not None
     
     def test_sms_with_dsntype(self):
         """Test SMS parameters with DSNTYPE."""

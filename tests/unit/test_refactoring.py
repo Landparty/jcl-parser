@@ -400,40 +400,34 @@ class TestPositionalParamConstants:
 
 
 # ---------------------------------------------------------------------------
-# TASK-10: Step.is_proc_invocation delegates to is_procedure
+# TASK-10: Step.is_procedure
 # ---------------------------------------------------------------------------
 
 
-class TestIsProcInvocationDelegation:
-    """Tests for TASK-10: is_proc_invocation delegates to is_procedure."""
+class TestIsProcedure:
+    """Tests for Step.is_procedure property."""
 
-    def test_proc_step_both_true(self):
+    def test_proc_step_is_true(self):
         from jclparser.model import Step
         step = Step("STEP1", procedure="MYPROC")
         assert step.is_procedure is True
-        assert step.is_proc_invocation is True
-        assert step.is_proc_invocation == step.is_procedure
 
-    def test_pgm_step_both_false(self):
+    def test_pgm_step_is_false(self):
         from jclparser.model import Step
         step = Step("STEP1", program="IEBGENER")
         assert step.is_procedure is False
-        assert step.is_proc_invocation is False
-        assert step.is_proc_invocation == step.is_procedure
 
-    def test_setting_procedure_affects_both(self):
+    def test_setting_procedure_makes_true(self):
         from jclparser.model import Step
         step = Step("STEP1")
         step.procedure = "NEWPROC"
         assert step.is_procedure is True
-        assert step.is_proc_invocation is True
 
-    def test_clearing_procedure_affects_both(self):
+    def test_clearing_procedure_makes_false(self):
         from jclparser.model import Step
         step = Step("STEP1", procedure="MYPROC")
         step.procedure = None
         assert step.is_procedure is False
-        assert step.is_proc_invocation is False
 
 
 # ---------------------------------------------------------------------------

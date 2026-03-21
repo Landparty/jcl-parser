@@ -64,7 +64,7 @@ class TestScenario1_InlineProcExplosion:
         assert job.procedures[0].name == "MYPROC"
         assert len(job.steps) == 1
         assert job.steps[0].procedure == "MYPROC"
-        assert job.steps[0].is_proc_invocation
+        assert job.steps[0].is_procedure
 
         # Explode the job
         exploded = job.explode()
