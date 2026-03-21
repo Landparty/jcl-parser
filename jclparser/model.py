@@ -596,6 +596,20 @@ class Step:
         """Restart definition (R, RNC, NR, NC)."""
         return self.parameters.get('RD')
 
+    def detect_sql(self) -> "SQLDetectionResult":
+        """Detect SQL statements in this step's inline data and program name.
+
+        Returns:
+            SQLDetectionResult with details about detected SQL.
+        """
+        from .sql_detector import detect_sql_in_step
+        return detect_sql_in_step(self)
+
+    @property
+    def has_sql(self) -> bool:
+        """True if this step contains SQL (DB2 program or SQL in inline data)."""
+        return self.detect_sql().has_sql
+
 
 @dataclass  
 class Job:
@@ -770,6 +784,20 @@ class Job:
     def schenv(self) -> Optional[str]:
         """Scheduling environment."""
         return self.parameters.get('SCHENV')
+
+    def detect_sql(self) -> list:
+        """Detect SQL across all steps in this job.
+
+        Returns:
+            List of SQLDetectionResult for steps that contain SQL.
+        """
+        from .sql_detector import detect_sql_in_job
+        return detect_sql_in_job(self)
+
+    @property
+    def has_sql(self) -> bool:
+        """True if any step in this job contains SQL."""
+        return bool(self.detect_sql())
 
 
 def iter_execution_steps(steps: List[Union[Step, ConditionalBlock]]) -> Iterator[Step]:
