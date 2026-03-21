@@ -2,14 +2,7 @@
 Final parser tests to push total coverage above 90%
 """
 
-import pytest
-from io import StringIO
-from pathlib import Path
-import tempfile
-import os
 from jclparser import parse_jcl
-from jclparser.parser import parse_statement
-from jclparser.errors import JCLSyntaxError
 
 
 class TestParserUncoveredLines:
@@ -24,9 +17,9 @@ class TestParserUncoveredLines:
 //      ENDIF
 //"""
         try:
-            job = parse_jcl(jcl, strict_mode=False)
+            parse_jcl(jcl, strict_mode=False)
             # May work or not depending on IF implementation
-        except:
+        except Exception:
             pass  # IF may not be fully implemented
     
     def test_parse_with_else_statement(self):
@@ -40,8 +33,8 @@ class TestParserUncoveredLines:
 //      ENDIF
 //"""
         try:
-            job = parse_jcl(jcl, strict_mode=False)
-        except:
+            parse_jcl(jcl, strict_mode=False)
+        except Exception:
             pass
     
     def test_parse_with_output_statement(self):
@@ -52,8 +45,8 @@ class TestParserUncoveredLines:
 //STEP1 EXEC PGM=PROG
 //"""
         try:
-            job = parse_jcl(jcl, strict_mode=False)
-        except:
+            parse_jcl(jcl, strict_mode=False)
+        except Exception:
             pass
     
     def test_parse_with_xmit_statement(self):
@@ -64,8 +57,8 @@ class TestParserUncoveredLines:
 //STEP1 EXEC PGM=PROG
 //"""
         try:
-            job = parse_jcl(jcl, strict_mode=False)
-        except:
+            parse_jcl(jcl, strict_mode=False)
+        except Exception:
             pass
     
     def test_parse_with_command_statement(self):
@@ -76,8 +69,8 @@ class TestParserUncoveredLines:
 //STEP1 EXEC PGM=PROG
 //"""
         try:
-            job = parse_jcl(jcl, strict_mode=False)
-        except:
+            parse_jcl(jcl, strict_mode=False)
+        except Exception:
             pass
     
     def test_parse_with_cntl_endcntl(self):
@@ -90,8 +83,8 @@ class TestParserUncoveredLines:
 //STEP1 EXEC PGM=PROG
 //"""
         try:
-            job = parse_jcl(jcl, strict_mode=False)
-        except:
+            parse_jcl(jcl, strict_mode=False)
+        except Exception:
             pass
     
     def test_parse_multiline_job_params(self):

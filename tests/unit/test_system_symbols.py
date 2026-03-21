@@ -2,8 +2,6 @@
 Unit tests for system symbol providers.
 """
 
-import pytest
-import os
 from datetime import datetime
 
 from jclparser.system_symbols import (
@@ -95,7 +93,7 @@ class TestRuntimeSystemSymbolProvider:
         """Test dynamic date/time symbols"""
         provider = RuntimeSystemSymbolProvider()
         
-        now = datetime.now()
+        datetime.now()
         sysdate = provider.get_symbol('SYSDATE')
         systime = provider.get_symbol('SYSTIME')
         

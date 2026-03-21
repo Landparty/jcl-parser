@@ -5,7 +5,7 @@ Provides structured representation of complex parameters like DCB, SPACE, etc.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 # Module-level frozensets for DCB/SPACE validation (avoids per-call list construction)
 _VALID_RECFM = frozenset({'F', 'FB', 'FBA', 'FBM', 'FBS', 'V', 'VB', 'VBA', 'VBM', 'VBS', 'U', 'D', 'DB'})

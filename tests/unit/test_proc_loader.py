@@ -2,20 +2,16 @@
 Unit tests for procedure loaders.
 """
 
-import pytest
 from pathlib import Path
 import tempfile
-import os
 
 from jclparser.proc_loader import (
-    ProcedureLoader,
     InlineProcedureLoader,
     JCLLIBProcedureLoader,
     CompositeProcedureLoader,
     create_default_loader
 )
 from jclparser.model import Procedure, Step
-from jclparser import parse_jcl
 
 
 class TestInlineProcedureLoader:

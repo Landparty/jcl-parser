@@ -8,7 +8,7 @@ and plugin extensibility.
 
 from pathlib import Path
 from typing import Union, List, Optional, Dict, Any, IO
-from .model import Job, Step, DDStatement, Statement, Parameter, ConditionalBlock, Procedure
+from .model import Job, Step, DDStatement, Statement, ConditionalBlock, Procedure
 from .errors import (
     JCLSyntaxError, JCLValidationError, ParseError, 
     ErrorType, ErrorSeverity
@@ -157,7 +157,7 @@ def parse_jcl(
             # Process different statement types
             if stmt.type == "JOB":
                 if job is not None:
-                    raise JCLSyntaxError(f"Multiple JOB statements found", line_num)
+                    raise JCLSyntaxError("Multiple JOB statements found", line_num)
                 job = _create_job_from_statement(stmt)
             
             elif stmt.type == "EXEC":
@@ -464,7 +464,7 @@ def validate_jcl(source: Union[str, Path, IO], level: str = "basic") -> List[Par
         return errors
 
     # Merge continuation lines so multi-line statements are validated as a unit
-    raw_lines = [normalize_jcl_line(l) for l in content.splitlines()]
+    raw_lines = [normalize_jcl_line(line) for line in content.splitlines()]
     handler = ContinuationLineHandler()
     merged_pairs = handler.merge_continuation_lines(raw_lines)
     has_job = False

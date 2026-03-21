@@ -6,7 +6,7 @@ that enable custom JCL dialects and validation rules.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List
 from ..model import Job, Step, DDStatement, Statement
 from ..errors import ValidationError
 

@@ -3,13 +3,9 @@ Ultra-comprehensive tests - final push to 90%+
 Targeting very specific uncovered paths
 """
 
-import pytest
-import tempfile
-import os
 from io import StringIO
 from jclparser import parse_jcl
-from jclparser.model import Job, Step, DDStatement, Procedure
-from jclparser.errors import JCLSyntaxError
+from jclparser.model import Job, Step, DDStatement
 
 
 class TestUltraComprehensive:
@@ -41,8 +37,8 @@ class TestUltraComprehensive:
     def test_parse_jcl_empty_input(self):
         """Test parsing empty input"""
         try:
-            job = parse_jcl("", strict_mode=False)
-        except:
+            parse_jcl("", strict_mode=False)
+        except Exception:
             pass  # May raise error
     
     def test_parse_jcl_only_comments(self):
@@ -53,8 +49,8 @@ class TestUltraComprehensive:
 //****************************
 //"""
         try:
-            job = parse_jcl(jcl, strict_mode=False)
-        except:
+            parse_jcl(jcl, strict_mode=False)
+        except Exception:
             pass  # May raise error or return empty job
     
     def test_parser_inline_data_variations(self):

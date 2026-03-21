@@ -4,7 +4,6 @@ Tests for LABEL DD parameter.
 Following KISS - LABEL is just a simple property accessor, not structured parsing.
 """
 
-import pytest
 from jclparser import parse_jcl
 
 

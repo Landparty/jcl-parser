@@ -347,7 +347,6 @@ MISSING SLASHES
         proc_file.write_text("//NOPERM PROC\n//STEP1 EXEC PGM=TEST\n// PEND")
         
         # Make file unreadable (Unix/Linux only)
-        import stat
         try:
             proc_file.chmod(0o000)
             

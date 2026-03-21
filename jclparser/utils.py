@@ -164,7 +164,7 @@ def parse_jcl_parameter(param: str) -> Tuple[str, Any]:
     """
     if "=" not in param:
         # Positional parameter
-        return f"_positional", param.strip()
+        return "_positional", param.strip()
     
     key, value = param.split("=", 1)
     key = key.strip()

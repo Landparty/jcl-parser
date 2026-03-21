@@ -5,7 +5,6 @@ Tests all validation functions for JCL syntax rules, semantic constraints,
 and data integrity checks for parsed JCL structures.
 """
 
-import pytest
 from jclparser.validators import (
     validate_jcl_identifier,
     validate_dataset_name,
@@ -17,7 +16,7 @@ from jclparser.validators import (
     validate_parameter_syntax
 )
 from jclparser.model import Job, Step, DDStatement
-from jclparser.errors import ValidationError, ErrorType
+from jclparser.errors import ErrorType
 
 
 class TestValidateJCLIdentifier:

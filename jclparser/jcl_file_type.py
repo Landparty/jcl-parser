@@ -123,7 +123,7 @@ def is_jcl_file(source: Union[str, Path, IO]) -> bool:
     """
     try:
         return detect_file_type(source) == FileType.JCL
-    except Exception:
+    except (TypeError, ValueError, OSError):
         return False
 
 
@@ -146,7 +146,7 @@ def is_proc_file(source: Union[str, Path, IO]) -> bool:
     """
     try:
         return detect_file_type(source) == FileType.PROC
-    except Exception:
+    except (TypeError, ValueError, OSError):
         return False
 
 
@@ -238,8 +238,8 @@ def _read_file(path: Path) -> str:
     try:
         with open(path, 'rb') as f:
             return f.read().decode('utf-8', errors='ignore')
-    except Exception:
-        # Last resort: return empty string for binary files
+    except OSError:
+        # Last resort: return empty string for unreadable files
         return ""
 
 

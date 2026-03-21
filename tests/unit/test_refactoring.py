@@ -7,8 +7,6 @@ gone.
 """
 
 import io
-from pathlib import Path
-from typing import List
 
 import pytest
 
@@ -38,10 +36,9 @@ class TestExplodeStepJcllibOrder:
                 return proc
 
         step = Step("STEP", procedure="MYPROC")
-        from jclparser.explosion import ProcExpansionInfo
         from jclparser.explosion import SymbolScope
 
-        result = _explode_step(
+        _explode_step(
             step=step,
             proc_loader=CapturingLoader(),
             base_scope=SymbolScope(),
@@ -273,7 +270,9 @@ class TestStatementTypesConstant:
 
     def test_no_duplicate_literals_in_parse_statement(self):
         """parse_statement should use the constant, not three inline lists."""
-        import ast, inspect, textwrap
+        import ast
+        import inspect
+        import textwrap
         from jclparser import parser
         source = inspect.getsource(parser.parse_statement)
         tree = ast.parse(textwrap.dedent(source))

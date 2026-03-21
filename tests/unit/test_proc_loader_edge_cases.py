@@ -4,14 +4,12 @@ Test edge cases for proc_loader.py to improve coverage.
 Simplified tests focusing on achievable edge cases without complex mocking.
 """
 
-import pytest
 import tempfile
 from pathlib import Path
 from jclparser.proc_loader import (
     JCLLIBProcedureLoader, InlineProcedureLoader, CompositeProcedureLoader
 )
 from jclparser.model import Procedure, Step
-from jclparser.errors import ProcedureNotFoundError
 
 
 class TestJCLLIBProcedureLoaderEdgeCases:
@@ -163,8 +161,8 @@ class TestInlineProcedureLoader:
         proc = Procedure(name="MYPROC", parameters={})
         loader = InlineProcedureLoader([proc])
         
-        assert loader.has_procedure("MYPROC") == True
-        assert loader.has_procedure("NONEXISTENT") == False
+        assert loader.has_procedure("MYPROC")
+        assert not loader.has_procedure("NONEXISTENT")
 
 
 class TestCompositeProcedureLoader:
@@ -210,8 +208,8 @@ class TestCompositeProcedureLoader:
         inline_loader = InlineProcedureLoader([proc])
         composite = CompositeProcedureLoader([inline_loader])
         
-        assert composite.has_procedure("MYPROC") == True
-        assert composite.has_procedure("NONEXISTENT") == False
+        assert composite.has_procedure("MYPROC")
+        assert not composite.has_procedure("NONEXISTENT")
     
     def test_composite_loader_empty_loaders_list(self):
         """Test composite loader with empty loaders list."""
@@ -220,4 +218,4 @@ class TestCompositeProcedureLoader:
         proc = composite.load_procedure("ANYPROC")
         assert proc is None
         
-        assert composite.has_procedure("ANYPROC") == False
+        assert not composite.has_procedure("ANYPROC")

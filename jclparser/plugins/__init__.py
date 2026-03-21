@@ -7,9 +7,9 @@ for registering and managing statement and validation plugins.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 from .base import StatementPlugin, ValidationPlugin
-from ..errors import ValidationError
+from ..errors import ValidationError  # noqa: F401 — re-exported
 
 
 class ValidationLevel(Enum):

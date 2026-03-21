@@ -5,7 +5,6 @@ Tests all utility functions for JCL syntax handling including
 parameter parsing, formatting, continuation handling, and validation.
 """
 
-import pytest
 from jclparser.utils import (
     normalize_jcl_line,
     is_continuation_line,
