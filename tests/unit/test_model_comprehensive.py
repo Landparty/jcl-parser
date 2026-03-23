@@ -2,7 +2,6 @@
 Additional comprehensive tests for jclparser.model module.
 """
 
-import pytest
 from jclparser.model import Job, Step, DDStatement, Procedure
 
 

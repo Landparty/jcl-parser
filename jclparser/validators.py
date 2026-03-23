@@ -6,8 +6,8 @@ and data integrity checks for parsed JCL structures.
 """
 
 import re
-from typing import List, Set, Dict, Any, Optional
-from .model import Job, Step, DDStatement, ConditionalBlock, iter_execution_steps
+from typing import List, Set, Dict, Any
+from .model import Job, Step, DDStatement, iter_execution_steps
 from .errors import ValidationError, ErrorType
 from .parameter_validators import DatasetNameValidator, DISPValidator
 

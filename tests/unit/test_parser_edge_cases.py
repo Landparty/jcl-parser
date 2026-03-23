@@ -15,7 +15,7 @@ from jclparser.parser import (
     parse_jcl, validate_jcl, parse_statement, 
     _parse_parameters, _parse_list_parameter
 )
-from jclparser.errors import JCLSyntaxError, JCLValidationError
+from jclparser.errors import JCLSyntaxError
 
 
 class TestContinuationLineEdgeCases:

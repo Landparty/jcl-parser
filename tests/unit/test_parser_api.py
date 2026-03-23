@@ -8,13 +8,11 @@ All tests should FAIL initially, then pass as implementation is added.
 import pytest
 from pathlib import Path
 from io import StringIO
-from typing import List
 
 # Import the modules we expect to exist
-import jclparser
 from jclparser.parser import parse_jcl, validate_jcl, parse_statement
-from jclparser.model import Job, Step, DDStatement
-from jclparser.errors import JCLSyntaxError, JCLValidationError, ParseError
+from jclparser.model import Job
+from jclparser.errors import JCLSyntaxError, ParseError
 
 
 class TestParseJCLFunction:
@@ -45,7 +43,7 @@ class TestParseJCLFunction:
         # For now, test that Path objects are accepted
         with pytest.raises((FileNotFoundError, AttributeError)):
             # Should try to read file and fail appropriately
-            job = parse_jcl(file_path)
+            parse_jcl(file_path)
     
     def test_parse_jcl_file_object(self):
         """GIVEN file-like object WHEN parse_jcl() called THEN reads and parses content"""

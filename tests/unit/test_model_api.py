@@ -5,11 +5,9 @@ These tests define the expected behavior of the data model classes.
 All tests should FAIL initially, then pass as implementation is added.
 """
 
-import pytest
-from typing import List, Optional, Dict, Any
 
 # Import the model classes we expect to exist
-from jclparser.model import Job, Step, DDStatement, Parameter, Statement
+from jclparser.model import Job, Step, DDStatement
 from jclparser.errors import ValidationError
 
 
@@ -135,14 +133,14 @@ class TestStepClass:
         assert step.parameters["PARM"] == "DEBUG=YES"
         assert isinstance(step.dd_statements, list)
         assert len(step.dd_statements) == 0
-        assert step.is_procedure == False
+        assert not step.is_procedure
     
     def test_step_procedure_detection(self):
         """GIVEN step that executes procedure WHEN created THEN is_procedure is True"""
         # Procedure call doesn't have PGM parameter
         step = Step(name="PROCSTEP", procedure="MYPROC", parameters={"PARM": "VALUE"})
         
-        assert step.is_procedure == True
+        assert step.is_procedure
         assert step.procedure == "MYPROC"
     
     def test_step_add_dd(self):
@@ -232,7 +230,7 @@ class TestDDStatementClass:
         assert dd.dataset_name == "TEST.DATA"
         assert dd.disposition == "SHR"
         assert dd.parameters["UNIT"] == "DISK"
-        assert dd.has_inline_data == False
+        assert not dd.has_inline_data
         assert dd.inline_data is None
     
     def test_dd_statement_inline_data(self):
@@ -245,7 +243,7 @@ class TestDDStatementClass:
         )
         
         assert dd.name == "SYSIN"
-        assert dd.has_inline_data == True
+        assert dd.has_inline_data
         assert dd.inline_data == inline_content
         assert dd.dataset_name is None
     
@@ -263,25 +261,25 @@ class TestDDStatementClass:
         """GIVEN DD with input characteristics WHEN is_input() called THEN returns True"""
         input_dd = DDStatement(name="INPUT", dataset_name="INPUT.DATA", disposition="SHR")
         
-        assert input_dd.is_input() == True
+        assert input_dd.is_input()
     
     def test_dd_is_output(self):
         """GIVEN DD with output characteristics WHEN is_output() called THEN returns True"""
         output_dd = DDStatement(name="OUTPUT", dataset_name="OUTPUT.DATA", disposition="(NEW,CATLG)")
         
-        assert output_dd.is_output() == True
+        assert output_dd.is_output()
     
     def test_dd_is_temporary(self):
         """GIVEN DD with temporary dataset WHEN is_temporary() called THEN returns True"""
         temp_dd = DDStatement(name="TEMP", dataset_name="&&TEMPDATA")
         
-        assert temp_dd.is_temporary() == True
+        assert temp_dd.is_temporary()
     
     def test_dd_is_not_temporary(self):
         """GIVEN DD with permanent dataset WHEN is_temporary() called THEN returns False"""
         perm_dd = DDStatement(name="PERM", dataset_name="PERM.DATA.SET")
         
-        assert perm_dd.is_temporary() == False
+        assert not perm_dd.is_temporary()
     
     def test_dd_sysout_handling(self):
         """GIVEN DD with SYSOUT WHEN created THEN handled correctly"""

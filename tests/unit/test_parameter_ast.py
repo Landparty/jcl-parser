@@ -1,10 +1,8 @@
 """
 Tests for parameter AST and complex parameter parsing.
 """
-import pytest
 from jclparser.parameter_ast import (
     ParameterParser,
-    DCBParameter,
     SPACEParameter,
     SimpleParameter,
     ListParameter,

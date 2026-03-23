@@ -2,7 +2,6 @@
 Comprehensive tests for jclparser.validators module.
 """
 
-import pytest
 from jclparser.validators import (
     validate_jcl_identifier,
     validate_dataset_name,
@@ -13,7 +12,7 @@ from jclparser.validators import (
     ValidationError,
     ErrorType
 )
-from jclparser.model import Job, Step, DDStatement, Procedure
+from jclparser.model import Job, Step, DDStatement
 
 
 class TestValidateJCLIdentifier:

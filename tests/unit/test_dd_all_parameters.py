@@ -3,7 +3,6 @@ Tests for all remaining DD parameters (AMP, SUBSYS, DSNTYPE, AVGREC,
 Unix parameters, LIKE, REFDD, KEYOFF, KEYLEN, RECORG).
 """
 
-import pytest
 from jclparser import parse_jcl
 
 

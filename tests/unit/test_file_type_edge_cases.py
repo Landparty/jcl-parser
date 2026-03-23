@@ -26,23 +26,23 @@ class TestExceptionHandling:
         """Test is_jcl_file with invalid source type (should return False)."""
         # Integer is not a valid source type
         result = is_jcl_file(12345)
-        assert result == False
+        assert not result
     
     def test_is_jcl_file_with_none(self):
         """Test is_jcl_file with None (should return False)."""
         result = is_jcl_file(None)
-        assert result == False
+        assert not result
     
     def test_is_proc_file_with_invalid_source_type(self):
         """Test is_proc_file with invalid source type (should return False)."""
         # List is not a valid source type
         result = is_proc_file([1, 2, 3])
-        assert result == False
+        assert not result
     
     def test_is_proc_file_with_none(self):
         """Test is_proc_file with None (should return False)."""
         result = is_proc_file(None)
-        assert result == False
+        assert not result
     
     def test_detect_file_type_with_none_raises_error(self):
         """Test detect_file_type with None raises ValueError."""

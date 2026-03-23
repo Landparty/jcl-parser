@@ -7,13 +7,9 @@ All tests should FAIL initially, then pass as implementation is added.
 
 import pytest
 import time
-from pathlib import Path
-from io import StringIO
 
 # Import the main jclparser module and expected classes
-import jclparser
 from jclparser import parse_jcl, validate_jcl, get_plugin_registry
-from jclparser.model import Job, Step, DDStatement
 from jclparser.errors import JCLSyntaxError, JCLValidationError, ErrorType
 from jclparser.plugins import StatementPlugin
 
@@ -64,7 +60,7 @@ for the SYSIN DD
         assert sysprint_dd.parameters["SYSOUT"] == "*"
         
         sysin_dd = next(dd for dd in step1_dds if dd.name == "SYSIN")
-        assert sysin_dd.has_inline_data == True
+        assert sysin_dd.has_inline_data
         assert sysin_dd.inline_data is not None
         assert "This is inline data" in sysin_dd.inline_data
         assert "for the SYSIN DD" in sysin_dd.inline_data
@@ -214,7 +210,7 @@ class TestComplexJCLFeatures:
         proc_step = job.get_step("PROC1")
         if proc_step is None:
             raise AssertionError("PROC1 not found")
-        assert proc_step.is_procedure == True
+        assert proc_step.is_procedure
         assert "PARM" in proc_step.parameters
         assert "OPTION1" in proc_step.parameters["PARM"]
     
@@ -229,7 +225,7 @@ class TestComplexJCLFeatures:
         sysin_dd = proc_step.get_dd("SYSIN")
         if sysin_dd is None:
             raise AssertionError("SYSIN DD not found")
-        assert sysin_dd.is_temporary() == True
+        assert sysin_dd.is_temporary()
         assert sysin_dd.dataset_name == "&&TEMP"
 
         # Test temporary dataset usage
@@ -328,7 +324,7 @@ class TestPluginExtensibility:
         # For now, verify that plugins can be called appropriately
         
         registry = get_plugin_registry()
-        plugins = registry.get_statement_plugins() if hasattr(registry, 'get_statement_plugins') else []
+        registry.get_statement_plugins() if hasattr(registry, 'get_statement_plugins') else []
         
         # Test that plugin system is functional
         assert registry is not None
@@ -468,7 +464,7 @@ class TestEndToEndScenarios:
 
         # Validate data flow
         sort_outputs = sort_step.get_output_datasets()
-        calc_inputs = calc_step.get_input_datasets()
+        calc_step.get_input_datasets()
 
         # Should have temporary dataset linkage
         temp_datasets = [ds for ds in sort_outputs if ds.startswith("&&")]
@@ -539,7 +535,7 @@ With multiple lines
         proc_step = job.get_step("PROC1")
         if proc_step is None:
             raise AssertionError("PROC1 not found")
-        assert proc_step.is_procedure == True
+        assert proc_step.is_procedure
 
         # Test inline data handling
         step1 = job.get_step("STEP1")

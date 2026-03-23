@@ -2,7 +2,6 @@
 Tests for enhanced continuation line handling.
 """
 
-import pytest
 from jclparser.continuation_handler import (
     ContinuationLineHandler,
     ContinuationContext,

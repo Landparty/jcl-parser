@@ -2,7 +2,6 @@
 Comprehensive tests for jclparser.utils module.
 """
 
-import pytest
 from jclparser.utils import (
     normalize_jcl_line,
     is_continuation_line,

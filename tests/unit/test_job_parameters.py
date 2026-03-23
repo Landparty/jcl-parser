@@ -5,7 +5,6 @@ Tests BYTES, LINES, PAGES, SYSAFF, SCHENV parameters.
 Following TDD - these tests will fail until we add the properties.
 """
 
-import pytest
 from jclparser import parse_jcl
 
 

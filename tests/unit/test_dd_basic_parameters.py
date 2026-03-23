@@ -5,9 +5,7 @@ These parameters can appear either inside DCB=(...) or as standalone DD paramete
 This test file verifies they are parsed correctly in both cases.
 """
 
-import pytest
 from jclparser import parse_jcl
-from jclparser.errors import JCLSyntaxError
 
 
 class TestBasicDDParametersOutsideDCB:

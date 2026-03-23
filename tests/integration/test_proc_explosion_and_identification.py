@@ -16,23 +16,19 @@ Scenario 2: JCL with PROC files in JCLLIB and backend proc identification
 import pytest
 from pathlib import Path
 import tempfile
-from typing import List, Dict, Any
+from typing import List, Dict
 
 from jclparser import (
     parse_jcl,
     ProcedureNotFoundError,
     CircularProcedureError,
-    ExplosionDepthError,
 )
 from jclparser.model import (
-    Job,
-    Step,
     Procedure,
 )
 from jclparser.proc_loader import (
     InlineProcedureLoader,
     JCLLIBProcedureLoader,
-    CompositeProcedureLoader,
     create_default_loader,
 )
 

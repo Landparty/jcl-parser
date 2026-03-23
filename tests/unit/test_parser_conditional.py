@@ -1,6 +1,5 @@
-import pytest
 from jclparser.parser import parse_jcl
-from jclparser.model import ConditionalBlock, Step, Job
+from jclparser.model import ConditionalBlock, Step
 
 def test_if_then_hierarchy():
     '''Test that an IF/THEN block successfully nests a Step.'''

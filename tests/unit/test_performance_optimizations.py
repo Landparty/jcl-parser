@@ -6,7 +6,6 @@ Tests for performance optimization additions:
 - validate_jcl_identifier("1INVALID") must return False
 """
 
-import pytest
 from jclparser.jcl_file_type import (
     FileType,
     detect_file_type,

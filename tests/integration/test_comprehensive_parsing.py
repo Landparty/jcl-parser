@@ -8,7 +8,6 @@ we cover most JCL syntax and statement types.
 import pytest
 from pathlib import Path
 from jclparser import parse_jcl, validate_jcl
-from jclparser.model import Job, Step, DDStatement, ConditionalBlock, Procedure
 from jclparser.errors import JCLSyntaxError, JCLValidationError
 
 
