@@ -45,8 +45,12 @@ def normalize_jcl_line(line: str) -> str:
 
     Strips mainframe sequence numbers from columns 73-80.  In the standard
     80-column JCL record format columns 73-80 are identifier/sequence fields
-    that must not be interpreted as JCL content.  Truncating to column 72 is
-    always safe: lines shorter than 73 characters are unaffected.
+    that must not be interpreted as JCL content.
+
+    Truncation is only applied when the raw line is at least 80 characters,
+    indicating a true mainframe fixed-width record.  Lines shorter than 80
+    characters are assumed to come from a modern text editor where all
+    characters are actual JCL content and must not be truncated.
 
     Args:
         line: Raw JCL line
@@ -54,8 +58,10 @@ def normalize_jcl_line(line: str) -> str:
     Returns:
         Normalized line
     """
-    # Strip mainframe sequence numbers (cols 73-80, 0-indexed 72-79)
-    if len(line) > 72:
+    # Strip mainframe sequence numbers (cols 73-80, 0-indexed 72-79).
+    # Only do this for full 80-column mainframe records; shorter lines are
+    # modern text-editor JCL where every character is content.
+    if len(line) >= 80:
         line = line[:72]
 
     # Remove trailing whitespace but preserve leading spaces for continuation detection

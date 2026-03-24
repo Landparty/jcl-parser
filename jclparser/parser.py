@@ -757,7 +757,13 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]
     
     # Check for unmatched parentheses
     if paren_depth != 0:
-        raise JCLSyntaxError(f"Unmatched parentheses in parameter: {param_string}", line_number)
+        hint = (
+            " (statement may have been truncated at column 71 —"
+            " use JCL continuation lines to break long statements across multiple records)"
+        )
+        raise JCLSyntaxError(
+            f"Unmatched parentheses in parameter: {param_string}{hint}", line_number
+        )
     
     # Parse individual parameters
     # Characters that form relational operators when followed by '='

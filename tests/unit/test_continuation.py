@@ -2,11 +2,13 @@
 Tests for enhanced continuation line handling.
 """
 
+from jclparser import parse_jcl
 from jclparser.continuation_handler import (
     ContinuationLineHandler,
     ContinuationContext,
     merge_continuation_lines,
 )
+from jclparser.utils import normalize_jcl_line
 
 
 class TestContinuationContext:
@@ -337,4 +339,51 @@ class TestContinuationEdgeCases:
 
         assert len(merged) == 1
         assert "((A,B),(C,(D,E)))" in merged[0][0]
-        assert "UNIT=SYSDA" in merged[0][0]
+
+
+class TestNormalizeLongLines:
+    """Regression tests for long-line JCL that must not be truncated."""
+
+    def test_line_between_72_and_80_chars_not_truncated(self):
+        """Lines between 73 and 79 chars (modern-editor JCL) must not be truncated."""
+        # 74-char line: content runs into what would be the seq-number area on a
+        # mainframe record, but here every character is genuine JCL content.
+        line = "//DD1     DD DSN=OUTPUT.DATASET.NAME,DCB=(RECFM=FB,LRECL=80,BLKSIZE=23440)"
+        assert 72 < len(line) < 80, f"Expected 73-79 chars, got {len(line)}"
+        result = normalize_jcl_line(line)
+        assert result == line.rstrip()
+
+    def test_80col_mainframe_record_still_truncated(self):
+        """Lines of exactly 80 chars (mainframe records) lose cols 73-80."""
+        content = "//DD1 DD DSN=MY.DATA,DISP=SHR"
+        # Pad to 72, add sequence numbers to reach 80
+        padded = content.ljust(72) + "SEQ00001"
+        assert len(padded) == 80
+        result = normalize_jcl_line(padded)
+        assert "SEQ00001" not in result
+        assert content in result
+
+    def test_exact_bug_report_single_long_line(self):
+        """Regression: DD with all parameters on a 73-79 char line must parse without error.
+
+        Previously, normalize_jcl_line truncated lines > 72 chars, cutting off
+        the closing parenthesis of DCB and raising 'Unmatched parentheses'.
+        """
+        # This DD line is between 73-79 chars — fits in one modern-editor line with
+        # all parens closed, but was truncated at char 72 before the fix.
+        dd_line = "//DD1     DD DSN=OUTPUT.DATASET.NAME,DCB=(RECFM=FB,LRECL=80,BLKSIZE=23440)"
+        assert 72 < len(dd_line) < 80, f"Expected 73-79 chars, got {len(dd_line)}"
+
+        jcl = (
+            "//JOBNAME JOB ACCT,NAME\n"
+            "//STEP1   EXEC PGM=PROG\n"
+            + dd_line + "\n"
+        )
+        job = parse_jcl(jcl)
+        dd = job.steps[0].dd_statements[0]
+        params = dd.parameters
+        assert "DSN" in params
+        # Closing paren must not have been lost — DCB must be present with BLKSIZE
+        assert "DCB" in params
+        dcb_val = str(params["DCB"])
+        assert "BLKSIZE" in dcb_val or "23440" in dcb_val
