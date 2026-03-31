@@ -22,9 +22,6 @@ from .proc_loader import ProcedureLoader, create_default_loader
 from .system_symbols import SystemSymbolProvider, get_default_provider
 
 
-# Regex pattern for symbolic parameters (kept for backwards compatibility)
-SYMBOL_PATTERN = re.compile(r'&([A-Z0-9@#$]+)')
-
 # Single-pass pattern: matches && (escaped ampersand) OR &SYMBOL with optional trailing period
 _SYMBOL_SUB_PATTERN = re.compile(r'&&|&([A-Z0-9@#$]+)\.?')
 
