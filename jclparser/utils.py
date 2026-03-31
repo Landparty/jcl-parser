@@ -87,6 +87,27 @@ def is_continuation_line(line: str) -> bool:
     return stripped.startswith("//") and not stripped.startswith("//*") and len(stripped) > 2 and stripped[2] == " "
 
 
+def _read_file_with_fallback(path: Path) -> str:
+    """
+    Read a file trying utf-8, latin-1, cp1252, then binary fallback.
+
+    Args:
+        path: Existing file path (caller must verify existence).
+
+    Returns:
+        File content as a string.
+    """
+    for encoding in ('utf-8', 'latin-1', 'cp1252'):
+        try:
+            with open(path, 'r', encoding=encoding) as fh:
+                return fh.read()
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    # Last resort: binary decode with replacement
+    with open(path, 'rb') as fh:
+        return fh.read().decode('utf-8', errors='ignore')
+
+
 def read_source(source: Union[str, Path, Any]) -> str:
     """
     Resolve a JCL source (string content, file path, or file-like object) into a
@@ -107,8 +128,7 @@ def read_source(source: Union[str, Path, Any]) -> str:
     if isinstance(source, Path):
         if not source.exists():
             raise FileNotFoundError(f"JCL file not found: {source}")
-        with open(source, 'r', encoding='utf-8') as fh:
-            return fh.read()
+        return _read_file_with_fallback(source)
     if isinstance(source, str):
         # Treat as a file path when it looks like one
         if source.endswith('.jcl') or (
@@ -117,8 +137,7 @@ def read_source(source: Union[str, Path, Any]) -> str:
             path = Path(source)
             if not path.exists():
                 raise FileNotFoundError(f"JCL file not found: {path}")
-            with open(path, 'r', encoding='utf-8') as fh:
-                return fh.read()
+            return _read_file_with_fallback(path)
         return source
     # File-like object
     content = source.read()

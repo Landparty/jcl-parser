@@ -211,36 +211,20 @@ def _read_source(source: Union[str, Path, IO]) -> str:
 def _read_file(path: Path) -> str:
     """
     Read content from a file path.
-    
+
     Args:
         path: Path to file
-        
+
     Returns:
         File content as string
-        
+
     Raises:
         FileNotFoundError: If file doesn't exist
     """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
-    
-    # Try different encodings
-    encodings = ['utf-8', 'latin-1', 'cp1252']
-    
-    for encoding in encodings:
-        try:
-            with open(path, 'r', encoding=encoding) as f:
-                return f.read()
-        except (UnicodeDecodeError, UnicodeError):
-            continue
-    
-    # If all encodings fail, try binary mode and decode with errors='ignore'
-    try:
-        with open(path, 'rb') as f:
-            return f.read().decode('utf-8', errors='ignore')
-    except OSError:
-        # Last resort: return empty string for unreadable files
-        return ""
+    from .utils import _read_file_with_fallback
+    return _read_file_with_fallback(path)
 
 
 def _find_first_statement_type(content: str) -> Optional[str]:
