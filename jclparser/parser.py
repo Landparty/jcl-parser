@@ -25,6 +25,9 @@ _STATEMENT_TYPES: frozenset = frozenset({
     "SCHEDULE", "NULL", "COMMAND", "CNTL", "ENDCNTL",
 })
 
+#: Lazily-initialised ParameterParser instance shared across calls (same pattern as utils.py).
+_PARAMETER_PARSER = None
+
 
 def parse_jcl(
     source: Union[str, Path, IO], 
@@ -709,6 +712,43 @@ def _find_keyword_eq(part: str, operator_prefixes: frozenset) -> Optional[int]:
     return None
 
 
+def _check_param_balance(param_string: str, line_number: int) -> None:
+    """Validate that *param_string* has balanced quotes and parentheses.
+
+    Raises JCLSyntaxError with a descriptive message on the first imbalance
+    detected.
+    """
+    in_quotes = False
+    paren_depth = 0
+    i = 0
+    while i < len(param_string):
+        c = param_string[i]
+        if c == "'":
+            if in_quotes and i + 1 < len(param_string) and param_string[i + 1] == "'":
+                i += 2
+                continue
+            in_quotes = not in_quotes
+        elif c == "(" and not in_quotes:
+            paren_depth += 1
+        elif c == ")" and not in_quotes:
+            paren_depth -= 1
+        i += 1
+    if in_quotes:
+        raise JCLSyntaxError(
+            f"Unclosed quote in parameter: {param_string}", line_number
+        )
+    if paren_depth != 0:
+        hint = (
+            " (statement may have been truncated at column 71 —"
+            " use JCL continuation lines to break long statements"
+            " across multiple records)"
+        )
+        raise JCLSyntaxError(
+            f"Unmatched parentheses in parameter: {param_string}{hint}",
+            line_number,
+        )
+
+
 def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]:
     """Parse JCL parameters from parameter string"""
     parameters = {}
@@ -732,50 +772,13 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]
         else:
             return parameters
     
-    # Enhanced parameter parsing with better list and parentheses handling
-    parts = []
-    in_quotes = False
-    paren_depth = 0
-    start = 0
-
-    i = 0
-    while i < len(param_string):
-        char = param_string[i]
-        if char == "'":
-            # Handle escaped quotes: '' inside a quoted string represents a single quote
-            if in_quotes and i + 1 < len(param_string) and param_string[i + 1] == "'":
-                i += 2  # Skip both quote chars; both remain in the current slice
-                continue
-            # Regular quote - toggle state
-            in_quotes = not in_quotes
-        elif char == "(" and not in_quotes:
-            paren_depth += 1
-        elif char == ")" and not in_quotes:
-            paren_depth -= 1
-        elif char == "," and not in_quotes and paren_depth == 0:
-            current = param_string[start:i].strip()
-            if current:
-                parts.append(current)
-            start = i + 1
-        i += 1
-
-    current = param_string[start:].strip()
-    if current:
-        parts.append(current)
-    
-    # Check for unclosed quotes
-    if in_quotes:
-        raise JCLSyntaxError(f"Unclosed quote in parameter: {param_string}", line_number)
-    
-    # Check for unmatched parentheses
-    if paren_depth != 0:
-        hint = (
-            " (statement may have been truncated at column 71 —"
-            " use JCL continuation lines to break long statements across multiple records)"
-        )
-        raise JCLSyntaxError(
-            f"Unmatched parentheses in parameter: {param_string}{hint}", line_number
-        )
+    # Validate balance then split using the canonical ParameterParser implementation
+    _check_param_balance(param_string, line_number)
+    global _PARAMETER_PARSER
+    if _PARAMETER_PARSER is None:
+        from .parameter_ast import ParameterParser
+        _PARAMETER_PARSER = ParameterParser()
+    parts = _PARAMETER_PARSER._split_parameters(param_string)
     
     # Parse individual parameters
     # Characters that form relational operators when followed by '='
