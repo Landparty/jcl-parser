@@ -5,6 +5,7 @@ A Python library for parsing IBM JCL (Job Control Language) into structured obje
 [![Python](https://img.shields.io/badge/python-3.13+-blue.svg)](https://python.org)
 [![Coverage](https://img.shields.io/badge/coverage-92%25-green.svg)](#testing)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Changelog](https://img.shields.io/badge/changelog-1.0.0-blue.svg)](CHANGELOG.md)
 
 ## Install
 

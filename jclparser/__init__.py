@@ -6,7 +6,7 @@ Provides a simple API for extracting, analyzing, and manipulating JCL statements
 """
 
 # Package metadata
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 __author__ = "JCL Parser Team"
 __description__ = "Parse IBM JCL scripts into Python objects"
 
