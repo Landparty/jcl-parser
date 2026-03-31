@@ -2,6 +2,8 @@
 Tests for enhanced continuation line handling.
 """
 
+import textwrap
+
 from jclparser import parse_jcl
 from jclparser.continuation_handler import (
     ContinuationLineHandler,
@@ -387,3 +389,143 @@ class TestNormalizeLongLines:
         assert "DCB" in params
         dcb_val = str(params["DCB"])
         assert "BLKSIZE" in dcb_val or "23440" in dcb_val
+
+    def test_multiline_dd_aws_m2_carddemo_no_unmatched_parens(self):
+        """Regression: multi-param DD with DISP/DCB/SPACE on continuation lines must not
+        raise 'Unmatched parentheses'.
+
+        Reported error:
+            JCL_PARSE_ERROR: Unmatched parentheses in parameter:
+            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,DCB=(LRECL=80,BLKSIZE=8000,RECFM=FB),
+            SPACE=(CYL,(1,1),RLSE), 00,RECFM=FB), ATA.VSAM.KSDSDSN=AWS.M2.CARDDEMO.STATEMNT.PS
+
+        The garbled parameter string shows that a second DD statement's parameters were
+        incorrectly merged into the first one because normalize_jcl_line() truncated 73-79
+        char continuation lines, leaving DCB's closing parenthesis.
+        """
+        jcl = textwrap.dedent("""\
+            //JOBNAME  JOB ACCT,NAME
+            //STEP1    EXEC PGM=PROG
+            //SYSUT2   DD  DSN=AWS.M2.CARDDEMO.STATEMNT.PS,
+            //             DISP=(NEW,CATLG,DELETE),
+            //             UNIT=SYSDA,
+            //             DCB=(LRECL=80,BLKSIZE=8000,RECFM=FB),
+            //             SPACE=(CYL,(1,1),RLSE)
+            """)
+        job = parse_jcl(jcl)
+        dd = job.steps[0].dd_statements[0]
+        params = dd.parameters
+        assert "DSN" in params
+        assert "DISP" in params
+        assert "DCB" in params
+        assert "SPACE" in params
+        # Verify the dataset name is intact
+        assert "AWS.M2.CARDDEMO.STATEMNT.PS" in str(params["DSN"])
+
+    def test_creastmt_job_corrupted_line_raises_syntax_error(self):
+        """Regression: CREASTMT JCL with garbled continuation line must raise JCLSyntaxError.
+
+        The STMTFILE DD in STEP040 has garbage text on one continuation line:
+            //         SPACE=(CYL,(1,1),RLSE), 00,RECFM=FB), ATA.VSAM.KSDS
+        The trailing ` 00,RECFM=FB), ATA.VSAM.KSDS` is corrupted content that
+        produces an unmatched closing parenthesis.  The parser must raise a
+        JCLSyntaxError rather than silently producing wrong output.
+        """
+        from jclparser.errors import JCLSyntaxError
+
+        jcl = textwrap.dedent("""\
+            //CREASTMT JOB 'Create Statement',CLASS=A,MSGCLASS=H,MSGLEVEL=(1,1),
+            //         NOTIFY=&SYSUID,TIME=1440
+            //*
+            //STEP040  EXEC PGM=CBSTM03A,COND=(0,NE)
+            //STMTFILE DD DISP=(NEW,CATLG,DELETE),
+            //         UNIT=SYSDA,
+            //         DCB=(LRECL=80,BLKSIZE=8000,RECFM=FB),
+            //         SPACE=(CYL,(1,1),RLSE), 00,RECFM=FB), ATA.VSAM.KSDS
+            //         DSN=AWS.M2.CARDDEMO.STATEMNT.PS
+            """)
+        import pytest as _pytest
+        with _pytest.raises(JCLSyntaxError, match="[Uu]nmatched parenthes"):
+            parse_jcl(jcl)
+
+    def test_creastmt_job_clean_parses_fully(self):
+        """Regression: full CREASTMT JCL without the corrupted line must parse cleanly.
+
+        Verifies that parsing the same job with a correct STMTFILE DD (no garbled
+        text) produces the expected steps and DD statements.
+        """
+        jcl = textwrap.dedent("""\
+            //CREASTMT JOB 'Create Statement',CLASS=A,MSGCLASS=H,MSGLEVEL=(1,1),
+            //         NOTIFY=&SYSUID,TIME=1440
+            //*
+            //DELDEF01 EXEC PGM=IDCAMS
+            //SYSPRINT DD  SYSOUT=*
+            //SYSIN    DD  *
+              DELETE    AWS.M2.CARDDEMO.TRXFL.SEQ
+            /*
+            //STEP010  EXEC PGM=SORT
+            //SORTIN   DD  DISP=SHR,DSN=AWS.M2.CARDDEMO.TRANSACT.VSAM.KSDS
+            //SYSPRINT DD  SYSOUT=*
+            //SORTOUT  DD  DSN=AWS.M2.CARDDEMO.TRXFL.SEQ,
+            //             DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+            //             DCB=(LRECL=350,BLKSIZE=3500,RECFM=FB),
+            //             SPACE=(CYL,(1,1),RLSE)
+            //SYSIN    DD *
+              SORT FIELDS=(263,16,CH,A,1,16,CH,A)
+            /*
+            //STEP040  EXEC PGM=CBSTM03A,COND=(0,NE)
+            //STMTFILE DD DISP=(NEW,CATLG,DELETE),
+            //         UNIT=SYSDA,
+            //         DCB=(LRECL=80,BLKSIZE=8000,RECFM=FB),
+            //         SPACE=(CYL,(1,1),RLSE),
+            //         DSN=AWS.M2.CARDDEMO.STATEMNT.PS
+            //HTMLFILE DD  DISP=(NEW,CATLG,DELETE),
+            //         UNIT=SYSDA,
+            //         DCB=(LRECL=100,BLKSIZE=800,RECFM=FB),
+            //         SPACE=(CYL,(1,1),RLSE),
+            //         DSN=AWS.M2.CARDDEMO.STATEMNT.HTML
+            """)
+        job = parse_jcl(jcl)
+        assert job.name == "CREASTMT"
+        step_names = [s.name for s in job.steps]
+        assert "DELDEF01" in step_names
+        assert "STEP010" in step_names
+        assert "STEP040" in step_names
+
+        step040 = next(s for s in job.steps if s.name == "STEP040")
+        dd_names = [dd.name for dd in step040.dd_statements]
+        assert "STMTFILE" in dd_names
+        assert "HTMLFILE" in dd_names
+
+        stmtfile = next(dd for dd in step040.dd_statements if dd.name == "STMTFILE")
+        assert "DSN" in stmtfile.parameters
+        assert "AWS.M2.CARDDEMO.STATEMNT.PS" in str(stmtfile.parameters["DSN"])
+        assert "DCB" in stmtfile.parameters
+        assert "SPACE" in stmtfile.parameters
+
+    def test_adjacent_dds_not_merged_when_first_ends_with_closed_parens(self):
+        """Regression: two adjacent DD statements must remain independent.
+
+        When the first DD's last continuation line is 73-79 chars and ends with a
+        closing paren (e.g. SPACE=(CYL,(1,1),RLSE)), the old bug would truncate that
+        paren, causing the second DD to be absorbed as a continuation of the first.
+        """
+        jcl = textwrap.dedent("""\
+            //JOBNAME  JOB ACCT,NAME
+            //STEP1    EXEC PGM=PROG
+            //DD1      DD  DSN=AWS.M2.CARDDEMO.DATA.VSAM.KSDS,
+            //             DISP=(NEW,CATLG,DELETE),
+            //             UNIT=SYSDA,
+            //             DCB=(LRECL=80,BLKSIZE=8000,RECFM=FB),
+            //             SPACE=(CYL,(1,1),RLSE)
+            //DD2      DD  DSN=AWS.M2.CARDDEMO.STATEMNT.PS,
+            //             DISP=SHR
+            """)
+        job = parse_jcl(jcl)
+        assert len(job.steps[0].dd_statements) == 2
+        dd1, dd2 = job.steps[0].dd_statements
+        assert "AWS.M2.CARDDEMO.DATA.VSAM.KSDS" in str(dd1.parameters.get("DSN", ""))
+        assert "AWS.M2.CARDDEMO.STATEMNT.PS" in str(dd2.parameters.get("DSN", ""))
+        # DD2 must NOT have DCB or SPACE (those belong to DD1)
+        assert "DCB" not in dd2.parameters
+        assert "SPACE" not in dd2.parameters
