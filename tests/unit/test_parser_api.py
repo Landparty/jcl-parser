@@ -237,3 +237,11 @@ class TestParserIntegration:
         assert statements[0].type == "JOB"
         assert statements[1].type == "EXEC"
         assert statements[2].type == "DD"
+
+
+def test_dd_before_exec_strict_raises_structure_error():
+    """In strict mode, a DD before any EXEC should raise JCLStructureError."""
+    from jclparser.errors import JCLStructureError
+    jcl = "//BADJOB   JOB (ACCT),'TEST'\n//DD1      DD DSN=MY.DATA,DISP=SHR\n"
+    with pytest.raises(JCLStructureError):
+        parse_jcl(jcl, strict_mode=True)

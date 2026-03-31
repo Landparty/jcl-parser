@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Union, List, Optional, Dict, Any, IO
 from .model import Job, Step, DDStatement, Statement, ConditionalBlock, Procedure
 from .errors import (
-    JCLSyntaxError, JCLValidationError, ParseError, 
-    ErrorType, ErrorSeverity
+    JCLSyntaxError, JCLValidationError, JCLStructureError,
+    ParseError, ErrorType, ErrorSeverity
 )
 from .plugins import get_plugin_registry, ParserConfig
 from .utils import normalize_jcl_line, read_source, POSITIONAL_PARAM_PREFIX, is_positional_key
@@ -393,6 +393,18 @@ def parse_jcl(
                         step.line_number
                     )
     
+    # In strict mode, a DD statement with no preceding EXEC is a structural error
+    if strict_mode and not job.steps:
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("//") and not stripped.startswith("//*"):
+                parts = stripped.split()
+                if len(parts) >= 2 and parts[1].upper() == "DD":
+                    raise JCLStructureError(
+                        "DD statement found before any EXEC step. "
+                        "Each DD must belong to a step."
+                    )
+
     # Validate the parsed job if in strict mode
     if strict_mode:
         validation_errors = job.validate()
