@@ -157,35 +157,3 @@ def parse(source, **kwargs):
     return parse_jcl(source, **kwargs)
 
 
-# Lazy import map for heavy / optional symbols not imported at the top level
-_LAZY: dict = {
-    # explosion module
-    'explode_job':      ('explosion', 'explode_job'),
-    'SymbolScope':      ('explosion', 'SymbolScope'),
-    'ExplosionRecord':  ('explosion', 'ExplosionRecord'),
-    'ProcExpansionInfo': ('explosion', 'ProcExpansionInfo'),
-    'substitute_symbols': ('explosion', 'substitute_symbols'),
-    # proc_loader module
-    'ProcedureLoader':          ('proc_loader', 'ProcedureLoader'),
-    'InlineProcedureLoader':    ('proc_loader', 'InlineProcedureLoader'),
-    'JCLLIBProcedureLoader':    ('proc_loader', 'JCLLIBProcedureLoader'),
-    'CompositeProcedureLoader': ('proc_loader', 'CompositeProcedureLoader'),
-    'create_default_loader':    ('proc_loader', 'create_default_loader'),
-    # system_symbols module
-    'SystemSymbolProvider':          ('system_symbols', 'SystemSymbolProvider'),
-    'MockSystemSymbolProvider':      ('system_symbols', 'MockSystemSymbolProvider'),
-    'RuntimeSystemSymbolProvider':   ('system_symbols', 'RuntimeSystemSymbolProvider'),
-    'EnvironmentSystemSymbolProvider': ('system_symbols', 'EnvironmentSystemSymbolProvider'),
-    'get_default_provider':          ('system_symbols', 'get_default_provider'),
-    'set_default_provider':          ('system_symbols', 'set_default_provider'),
-}
-
-
-def __getattr__(name: str):
-    """Lazily import heavy module attributes on first access."""
-    if name in _LAZY:
-        import importlib
-        mod_name, attr = _LAZY[name]
-        mod = importlib.import_module(f'.{mod_name}', __package__)
-        return getattr(mod, attr)
-    raise AttributeError(f"module 'jclparser' has no attribute {name!r}")
