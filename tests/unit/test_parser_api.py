@@ -245,3 +245,10 @@ def test_dd_before_exec_strict_raises_structure_error():
     jcl = "//BADJOB   JOB (ACCT),'TEST'\n//DD1      DD DSN=MY.DATA,DISP=SHR\n"
     with pytest.raises(JCLStructureError):
         parse_jcl(jcl, strict_mode=True)
+
+
+def test_dd_before_exec_lenient_no_raise():
+    """In lenient mode, DD before EXEC should not raise — just return 0 steps."""
+    jcl = "//BADJOB   JOB (ACCT),'TEST'\n//DD1      DD DSN=MY.DATA,DISP=SHR\n"
+    job = parse_jcl(jcl, strict_mode=False)
+    assert len(job.steps) == 0

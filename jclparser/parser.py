@@ -312,8 +312,8 @@ def parse_jcl(
                     conditional_stack.pop()
             elif stmt.type == "JES":
                 if job:
-                    content = f"/*{stmt.name} {stmt.parameters.get('_raw', '')}".strip()
-                    job.jes_statements.append(content)
+                    jes_content = f"/*{stmt.name} {stmt.parameters.get('_raw', '')}".strip()
+                    job.jes_statements.append(jes_content)
             
             elif stmt.type == "NULL":
                 # NULL statement (//) - just ignore, used as delimiter
