@@ -386,42 +386,8 @@ def merge_continuation_lines(lines: List[str]) -> List[str]:
     Returns:
         List of complete JCL statements
     """
-    merged_lines = []
-    current_parts: list[str] = []
-
-    for line in lines:
-        normalized = normalize_jcl_line(line)
-
-        # Skip empty lines and comments
-        if not normalized or normalized.strip().startswith("//*"):
-            if current_parts:
-                merged_lines.append("".join(current_parts))
-                current_parts = []
-            merged_lines.append(normalized)
-            continue
-
-        # Check if this is a continuation
-        if is_continuation_line(normalized):
-            # Add to current statement
-            continuation_part = normalized[2:].strip()  # Remove // prefix
-            if current_parts:
-                current_parts.append(" ")
-                current_parts.append(continuation_part)
-            else:
-                # Continuation without previous statement - treat as new statement
-                current_parts.append("//")
-                current_parts.append(continuation_part)
-        else:
-            # New statement
-            if current_parts:
-                merged_lines.append("".join(current_parts))
-            current_parts = [normalized]
-
-    # Don't forget the last statement
-    if current_parts:
-        merged_lines.append("".join(current_parts))
-    
-    return merged_lines
+    from .continuation_handler import merge_continuation_lines as _handler_merge
+    return [merged for merged, _lineno in _handler_merge(lines)]
 
 
 def calculate_jcl_checksum(jcl_content: str) -> str:
