@@ -17,10 +17,19 @@ from jclparser.sql_detector import (
 class TestIsDb2Program:
     """Tests for is_db2_program()."""
 
-    @pytest.mark.parametrize("pgm", [
-        "DSNTEP2", "DSNTEP4", "DSNTIAD", "IKJEFT01", "IKJEFT1B",
-        "DSNUPROC", "DSNUTILB", "DSNTEP",
-    ])
+    @pytest.mark.parametrize(
+        "pgm",
+        [
+            "DSNTEP2",
+            "DSNTEP4",
+            "DSNTIAD",
+            "IKJEFT01",
+            "IKJEFT1B",
+            "DSNUPROC",
+            "DSNUTILB",
+            "DSNTEP",
+        ],
+    )
     def test_known_programs(self, pgm):
         assert is_db2_program(pgm) is True
 
@@ -160,7 +169,9 @@ class TestDetectSqlInStep:
         assert result.sql_statements[0] == ("SELECT", "DML", "SYSIN")
 
     def test_db2_program_with_sql_inline(self):
-        dd = DDStatement(name="SYSIN", inline_data="SELECT * FROM T1\nINSERT INTO T2 VALUES(1)")
+        dd = DDStatement(
+            name="SYSIN", inline_data="SELECT * FROM T1\nINSERT INTO T2 VALUES(1)"
+        )
         step = Step(name="RUN", program="DSNTEP2", dd_statements=[dd])
         result = detect_sql_in_step(step)
         assert result.has_sql is True
@@ -265,6 +276,7 @@ DELETE FROM TABLE1
 //"""
         job = parse_jcl(jcl)
         from jclparser.model import iter_execution_steps
+
         step = next(iter_execution_steps(job.steps))
         assert step.has_sql is True
         result = step.detect_sql()
@@ -314,10 +326,12 @@ class TestSQLDetectionResult:
         assert r.sql_categories == frozenset()
 
     def test_sql_categories_mixed(self):
-        r = SQLDetectionResult(sql_statements=[
-            ("SELECT", "DML", "SYSIN"),
-            ("CREATE", "DDL", "SYSIN"),
-        ])
+        r = SQLDetectionResult(
+            sql_statements=[
+                ("SELECT", "DML", "SYSIN"),
+                ("CREATE", "DDL", "SYSIN"),
+            ]
+        )
         assert r.sql_categories == frozenset({"DML", "DDL"})
 
 

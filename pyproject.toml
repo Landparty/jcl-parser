@@ -11,13 +11,16 @@ authors = [
 ]
 readme = "README.md"
 license = {file = "LICENSE"}
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: Other/Proprietary License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Systems Administration",
@@ -40,7 +43,7 @@ test = [
 [project.urls]
 Homepage = "https://github.com/landparty/jcl-parser"
 Repository = "https://github.com/landparty/jcl-parser"
-Documentation = "https://jclparser.readthedocs.io"
+Documentation = "https://github.com/landparty/jcl-parser/tree/main/docs"
 "Bug Reports" = "https://github.com/landparty/jcl-parser/issues"
 
 [tool.setuptools.packages.find]
@@ -55,17 +58,26 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "--verbose",
+    "--tb=short",
     "--cov=jclparser",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "--cov-report=xml",
+    "--cov-report=term-missing:skip-covered",
+    "--cov-report=html:htmlcov",
+    "--cov-report=xml:coverage.xml",
+    "--cov-fail-under=90",
 ]
 markers = [
-    "integration: marks tests as integration tests",
-    "contract: marks tests as contract tests",
-    "unit: marks tests as unit tests",
-    "performance: marks tests as performance tests",
-    "benchmark: marks tests as benchmark tests",
+    "integration: Integration tests that test multiple components together",
+    "contract: Contract tests that validate API specifications",
+    "unit: Unit tests that test individual functions or classes",
+    "performance: Performance tests that validate speed and memory usage",
+    "slow: Tests that take longer than usual to run",
+    "benchmark: Benchmark tests for performance tracking",
+]
+norecursedirs = ["tests/benchmarks"]
+filterwarnings = [
+    "error",
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
 ]
 
 [tool.coverage.run]

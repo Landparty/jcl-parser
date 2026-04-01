@@ -10,7 +10,7 @@ from jclparser.model import Job, Step, DDStatement
 
 class TestUltraComprehensive:
     """Ultra-comprehensive tests for final coverage"""
-    
+
     def test_parse_jcl_from_string_io(self):
         """Test parsing from StringIO object"""
         jcl = """//JOB1 JOB CLASS=A
@@ -20,27 +20,27 @@ class TestUltraComprehensive:
         sio = StringIO(jcl)
         job = parse_jcl(sio, strict_mode=False)
         assert job.name == "JOB1"
-    
+
     def test_parse_jcl_from_list(self):
         """Test parsing from list of lines"""
         lines = [
             "//JOB2 JOB CLASS=A",
             "//STEP1 EXEC PGM=PROG",
             "//DD1   DD DSN=DATA",
-            "//"
+            "//",
         ]
         # Convert list to string
         jcl_string = "\n".join(lines)
         job = parse_jcl(jcl_string, strict_mode=False)
         assert job.name == "JOB2"
-    
+
     def test_parse_jcl_empty_input(self):
         """Test parsing empty input"""
         try:
             parse_jcl("", strict_mode=False)
         except Exception:
             pass  # May raise error
-    
+
     def test_parse_jcl_only_comments(self):
         """Test parsing only comments"""
         jcl = """//****************************
@@ -52,7 +52,7 @@ class TestUltraComprehensive:
             parse_jcl(jcl, strict_mode=False)
         except Exception:
             pass  # May raise error or return empty job
-    
+
     def test_parser_inline_data_variations(self):
         """Test all inline data variations"""
         jcl1 = """//JOB1 JOB CLASS=A
@@ -64,7 +64,7 @@ LINE2
 //"""
         job1 = parse_jcl(jcl1, strict_mode=False)
         assert job1.steps[0].dd_statements[0].inline_data
-        
+
         jcl2 = """//JOB2 JOB CLASS=A
 //STEP1 EXEC PGM=PROG
 //DD1   DD DATA
@@ -74,7 +74,7 @@ LINE2
 //"""
         job2 = parse_jcl(jcl2, strict_mode=False)
         assert len(job2.steps) >= 1
-        
+
         jcl3 = """//JOB3 JOB CLASS=A
 //STEP1 EXEC PGM=PROG
 //DD1   DD DATA,DLM=$$
@@ -84,7 +84,7 @@ $$
 //"""
         job3 = parse_jcl(jcl3, strict_mode=False)
         assert len(job3.steps) >= 1
-    
+
     def test_parser_concat_dd(self):
         """Test concatenated DD statements"""
         jcl = """//JOB1 JOB CLASS=A
@@ -98,7 +98,7 @@ $$
         job = parse_jcl(jcl, strict_mode=False)
         # Should have multiple DD statements
         assert len(job.steps[0].dd_statements) >= 2
-    
+
     def test_parser_null_statement(self):
         """Test null statements"""
         jcl = """//JOB1 JOB CLASS=A
@@ -110,7 +110,7 @@ $$
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert job.name == "JOB1"
-    
+
     def test_parser_command_statement(self):
         """Test COMMAND statement"""
         jcl = """//JOB1 JOB CLASS=A
@@ -121,21 +121,21 @@ $$
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.steps) >= 1
-    
+
     def test_parser_very_long_continuation(self):
         """Test very long continuation"""
         parts = ["//JOB1 JOB CLASS=A,"]
         for i in range(50):
             parts.append(f"//      PARM{i}=VALUE{i},")
-        parts[-1] = parts[-1].rstrip(',')
+        parts[-1] = parts[-1].rstrip(",")
         parts.append("//STEP1 EXEC PGM=PROG")
         parts.append("//")
-        
+
         jcl = "\n".join(parts)
         job = parse_jcl(jcl, strict_mode=False)
         assert job.name == "JOB1"
         assert len(job.parameters) >= 30
-    
+
     def test_parser_output_statement(self):
         """Test OUTPUT statement"""
         jcl = """//JOB1 JOB CLASS=A
@@ -146,7 +146,7 @@ $$
         job = parse_jcl(jcl, strict_mode=False)
         # OUTPUT may be treated as comment or ignored
         assert job.name == "JOB1"
-    
+
     def test_parser_xmit_statement(self):
         """Test XMIT statement"""
         jcl = """//JOB1 JOB CLASS=A
@@ -156,7 +156,7 @@ $$
         job = parse_jcl(jcl, strict_mode=False)
         # XMIT may be treated as comment or ignored
         assert job.name == "JOB1"
-    
+
     def test_parser_cntl_endcntl(self):
         """Test CNTL/ENDCNTL statements"""
         jcl = """//JOB1 JOB CLASS=A
@@ -169,7 +169,7 @@ $$
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.steps) >= 1
-    
+
     def test_parser_include_statement(self):
         """Test INCLUDE statement"""
         jcl = """//JOB1 JOB CLASS=A
@@ -179,7 +179,7 @@ $$
         job = parse_jcl(jcl, strict_mode=False)
         # INCLUDE may be stored or processed
         assert job.name == "JOB1"
-    
+
     def test_parser_if_then_else_endif(self):
         """Test IF/THEN/ELSE/ENDIF"""
         jcl = """//JOB1 JOB CLASS=A
@@ -192,7 +192,7 @@ $$
         job = parse_jcl(jcl, strict_mode=False)
         # Conditional steps may or may not be included
         assert job.name == "JOB1"
-    
+
     def test_parser_nested_if(self):
         """Test nested IF statements"""
         jcl = """//JOB1 JOB CLASS=A
@@ -205,7 +205,7 @@ $$
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert job.name == "JOB1"
-    
+
     def test_parser_schedule_statement(self):
         """Test SCHEDULE statement"""
         jcl = """//JOB1 JOB CLASS=A
@@ -214,7 +214,7 @@ $$
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert job.name == "JOB1"
-    
+
     def test_parser_export_statement(self):
         """Test EXPORT statement"""
         jcl = """//JOB1 JOB CLASS=A
@@ -223,7 +223,7 @@ $$
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert job.name == "JOB1"
-    
+
     def test_parser_special_dd_names(self):
         """Test special DD names"""
         jcl = """//JOB1 JOB CLASS=A
@@ -241,7 +241,7 @@ INPUT
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.steps[0].dd_statements) >= 5
-    
+
     def test_dd_with_referback(self):
         """Test DD with referback to previous step"""
         jcl = """//JOB1 JOB CLASS=A
@@ -254,7 +254,7 @@ INPUT
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.steps) >= 3
-    
+
     def test_dd_with_subsystem(self):
         """Test DD with subsystem parameters"""
         jcl = """//JOB1 JOB CLASS=A
@@ -264,21 +264,26 @@ INPUT
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.steps[0].dd_statements) >= 2
-    
+
     def test_model_export_to_dict(self):
         """Test exporting model to dict"""
         job = Job(name="EXPORT", parameters={"CLASS": "A"}, accounting_info="ACCT")
         step = Step(name="STEP1", program="PROG", line_number=2)
-        dd = DDStatement(name="DD1", dataset_name="DATA", disposition="SHR",
-                        parameters={"DSN": "DATA", "DISP": "SHR"}, line_number=3)
+        dd = DDStatement(
+            name="DD1",
+            dataset_name="DATA",
+            disposition="SHR",
+            parameters={"DSN": "DATA", "DISP": "SHR"},
+            line_number=3,
+        )
         step.add_dd(dd)
         job.add_step(step)
-        
+
         # Test to_dict if available
-        if hasattr(job, 'to_dict'):
+        if hasattr(job, "to_dict"):
             d = job.to_dict()
-            assert d['name'] == "EXPORT"
-    
+            assert d["name"] == "EXPORT"
+
     def test_procedure_with_symbolic_defaults(self):
         """Test procedure with symbolic parameter defaults"""
         jcl = """//JOB1 JOB CLASS=A
@@ -292,7 +297,7 @@ INPUT
         job = parse_jcl(jcl, strict_mode=False)
         exploded = job.explode()
         assert len(exploded.steps) >= 1
-    
+
     def test_step_with_all_parameters(self):
         """Test step with all possible parameters"""
         jcl = """//JOB1 JOB CLASS=A
@@ -310,7 +315,7 @@ INPUT
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.steps[0].parameters) >= 5
-    
+
     def test_dd_with_all_parameters(self):
         """Test DD with all possible parameters"""
         jcl = """//JOB1 JOB CLASS=A
@@ -329,7 +334,7 @@ INPUT
         job = parse_jcl(jcl, strict_mode=False)
         dd = job.steps[0].dd_statements[0]
         assert "DSN" in dd.parameters or "dsn" in dd.parameters
-    
+
     def test_jcllib_with_multiple_libraries(self):
         """Test JCLLIB with multiple libraries"""
         jcl = """//JOB1 JOB CLASS=A
@@ -338,7 +343,7 @@ INPUT
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.jcllib_order) >= 3
-    
+
     def test_set_with_expressions(self):
         """Test SET with complex expressions"""
         jcl = """//JOB1 JOB CLASS=A
