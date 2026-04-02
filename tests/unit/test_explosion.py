@@ -15,10 +15,10 @@ from jclparser import (
     ExplosionDepthError,
     CircularProcedureError,
     ProcedureNotFoundError,
-    MockSystemSymbolProvider,
-    InlineProcedureLoader,
 )
 from jclparser.explosion import SymbolScope, substitute_symbols
+from jclparser.proc_loader import InlineProcedureLoader
+from jclparser.system_symbols import MockSystemSymbolProvider
 
 
 @pytest.fixture

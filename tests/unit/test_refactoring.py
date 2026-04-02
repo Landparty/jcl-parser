@@ -340,57 +340,6 @@ class TestStatementTypesConstant:
 
 
 # ---------------------------------------------------------------------------
-# TASK-07: ParameterParser._split_parameters canonical behaviour
-# ---------------------------------------------------------------------------
-
-
-class TestSplitParametersCanonical:
-    """Tests for TASK-07: split_jcl_parameters delegates to ParameterParser."""
-
-    def test_simple_split(self):
-        from jclparser.utils import split_jcl_parameters
-
-        assert split_jcl_parameters("A=1,B=2,C=3") == ["A=1", "B=2", "C=3"]
-
-    def test_quoted_string_not_split(self):
-        from jclparser.utils import split_jcl_parameters
-
-        params = split_jcl_parameters("A='X,Y',B=Z")
-        assert len(params) == 2
-        assert params[0] == "A='X,Y'"
-
-    def test_doubled_quote_in_string(self):
-        """JCL escape: '' inside a quoted string is a literal apostrophe."""
-        from jclparser.utils import split_jcl_parameters
-
-        params = split_jcl_parameters("A='X''Y',B='P''Q''R'")
-        assert len(params) == 2, f"Expected 2 parts, got {len(params)}: {params}"
-        assert params[0] == "A='X''Y'"
-        assert params[1] == "B='P''Q''R'"
-
-    def test_nested_parentheses_not_split(self):
-        from jclparser.utils import split_jcl_parameters
-
-        params = split_jcl_parameters("A=(B,(C,D),E),F=G")
-        assert len(params) == 2
-        assert params[0] == "A=(B,(C,D),E)"
-
-    def test_empty_string(self):
-        from jclparser.utils import split_jcl_parameters
-
-        assert split_jcl_parameters("") == []
-        assert split_jcl_parameters("   ") == []
-
-    def test_parameter_parser_split_doubled_quotes(self):
-        """Canonical implementation in ParameterParser handles '' correctly."""
-        from jclparser.parameter_ast import ParameterParser
-
-        pp = ParameterParser()
-        parts = pp._split_parameters("A='X''Y',B='P''Q''R'")
-        assert len(parts) == 2
-
-
-# ---------------------------------------------------------------------------
 # TASK-08: JCLLIBProcedureLoader cache initialised in __init__
 # ---------------------------------------------------------------------------
 

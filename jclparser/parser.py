@@ -9,7 +9,7 @@ and plugin extensibility.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Union, List, Optional, Dict, Any, IO
+from typing import Any, IO
 from .model import Job, Step, DDStatement, Statement, ConditionalBlock, Procedure
 from .errors import (
     JCLSyntaxError,
@@ -59,10 +59,10 @@ _PARAMETER_PARSER = None
 
 
 def parse_jcl(
-    source: Union[str, Path, IO],
+    source: str | Path | IO,
     strict_mode: bool = False,
-    config: Optional[ParserConfig] = None,
-    proc_base_path: Optional[Union[str, Path]] = None,
+    config: ParserConfig | None = None,
+    proc_base_path: str | Path | None = None,
     enable_external_procs: bool = True,
 ) -> Job:
     """
@@ -501,9 +501,7 @@ def parse_jcl(
     return job
 
 
-def validate_jcl(
-    source: Union[str, Path, IO], level: str = "basic"
-) -> List[ParseError]:
+def validate_jcl(source: str | Path | IO, level: str = "basic") -> list[ParseError]:
     """
     Validate JCL syntax and structure without full parsing.
 
@@ -663,7 +661,7 @@ def validate_jcl(
     return errors
 
 
-def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
+def parse_statement(line: str, line_number: int = 0) -> Statement | None:
     """
     Parse individual JCL statement for syntax analysis.
 
@@ -795,7 +793,7 @@ def parse_statement(line: str, line_number: int = 0) -> Optional[Statement]:
     )
 
 
-def _find_keyword_eq(part: str, operator_prefixes: frozenset) -> Optional[int]:
+def _find_keyword_eq(part: str, operator_prefixes: frozenset) -> int | None:
     """Find the position of '=' that acts as a keyword parameter delimiter.
 
     Returns None if no keyword '=' is found (i.e., all '=' signs are part of
@@ -851,7 +849,7 @@ def _check_param_balance(param_string: str, line_number: int) -> None:
         )
 
 
-def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]:
+def _parse_parameters(param_string: str, line_number: int = 0) -> dict[str, Any]:
     """Parse JCL parameters from parameter string"""
     parameters = {}
 
@@ -919,7 +917,7 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]
     return parameters
 
 
-def _parse_list_parameter(list_content: str) -> List[str]:
+def _parse_list_parameter(list_content: str) -> list[str]:
     """Parse parameter list like A,B,C or 'A','B','C'.
 
     Empty positional subfields are preserved so that omitted DISP subfields

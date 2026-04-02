@@ -7,7 +7,7 @@ Provides structured representation of complex parameters like DCB, SPACE, etc.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Module-level frozensets for DCB/SPACE validation (avoids per-call list construction)
 _VALID_RECFM = frozenset(
@@ -37,7 +37,7 @@ class ListParameter(ParameterNode):
     """List parameter: KEY=(val1,val2,val3)."""
 
     key: str = ""
-    values: List[str] = field(default_factory=list)
+    values: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -45,7 +45,7 @@ class NestedParameter(ParameterNode):
     """Nested parameter: KEY=(SUB1=val1,SUB2=val2)."""
 
     key: str = ""
-    subparameters: Dict[str, Any] = field(default_factory=dict)
+    subparameters: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -63,34 +63,34 @@ class DCBParameter(NestedParameter):
     """
 
     @property
-    def recfm(self) -> Optional[str]:
+    def recfm(self) -> str | None:
         """Record format."""
         return self.subparameters.get("RECFM")
 
     @property
-    def lrecl(self) -> Optional[int]:
+    def lrecl(self) -> int | None:
         """Logical record length."""
         val = self.subparameters.get("LRECL")
         return int(val) if val and str(val).isdigit() else None
 
     @property
-    def blksize(self) -> Optional[int]:
+    def blksize(self) -> int | None:
         """Block size."""
         val = self.subparameters.get("BLKSIZE")
         return int(val) if val and str(val).isdigit() else None
 
     @property
-    def bufno(self) -> Optional[int]:
+    def bufno(self) -> int | None:
         """Number of buffers."""
         val = self.subparameters.get("BUFNO")
         return int(val) if val and str(val).isdigit() else None
 
     @property
-    def dsorg(self) -> Optional[str]:
+    def dsorg(self) -> str | None:
         """Dataset organization."""
         return self.subparameters.get("DSORG")
 
-    def validate(self) -> List[str]:
+    def validate(self) -> list[str]:
         """
         Validate DCB parameters.
 
@@ -139,13 +139,13 @@ class SPACEParameter(NestedParameter):
     """
 
     @property
-    def unit(self) -> Optional[str]:
+    def unit(self) -> str | None:
         """Space allocation unit (TRK, CYL, blksize)."""
         # First positional parameter
         return self.subparameters.get("_unit")
 
     @property
-    def primary(self) -> Optional[int]:
+    def primary(self) -> int | None:
         """Primary space allocation."""
         val = self.subparameters.get("_primary")
         if val:
@@ -156,7 +156,7 @@ class SPACEParameter(NestedParameter):
         return None
 
     @property
-    def secondary(self) -> Optional[int]:
+    def secondary(self) -> int | None:
         """Secondary space allocation."""
         val = self.subparameters.get("_secondary")
         if val:
@@ -167,7 +167,7 @@ class SPACEParameter(NestedParameter):
         return None
 
     @property
-    def directory(self) -> Optional[int]:
+    def directory(self) -> int | None:
         """Directory blocks (for PDS)."""
         val = self.subparameters.get("_directory")
         if val:
@@ -192,7 +192,7 @@ class SPACEParameter(NestedParameter):
         """Round allocation."""
         return self.subparameters.get("ROUND", False)
 
-    def validate(self) -> List[str]:
+    def validate(self) -> list[str]:
         """Validate SPACE parameters."""
         errors = []
 
@@ -303,7 +303,7 @@ class ParameterParser:
             line_number=line_number,
         )
 
-    def _split_parameters(self, param_string: str) -> List[str]:
+    def _split_parameters(self, param_string: str) -> list[str]:
         """
         Split parameter string by comma, respecting parentheses and JCL-quoted strings.
 

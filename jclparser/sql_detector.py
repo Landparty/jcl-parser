@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .model import Job, Step, DDStatement
@@ -80,10 +80,10 @@ class SQLDetectionResult:
         has_sql: True if any SQL was detected (program or inline).
     """
 
-    step_name: Optional[str] = None
-    program: Optional[str] = None
+    step_name: str | None = None
+    program: str | None = None
     is_db2_program: bool = False
-    sql_statements: List[tuple] = field(default_factory=list)
+    sql_statements: list[tuple] = field(default_factory=list)
 
     @property
     def has_sql(self) -> bool:
@@ -96,7 +96,7 @@ class SQLDetectionResult:
         return frozenset(cat for _, cat, _ in self.sql_statements)
 
 
-def is_db2_program(program_name: Optional[str]) -> bool:
+def is_db2_program(program_name: str | None) -> bool:
     """Return True if *program_name* is a known DB2 utility."""
     if not program_name:
         return False

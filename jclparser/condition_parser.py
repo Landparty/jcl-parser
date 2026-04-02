@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +44,7 @@ from typing import Dict, List, Optional, Tuple
 class ConditionNode:
     """Base class for all condition expression nodes."""
 
-    def evaluate(self, step_results: Dict[str, Tuple[int, bool]]) -> Optional[bool]:
+    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
         """
         Evaluate the condition against known step results.
 
@@ -64,11 +63,11 @@ class ConditionNode:
 class ReturnCodeCondition(ConditionNode):
     """``[STEPNAME.]RC op value``"""
 
-    step_name: Optional[str]  # None means "last step executed"
+    step_name: str | None  # None means "last step executed"
     operator: str  # EQ NE LT GT LE GE
     value: int
 
-    def evaluate(self, step_results: Dict[str, Tuple[int, bool]]) -> Optional[bool]:
+    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
         if self.step_name:
             result = step_results.get(self.step_name.upper())
             if result is None:
@@ -99,9 +98,9 @@ class ReturnCodeCondition(ConditionNode):
 class AbendCondition(ConditionNode):
     """``[STEPNAME.]ABEND``"""
 
-    step_name: Optional[str]
+    step_name: str | None
 
-    def evaluate(self, step_results: Dict[str, Tuple[int, bool]]) -> Optional[bool]:
+    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
         if self.step_name:
             result = step_results.get(self.step_name.upper())
             if result is None:
@@ -116,9 +115,9 @@ class AbendCondition(ConditionNode):
 class RunCondition(ConditionNode):
     """``[STEPNAME.]RUN`` — true if the step was executed."""
 
-    step_name: Optional[str]
+    step_name: str | None
 
-    def evaluate(self, step_results: Dict[str, Tuple[int, bool]]) -> Optional[bool]:
+    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
         if self.step_name:
             return self.step_name.upper() in step_results
         return bool(step_results)
@@ -130,7 +129,7 @@ class NotCondition(ConditionNode):
 
     operand: ConditionNode
 
-    def evaluate(self, step_results: Dict[str, Tuple[int, bool]]) -> Optional[bool]:
+    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
         inner = self.operand.evaluate(step_results)
         return None if inner is None else not inner
 
@@ -142,7 +141,7 @@ class AndCondition(ConditionNode):
     left: ConditionNode
     right: ConditionNode
 
-    def evaluate(self, step_results: Dict[str, Tuple[int, bool]]) -> Optional[bool]:
+    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
         lv = self.left.evaluate(step_results)
         rv = self.right.evaluate(step_results)
         if lv is False or rv is False:
@@ -159,7 +158,7 @@ class OrCondition(ConditionNode):
     left: ConditionNode
     right: ConditionNode
 
-    def evaluate(self, step_results: Dict[str, Tuple[int, bool]]) -> Optional[bool]:
+    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
         lv = self.left.evaluate(step_results)
         rv = self.right.evaluate(step_results)
         if lv is True or rv is True:
@@ -173,7 +172,7 @@ class OrCondition(ConditionNode):
 # Operator mapping
 # ---------------------------------------------------------------------------
 
-_OP_MAP: Dict[str, str] = {
+_OP_MAP: dict[str, str] = {
     "EQ": "EQ",
     "NE": "NE",
     "LT": "LT",
@@ -214,9 +213,9 @@ _RE_DIGITS = re.compile(r"\d+$")
 # ---------------------------------------------------------------------------
 
 
-def _tokenize(text: str) -> List[str]:
+def _tokenize(text: str) -> list[str]:
     """Split a condition string into tokens."""
-    tokens: List[str] = []
+    tokens: list[str] = []
     i = 0
     n = len(text)
 
@@ -291,11 +290,11 @@ def _tokenize(text: str) -> List[str]:
 class _Parser:
     """Internal recursive-descent parser for condition expressions."""
 
-    def __init__(self, tokens: List[str]) -> None:
+    def __init__(self, tokens: list[str]) -> None:
         self._tokens = tokens
         self._pos = 0
 
-    def _peek(self) -> Optional[str]:
+    def _peek(self) -> str | None:
         if self._pos < len(self._tokens):
             return self._tokens[self._pos]
         return None
@@ -305,7 +304,7 @@ class _Parser:
         self._pos += 1
         return tok
 
-    def _peek_upper(self) -> Optional[str]:
+    def _peek_upper(self) -> str | None:
         t = self._peek()
         return t.upper() if t else None
 
@@ -352,7 +351,7 @@ class _Parser:
 
         # Atom: [STEPNAME.]RC op value | [STEPNAME.]ABEND | [STEPNAME.]RUN
         token = self._consume()
-        step_name: Optional[str] = None
+        step_name: str | None = None
         attr: str
 
         if "." in token:
@@ -415,7 +414,7 @@ class _Parser:
 # ---------------------------------------------------------------------------
 
 
-def parse_condition(condition_str: str) -> Optional[ConditionNode]:
+def parse_condition(condition_str: str) -> ConditionNode | None:
     """
     Parse a JCL IF condition string into a structured AST.
 

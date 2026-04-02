@@ -8,7 +8,7 @@ with validation methods and type safety.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 from .errors import ValidationError
 from .parameter_ast import DCBParameter, SPACEParameter, ParameterParser
 
@@ -29,7 +29,7 @@ class Parameter:
     """
 
     name: str
-    value: Union[str, List[str], Dict[str, str]]
+    value: str | list[str] | dict[str, str]
     quoted: bool = False
     line_number: int = 0
 
@@ -48,7 +48,7 @@ class Statement:
 
     type: str
     name: str
-    parameters: Dict[str, Any] = field(default_factory=dict)
+    parameters: dict[str, Any] = field(default_factory=dict)
     line_number: int = 0
 
 
@@ -69,16 +69,16 @@ class ConditionalBlock:
     """
 
     condition: str
-    then_steps: List[Union["Step", "ConditionalBlock"]] = field(default_factory=list)
-    else_steps: List[Union["Step", "ConditionalBlock"]] = field(default_factory=list)
+    then_steps: list[Step | ConditionalBlock] = field(default_factory=list)
+    else_steps: list[Step | ConditionalBlock] = field(default_factory=list)
     line_number: int = 0
     condition_ast: Any = field(default=None, repr=False)
 
-    def add_then_step(self, step: Union["Step", "ConditionalBlock"]) -> None:
+    def add_then_step(self, step: Step | ConditionalBlock) -> None:
         """Add a step to the THEN block"""
         self.then_steps.append(step)
 
-    def add_else_step(self, step: Union["Step", "ConditionalBlock"]) -> None:
+    def add_else_step(self, step: Step | ConditionalBlock) -> None:
         """Add a step to the ELSE block"""
         self.else_steps.append(step)
 
@@ -96,11 +96,11 @@ class Procedure:
     """
 
     name: str
-    parameters: Dict[str, Any] = field(default_factory=dict)
-    steps: List[Union["Step", "ConditionalBlock"]] = field(default_factory=list)
+    parameters: dict[str, Any] = field(default_factory=dict)
+    steps: list[Step | ConditionalBlock] = field(default_factory=list)
     line_number: int = 0
 
-    def add_step(self, step: Union["Step", "ConditionalBlock"]) -> None:
+    def add_step(self, step: Step | ConditionalBlock) -> None:
         """Add a step to this procedure"""
         self.steps.append(step)
 
@@ -121,26 +121,26 @@ class DDStatement:
     """
 
     name: str
-    dataset_name: Optional[str] = None
-    disposition: Optional[str] = None
-    parameters: Dict[str, Any] = field(default_factory=dict)
-    inline_data: Optional[str] = None
-    comments: List[str] = field(default_factory=list)
+    dataset_name: str | None = None
+    disposition: str | None = None
+    parameters: dict[str, Any] = field(default_factory=dict)
+    inline_data: str | None = None
+    comments: list[str] = field(default_factory=list)
     line_number: int = 0
 
     # Cached parsed parameters (not included in __init__)
-    _dcb_parsed: Optional[DCBParameter] = field(
+    _dcb_parsed: DCBParameter | None = field(
         default=None, init=False, repr=False, compare=False
     )
-    _space_parsed: Optional[SPACEParameter] = field(
+    _space_parsed: SPACEParameter | None = field(
         default=None, init=False, repr=False, compare=False
     )
-    _disp_tokens_cache: Optional[list] = field(
+    _disp_tokens_cache: list | None = field(
         default=None, init=False, repr=False, compare=False
     )
 
     @property
-    def dcb(self) -> Optional[DCBParameter]:
+    def dcb(self) -> DCBParameter | None:
         """
         Get parsed DCB parameter.
 
@@ -165,7 +165,7 @@ class DDStatement:
         return self._dcb_parsed
 
     @property
-    def space(self) -> Optional[SPACEParameter]:
+    def space(self) -> SPACEParameter | None:
         """
         Get parsed SPACE parameter.
 
@@ -190,7 +190,7 @@ class DDStatement:
         return self._space_parsed
 
     @property
-    def dataclas(self) -> Optional[str]:
+    def dataclas(self) -> str | None:
         """
         Get DATACLAS (SMS data class) parameter.
 
@@ -203,7 +203,7 @@ class DDStatement:
         return self.parameters.get("DATACLAS")
 
     @property
-    def mgmtclas(self) -> Optional[str]:
+    def mgmtclas(self) -> str | None:
         """
         Get MGMTCLAS (SMS management class) parameter.
 
@@ -216,7 +216,7 @@ class DDStatement:
         return self.parameters.get("MGMTCLAS")
 
     @property
-    def storclas(self) -> Optional[str]:
+    def storclas(self) -> str | None:
         """
         Get STORCLAS (SMS storage class) parameter.
 
@@ -229,7 +229,7 @@ class DDStatement:
         return self.parameters.get("STORCLAS")
 
     @property
-    def dsntype(self) -> Optional[str]:
+    def dsntype(self) -> str | None:
         """
         Get DSNTYPE (Dataset Type) parameter.
 
@@ -251,7 +251,7 @@ class DDStatement:
     _INPUT_DISPOSITIONS: frozenset = frozenset({"OLD", "SHR"})
     _OUTPUT_DISPOSITIONS: frozenset = frozenset({"NEW", "MOD", "CATLG", "UNCATLG"})
 
-    def _disp_tokens(self) -> List[str]:
+    def _disp_tokens(self) -> list[str]:
         """Return disposition as an uppercase list of individual tokens (cached)."""
         if self._disp_tokens_cache is None:
             if isinstance(self.disposition, list):
@@ -303,16 +303,16 @@ class Step:
         dd_overrides: DD overrides for qualified DD names (PROC.STEP.DD format)
     """
 
-    name: Optional[str] = None
-    program: Optional[str] = None
-    procedure: Optional[str] = None
-    parameters: Dict[str, Any] = field(default_factory=dict)
-    dd_statements: List[DDStatement] = field(default_factory=list)
-    comments: List[str] = field(default_factory=list)
+    name: str | None = None
+    program: str | None = None
+    procedure: str | None = None
+    parameters: dict[str, Any] = field(default_factory=dict)
+    dd_statements: list[DDStatement] = field(default_factory=list)
+    comments: list[str] = field(default_factory=list)
     line_number: int = 0
     is_exploded: bool = False
-    original_proc_call: Optional[str] = None
-    dd_overrides: Dict[str, DDStatement] = field(default_factory=dict)
+    original_proc_call: str | None = None
+    dd_overrides: dict[str, DDStatement] = field(default_factory=dict)
 
     @property
     def is_procedure(self) -> bool:
@@ -323,7 +323,7 @@ class Step:
         """Add a DD statement to this step"""
         self.dd_statements.append(dd_statement)
 
-    def get_dd(self, name: str) -> Optional[DDStatement]:
+    def get_dd(self, name: str) -> DDStatement | None:
         """Find DD statement by name"""
         for dd in self.dd_statements:
             if dd.name == name:
@@ -331,11 +331,11 @@ class Step:
         return None
 
     @property
-    def sysin(self) -> Optional[DDStatement]:
+    def sysin(self) -> DDStatement | None:
         """Return the SYSIN DD statement for this step, or None if not present."""
         return self.get_dd("SYSIN")
 
-    def get_input_datasets(self) -> List[str]:
+    def get_input_datasets(self) -> list[str]:
         """Get all input dataset names"""
         datasets = []
         for dd in self.dd_statements:
@@ -343,7 +343,7 @@ class Step:
                 datasets.append(dd.dataset_name)
         return datasets
 
-    def get_output_datasets(self) -> List[str]:
+    def get_output_datasets(self) -> list[str]:
         """Get all output dataset names"""
         datasets = []
         for dd in self.dd_statements:
@@ -354,39 +354,39 @@ class Step:
     # EXEC Parameter Properties (KISS - simple accessors)
 
     @property
-    def dynamnbr(self) -> Optional[int]:
+    def dynamnbr(self) -> int | None:
         """Dynamic allocation count."""
         val = self.parameters.get("DYNAMNBR")
         return int(val) if val else None
 
     @property
-    def memlimit(self) -> Optional[str]:
+    def memlimit(self) -> str | None:
         """Memory limit above the bar (e.g., '2G')."""
         return self.parameters.get("MEMLIMIT")
 
     @property
-    def acct(self) -> Optional[Union[str, List[str]]]:
+    def acct(self) -> str | list[str] | None:
         """Step-level accounting."""
         return self.parameters.get("ACCT")
 
     @property
-    def addrspc(self) -> Optional[str]:
+    def addrspc(self) -> str | None:
         """Address space type (REAL, VIRT)."""
         return self.parameters.get("ADDRSPC")
 
     @property
-    def dprty(self) -> Optional[Union[str, List[int]]]:
+    def dprty(self) -> str | list[int] | None:
         """Dispatching priority."""
         return self.parameters.get("DPRTY")
 
     @property
-    def perform(self) -> Optional[int]:
+    def perform(self) -> int | None:
         """Performance group."""
         val = self.parameters.get("PERFORM")
         return int(val) if val else None
 
     @property
-    def rd(self) -> Optional[str]:
+    def rd(self) -> str | None:
         """Restart definition (R, RNC, NR, NC)."""
         return self.parameters.get("RD")
 
@@ -428,22 +428,22 @@ class Job:
     """
 
     name: str
-    parameters: Dict[str, Any] = field(default_factory=dict)
-    accounting_info: Optional[str] = None
-    steps: List[Union["Step", "ConditionalBlock"]] = field(default_factory=list)
-    procedures: List[Procedure] = field(default_factory=list)
-    conditionals: List[ConditionalBlock] = field(default_factory=list)
-    set_statements: Dict[str, str] = field(default_factory=dict)
-    jcllib_order: List[str] = field(default_factory=list)
-    includes: List[str] = field(default_factory=list)
-    comments: List[str] = field(default_factory=list)
+    parameters: dict[str, Any] = field(default_factory=dict)
+    accounting_info: str | None = None
+    steps: list[Step | ConditionalBlock] = field(default_factory=list)
+    procedures: list[Procedure] = field(default_factory=list)
+    conditionals: list[ConditionalBlock] = field(default_factory=list)
+    set_statements: dict[str, str] = field(default_factory=dict)
+    jcllib_order: list[str] = field(default_factory=list)
+    includes: list[str] = field(default_factory=list)
+    comments: list[str] = field(default_factory=list)
     line_number: int = 0
-    explosion_audit: List[Any] = field(default_factory=list)
-    explosion_map: Dict[str, Any] = field(default_factory=dict)
-    jes_statements: List[str] = field(default_factory=list)
-    output_statements: List[Statement] = field(default_factory=list)
+    explosion_audit: list[Any] = field(default_factory=list)
+    explosion_map: dict[str, Any] = field(default_factory=dict)
+    jes_statements: list[str] = field(default_factory=list)
+    output_statements: list[Statement] = field(default_factory=list)
 
-    def add_step(self, step: Union["Step", "ConditionalBlock"]) -> None:
+    def add_step(self, step: Step | ConditionalBlock) -> None:
         """Add an execution step to this job"""
         self.steps.append(step)
 
@@ -459,32 +459,32 @@ class Job:
         """Add a SET symbol definition"""
         self.set_statements[symbol] = value
 
-    def get_step(self, name: str) -> Optional[Step]:
+    def get_step(self, name: str) -> Step | None:
         """Find step by name"""
         for step in iter_execution_steps(self.steps):
             if step.name == name:
                 return step
         return None
 
-    def get_procedure(self, name: str) -> Optional[Procedure]:
+    def get_procedure(self, name: str) -> Procedure | None:
         """Find procedure by name"""
         for proc in self.procedures:
             if proc.name == name:
                 return proc
         return None
 
-    def get_dd_statements(self) -> List[DDStatement]:
+    def get_dd_statements(self) -> list[DDStatement]:
         """Get all DD statements from all steps"""
         all_dds = []
         for step in iter_execution_steps(self.steps):
             all_dds.extend(step.dd_statements)
         return all_dds
 
-    def get_sysin_statements(self) -> List[DDStatement]:
+    def get_sysin_statements(self) -> list[DDStatement]:
         """Return all SYSIN DD statements across every step in the job."""
         return [dd for dd in self.get_dd_statements() if dd.name == "SYSIN"]
 
-    def validate(self) -> List[ValidationError]:
+    def validate(self) -> list[ValidationError]:
         """
         Validate job structure and dependencies.
 
@@ -498,9 +498,9 @@ class Job:
     def explode(
         self,
         max_depth: int = 10,
-        loader: Optional[Any] = None,
+        loader: Any | None = None,
         audit: bool = True,
-        system_provider: Optional[Any] = None,
+        system_provider: Any | None = None,
         strict_symbols: bool = False,
     ) -> "Job":
         """
@@ -539,27 +539,27 @@ class Job:
     # JOB Parameter Properties (KISS - simple accessors)
 
     @property
-    def bytes_limit(self) -> Optional[Union[int, List]]:
+    def bytes_limit(self) -> int | list | None:
         """Output byte limit."""
         return self.parameters.get("BYTES")
 
     @property
-    def lines_limit(self) -> Optional[Union[int, List]]:
+    def lines_limit(self) -> int | list | None:
         """Output line limit."""
         return self.parameters.get("LINES")
 
     @property
-    def pages_limit(self) -> Optional[Union[int, List]]:
+    def pages_limit(self) -> int | list | None:
         """Output page limit."""
         return self.parameters.get("PAGES")
 
     @property
-    def sysaff(self) -> Optional[str]:
+    def sysaff(self) -> str | None:
         """System affinity."""
         return self.parameters.get("SYSAFF")
 
     @property
-    def schenv(self) -> Optional[str]:
+    def schenv(self) -> str | None:
         """Scheduling environment."""
         return self.parameters.get("SCHENV")
 
@@ -579,7 +579,7 @@ class Job:
         return bool(self.detect_sql())
 
 
-def iter_execution_steps(steps: List[Union[Step, ConditionalBlock]]) -> Iterator[Step]:
+def iter_execution_steps(steps: list[Step | ConditionalBlock]) -> Iterator[Step]:
     """Recursively yield all flattened Step objects from a step list."""
     for s in steps:
         if isinstance(s, Step):

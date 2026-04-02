@@ -43,25 +43,15 @@ from .validators import (
 )
 from .explosion import (
     explode_job,
-    substitute_symbols,
     SymbolScope,
-    ExplosionRecord,
-    ProcExpansionInfo,
 )
 from .proc_loader import (
     ProcedureLoader,
-    InlineProcedureLoader,
-    JCLLIBProcedureLoader,
     CompositeProcedureLoader,
     create_default_loader,
 )
 from .system_symbols import (
     SystemSymbolProvider,
-    MockSystemSymbolProvider,
-    RuntimeSystemSymbolProvider,
-    EnvironmentSystemSymbolProvider,
-    get_default_provider,
-    set_default_provider,
 )
 from .jcl_file_type import (
     FileType,
@@ -96,7 +86,6 @@ _registry = get_plugin_registry()
 # Public API - what gets imported with "from jclparser import *"
 __all__ = [
     # ── Tier 1: Stable public API ─────────────────────────────────────────────
-    # These are the primary entry points for all users.
     "parse_jcl",
     "validate_jcl",
     "parse_statement",
@@ -114,9 +103,12 @@ __all__ = [
     "ErrorType",
     "ErrorSeverity",
     "ValidationLevel",
+    "UndefinedSymbolError",
+    "ExplosionDepthError",
+    "CircularProcedureError",
+    "ProcedureNotFoundError",
     "__version__",
     # ── Tier 2: Advanced / power-user API ────────────────────────────────────
-    # Stable, but intended for advanced use cases.
     "parse_condition",
     "ConditionNode",
     "ReturnCodeCondition",
@@ -149,22 +141,6 @@ __all__ = [
     "detect_sql_in_text",
     "is_db2_program",
     "DB2_PROGRAMS",
-    # ── Tier 3: Internal / backwards-compatibility exports ───────────────────
-    # Exported for existing consumers; may be removed in a future major version.
-    "MockSystemSymbolProvider",
-    "EnvironmentSystemSymbolProvider",
-    "RuntimeSystemSymbolProvider",
-    "get_default_provider",
-    "set_default_provider",
-    "ExplosionRecord",
-    "ProcExpansionInfo",
-    "InlineProcedureLoader",
-    "JCLLIBProcedureLoader",
-    "UndefinedSymbolError",
-    "ExplosionDepthError",
-    "CircularProcedureError",
-    "ProcedureNotFoundError",
-    "substitute_symbols",
     "StatementPlugin",
     "ValidationPlugin",
     "PluginRegistry",

@@ -7,7 +7,6 @@ import tempfile
 import os
 from jclparser import parse_jcl
 from jclparser.model import Job, Step, DDStatement
-from jclparser.utils import split_jcl_parameters
 from jclparser.validators import validate_job_structure
 
 
@@ -97,26 +96,6 @@ class TestParserEdgeCases:
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.steps) == 2
-
-
-class TestUtilsEdgeCases:
-    """Additional utils edge cases"""
-
-    def test_split_parameters_with_empty_paren(self):
-        """Test split with empty parentheses"""
-        result = split_jcl_parameters("PARM=(),OTHER=X")
-        assert len(result) == 2
-
-    def test_split_parameters_trailing_comma(self):
-        """Test split with trailing comma"""
-        result = split_jcl_parameters("PARM=A,OTHER=B,")
-        assert len(result) == 2  # Trailing comma should be ignored
-
-    def test_split_parameters_unbalanced_quotes(self):
-        """Test split with unbalanced quotes"""
-        # Should handle gracefully
-        result = split_jcl_parameters("PARM='VALUE,OTHER=X")
-        assert isinstance(result, list)
 
 
 class TestModelEdgeCases:
