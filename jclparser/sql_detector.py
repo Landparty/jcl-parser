@@ -5,6 +5,8 @@ Detects embedded SQL statements in JCL inline data (DD * / DD DATA) and
 identifies steps that execute known DB2 utility programs.
 """
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field
 from typing import List, Optional, TYPE_CHECKING

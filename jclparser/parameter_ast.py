@@ -4,6 +4,8 @@ Abstract Syntax Tree for JCL parameters.
 Provides structured representation of complex parameters like DCB, SPACE, etc.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
