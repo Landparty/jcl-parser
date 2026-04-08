@@ -5,9 +5,11 @@ Provides abstract interface and implementations for loading procedure definition
 from various sources (inline, external files, JCLLIB libraries).
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional, List, Dict
 import os
 
 from .model import Procedure
@@ -24,8 +26,8 @@ class ProcedureLoader(ABC):
 
     @abstractmethod
     def load_procedure(
-        self, name: str, libraries: Optional[List[str]] = None
-    ) -> Optional[Procedure]:
+        self, name: str, libraries: Sequence[str] | None = None
+    ) -> Procedure | None:
         """
         Load a procedure definition by name.
 
@@ -38,7 +40,7 @@ class ProcedureLoader(ABC):
         """
         pass
 
-    def has_procedure(self, name: str, libraries: Optional[List[str]] = None) -> bool:
+    def has_procedure(self, name: str, libraries: Sequence[str] | None = None) -> bool:
         """
         Check if a procedure can be loaded.
 
@@ -59,20 +61,20 @@ class InlineProcedureLoader(ProcedureLoader):
     Extracts procedures from the job's procedures list.
     """
 
-    def __init__(self, procedures: List[Procedure]):
+    def __init__(self, procedures: list[Procedure]):
         """
         Initialize inline loader.
 
         Args:
             procedures: List of inline procedure definitions from job
         """
-        self._procedures: Dict[str, Procedure] = {
+        self._procedures: dict[str, Procedure] = {
             proc.name.upper(): proc for proc in procedures
         }
 
     def load_procedure(
-        self, name: str, libraries: Optional[List[str]] = None
-    ) -> Optional[Procedure]:
+        self, name: str, libraries: Sequence[str] | None = None
+    ) -> Procedure | None:
         """Load procedure from inline definitions"""
         return self._procedures.get(name.upper())
 
@@ -85,7 +87,7 @@ class JCLLIBProcedureLoader(ProcedureLoader):
     Supports environment variable JCL_PROCLIB_PATH for base path configuration.
     """
 
-    def __init__(self, base_path: Optional[Path] = None):
+    def __init__(self, base_path: Path | None = None):
         """
         Initialize JCLLIB loader.
 
@@ -98,11 +100,11 @@ class JCLLIBProcedureLoader(ProcedureLoader):
             base_path = Path(env_path) if env_path else Path.cwd()
 
         self.base_path = Path(base_path)
-        self._cache: Dict = {}
+        self._cache: dict = {}
 
     def load_procedure(
-        self, name: str, libraries: Optional[List[str]] = None
-    ) -> Optional[Procedure]:
+        self, name: str, libraries: Sequence[str] | None = None
+    ) -> Procedure | None:
         """
         Load procedure from JCLLIB libraries.
 
@@ -128,7 +130,7 @@ class JCLLIBProcedureLoader(ProcedureLoader):
         self._cache[cache_key] = None
         return None
 
-    def _load_from_library(self, name: str, library: str) -> Optional[Procedure]:
+    def _load_from_library(self, name: str, library: str) -> Procedure | None:
         """
         Load procedure from a specific library.
 
@@ -174,7 +176,7 @@ class JCLLIBProcedureLoader(ProcedureLoader):
 
     def _parse_procedure_file(
         self, file_path: Path, proc_name: str
-    ) -> Optional[Procedure]:
+    ) -> Procedure | None:
         """
         Parse a procedure from a file.
 
@@ -240,7 +242,7 @@ class CompositeProcedureLoader(ProcedureLoader):
     was unavailable at first call can still be found once it becomes available.
     """
 
-    def __init__(self, loaders: List[ProcedureLoader]):
+    def __init__(self, loaders: list[ProcedureLoader]):
         """
         Initialize composite loader.
 
@@ -248,18 +250,18 @@ class CompositeProcedureLoader(ProcedureLoader):
             loaders: List of loaders to try in order
         """
         self.loaders = loaders
-        self._cache: Dict[tuple, Procedure] = {}
+        self._cache: dict[tuple, Procedure] = {}
 
     def load_procedure(
-        self, name: str, libraries: Optional[tuple] = None
-    ) -> Optional[Procedure]:
+        self, name: str, libraries: Sequence[str] | None = None
+    ) -> Procedure | None:
         """
         Load procedure using fallback chain.
 
-        Note: *libraries* must be a tuple (or None) so it can be used as a
-        dict key.  Pass a tuple when calling from external code.
+        Tries each loader in order and caches the first successful result.
         """
-        cache_key = (name.upper(), libraries if libraries is not None else ())
+        lib_tuple = tuple(libraries) if libraries else ()
+        cache_key = (name.upper(), lib_tuple)
         if cache_key in self._cache:
             return self._cache[cache_key]
 
@@ -273,15 +275,14 @@ class CompositeProcedureLoader(ProcedureLoader):
 
         return None  # not found — do NOT cache so retries can succeed
 
-    def has_procedure(self, name: str, libraries: Optional[List[str]] = None) -> bool:
+    def has_procedure(self, name: str, libraries: Sequence[str] | None = None) -> bool:
         """Check if any loader can provide the procedure"""
-        lib_tuple = tuple(libraries) if libraries else None
-        return self.load_procedure(name, lib_tuple) is not None
+        return self.load_procedure(name, libraries) is not None
 
 
 def create_default_loader(
-    inline_procedures: List[Procedure],
-    base_path: Optional[Path] = None,
+    inline_procedures: list[Procedure],
+    base_path: Path | None = None,
     include_jcllib: bool = True,
 ) -> ProcedureLoader:
     """
@@ -295,7 +296,7 @@ def create_default_loader(
     Returns:
         Configured composite loader
     """
-    loaders: List[ProcedureLoader] = [InlineProcedureLoader(inline_procedures)]
+    loaders: list[ProcedureLoader] = [InlineProcedureLoader(inline_procedures)]
 
     if include_jcllib:
         loaders.append(JCLLIBProcedureLoader(base_path))

@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from .model import Job, Step, DDStatement
 
 # Programs known to execute SQL or DB2 operations.
-DB2_PROGRAMS: frozenset = frozenset(
+DB2_PROGRAMS: frozenset[str] = frozenset(
     {
         "DSNTEP2",  # DB2 batch SQL processor
         "DSNTEP4",  # DB2 batch SQL processor (extended)
@@ -83,7 +83,7 @@ class SQLDetectionResult:
     step_name: str | None = None
     program: str | None = None
     is_db2_program: bool = False
-    sql_statements: list[tuple] = field(default_factory=list)
+    sql_statements: list[tuple[str, str, str]] = field(default_factory=list)
 
     @property
     def has_sql(self) -> bool:
@@ -91,7 +91,7 @@ class SQLDetectionResult:
         return self.is_db2_program or bool(self.sql_statements)
 
     @property
-    def sql_categories(self) -> frozenset:
+    def sql_categories(self) -> frozenset[str]:
         """Set of distinct SQL categories found (DML, DDL, DCL, UTILITY, EMBEDDED)."""
         return frozenset(cat for _, cat, _ in self.sql_statements)
 

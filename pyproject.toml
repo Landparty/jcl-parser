@@ -51,6 +51,9 @@ Documentation = "https://github.com/landparty/jcl-parser/tree/main/docs"
 [tool.setuptools.packages.find]
 include = ["jclparser*"]
 
+[tool.setuptools.package-data]
+jclparser = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
