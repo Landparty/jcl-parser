@@ -6,7 +6,6 @@ tokenizer edge cases (single-char ops, quoted strings, stray chars),
 parser edge cases (RC-no-op, RC-op-no-value, bare numerics, unrecognized atoms).
 """
 
-import pytest
 from jclparser.condition_parser import (
     parse_condition,
     ReturnCodeCondition,
@@ -22,6 +21,7 @@ from jclparser.condition_parser import (
 # ---------------------------------------------------------------------------
 # Anonymous (no step name) evaluate paths — lines 107-111, 123
 # ---------------------------------------------------------------------------
+
 
 class TestAnonymousEvaluate:
     """Evaluate conditions that omit the step name (use last step)."""
@@ -68,6 +68,7 @@ class TestAnonymousEvaluate:
 # None-propagation in AND / OR — lines 150, 167
 # ---------------------------------------------------------------------------
 
+
 class TestNonePropagation:
     """Test that None (unknown step) propagates correctly through AND/OR."""
 
@@ -112,6 +113,7 @@ class TestNonePropagation:
 # ReturnCodeCondition.evaluate fallback — line 94
 # ---------------------------------------------------------------------------
 
+
 class TestReturnCodeFallback:
     """RC evaluate returns None for an unrecognized operator (line 94)."""
 
@@ -124,6 +126,7 @@ class TestReturnCodeFallback:
 # ---------------------------------------------------------------------------
 # Tokenizer edge cases — lines 248-249, 258-260
 # ---------------------------------------------------------------------------
+
 
 class TestTokenizer:
     """Test _tokenize() edge cases."""
@@ -200,6 +203,7 @@ class TestTokenizer:
 # ---------------------------------------------------------------------------
 # Parser edge cases — lines 343, 348, 373, 378, 389, 393-405, 438
 # ---------------------------------------------------------------------------
+
 
 class TestParserEdgeCases:
     """Test _Parser edge cases in _parse_primary()."""

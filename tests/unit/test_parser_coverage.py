@@ -10,12 +10,12 @@ import pytest
 from pathlib import Path
 
 from jclparser.parser import parse_jcl, validate_jcl, parse_statement, _find_keyword_eq
-from jclparser.errors import JCLSyntaxError
 
 
 # ---------------------------------------------------------------------------
 # XMIT statement — lines 408-418
 # ---------------------------------------------------------------------------
+
 
 class TestXMITStatement:
     """Test XMIT statement handling in parse_jcl."""
@@ -51,6 +51,7 @@ SOME INLINE DATA
 # ---------------------------------------------------------------------------
 # validate_jcl at different levels
 # ---------------------------------------------------------------------------
+
 
 class TestValidateJCLLevels:
     """Test validate_jcl() with different validation levels."""
@@ -110,12 +111,16 @@ class TestValidateJCLLevels:
 //STEP1    EXEC
 //"""
         errors = validate_jcl(jcl)
-        assert any("EXEC" in e.message.upper() or "missing" in e.message.lower() for e in errors)
+        assert any(
+            "EXEC" in e.message.upper() or "missing" in e.message.lower()
+            for e in errors
+        )
 
 
 # ---------------------------------------------------------------------------
 # SET positional param — lines 313-318
 # ---------------------------------------------------------------------------
+
 
 class TestSETPositionalParam:
     """Test SET statement with positional SYMBOL=VALUE format."""
@@ -152,6 +157,7 @@ class TestSETPositionalParam:
 # Unknown statement types — lines 753-754, 774-781
 # ---------------------------------------------------------------------------
 
+
 class TestUnknownStatementType:
     """Test graceful handling of unknown statement types."""
 
@@ -179,6 +185,7 @@ class TestUnknownStatementType:
 # ---------------------------------------------------------------------------
 # EXEC program vs procedure detection — lines 997-1006
 # ---------------------------------------------------------------------------
+
 
 class TestExecProgramVsProcedure:
     """Test _create_step_from_statement program vs procedure detection."""
@@ -212,6 +219,7 @@ class TestExecProgramVsProcedure:
 # ---------------------------------------------------------------------------
 # parse_statement edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestParseStatementEdgeCases:
     """Test parse_statement edge cases."""
@@ -261,6 +269,7 @@ class TestParseStatementEdgeCases:
 # ---------------------------------------------------------------------------
 # _find_keyword_eq — lines 796-812
 # ---------------------------------------------------------------------------
+
 
 class TestFindKeywordEq:
     """Test _find_keyword_eq() operator prefix handling."""
@@ -313,6 +322,7 @@ class TestFindKeywordEq:
 # IF/THEN/ELSE inside PROC — line 345, 366-367
 # ---------------------------------------------------------------------------
 
+
 class TestConditionalInsideProc:
     """Test IF/THEN/ELSE handling inside PROC definitions."""
 
@@ -332,6 +342,7 @@ class TestConditionalInsideProc:
         proc = job.procedures[0]
         # The IF block should be stored as a ConditionalBlock step in the proc
         from jclparser.model import ConditionalBlock
+
         cond_steps = [s for s in proc.steps if isinstance(s, ConditionalBlock)]
         assert len(cond_steps) == 1
 
@@ -348,6 +359,7 @@ class TestConditionalInsideProc:
 //"""
         job = parse_jcl(jcl)
         from jclparser.model import ConditionalBlock
+
         # Should have nested conditionals
         cond_blocks = [s for s in job.steps if isinstance(s, ConditionalBlock)]
         assert len(cond_blocks) >= 1
@@ -356,6 +368,7 @@ class TestConditionalInsideProc:
 # ---------------------------------------------------------------------------
 # CNTL/ENDCNTL and COMMAND statements — lines 395-401
 # ---------------------------------------------------------------------------
+
 
 class TestSpecialStatements:
     """Test COMMAND and CNTL/ENDCNTL handling in parse_jcl."""

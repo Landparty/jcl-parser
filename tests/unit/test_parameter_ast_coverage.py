@@ -8,7 +8,6 @@ negative value validation, and SPACE validate edge cases.
 import pytest
 from jclparser.parameter_ast import (
     ParameterParser,
-    DCBParameter,
     SPACEParameter,
 )
 
@@ -21,6 +20,7 @@ def parser():
 # ---------------------------------------------------------------------------
 # DCBParameter property edge cases — line 115
 # ---------------------------------------------------------------------------
+
 
 class TestDCBPropertyEdges:
     """Test DCBParameter properties with non-standard values."""
@@ -57,6 +57,7 @@ class TestDCBPropertyEdges:
 # SPACEParameter property edge cases — lines 154-156, 165-166, 176-177
 # ---------------------------------------------------------------------------
 
+
 class TestSPACEPropertyEdges:
     """Test SPACEParameter properties with non-numeric values."""
 
@@ -83,7 +84,12 @@ class TestSPACEPropertyEdges:
         space = SPACEParameter(
             key="SPACE",
             raw_value="CYL,(10,5,BAD)",
-            subparameters={"_unit": "CYL", "_primary": "10", "_secondary": "5", "_directory": "BAD"},
+            subparameters={
+                "_unit": "CYL",
+                "_primary": "10",
+                "_secondary": "5",
+                "_directory": "BAD",
+            },
         )
         assert space.directory is None
 
@@ -104,6 +110,7 @@ class TestSPACEPropertyEdges:
 # SPACEParameter.validate edge cases — line 215
 # ---------------------------------------------------------------------------
 
+
 class TestSPACEValidation:
     """Test SPACEParameter.validate() with edge-case values."""
 
@@ -122,7 +129,12 @@ class TestSPACEValidation:
         space = SPACEParameter(
             key="SPACE",
             raw_value="CYL,(10,5,-1)",
-            subparameters={"_unit": "CYL", "_primary": "10", "_secondary": "5", "_directory": "-1"},
+            subparameters={
+                "_unit": "CYL",
+                "_primary": "10",
+                "_secondary": "5",
+                "_directory": "-1",
+            },
         )
         errors = space.validate()
         assert any("negative" in e.lower() or "Directory" in e for e in errors)
@@ -151,6 +163,7 @@ class TestSPACEValidation:
 # ---------------------------------------------------------------------------
 # DCBParameter.validate edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestDCBValidation:
     """Test DCBParameter.validate() edge cases."""

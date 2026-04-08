@@ -5,15 +5,13 @@ Covers: disable_plugin no-op, unregister ValidationPlugin,
 unregister nonexistent plugin.
 """
 
-import pytest
 from jclparser.plugins import (
     PluginRegistry,
     ParserConfig,
     ValidationPlugin,
-    StatementPlugin,
 )
-from jclparser.model import Job, Step, DDStatement, Statement
-from jclparser.errors import ValidationError, ErrorType
+from jclparser.model import Job, Step, DDStatement
+from jclparser.errors import ValidationError
 from typing import List
 
 

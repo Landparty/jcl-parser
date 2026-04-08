@@ -5,7 +5,6 @@ Covers: ValidationError.__str__ with line_number, DDStatement.dcb with
 list-format, DDStatement.space with list-format, Job.get_sysin_statements.
 """
 
-import pytest
 from jclparser.errors import ValidationError, ErrorType
 from jclparser.model import Job, Step, DDStatement
 
@@ -13,6 +12,7 @@ from jclparser.model import Job, Step, DDStatement
 # ---------------------------------------------------------------------------
 # errors.py — line 141
 # ---------------------------------------------------------------------------
+
 
 class TestValidationErrorStr:
     """Test ValidationError.__str__ with and without line_number."""
@@ -41,6 +41,7 @@ class TestValidationErrorStr:
 # ---------------------------------------------------------------------------
 # model.py — DDStatement.dcb with list-format — lines 159-163
 # ---------------------------------------------------------------------------
+
 
 class TestDDStatementDCBList:
     """Test DDStatement.dcb property with list-format DCB."""
@@ -78,6 +79,7 @@ class TestDDStatementDCBList:
 # model.py — DDStatement.space with list-format — lines 185-188
 # ---------------------------------------------------------------------------
 
+
 class TestDDStatementSPACEList:
     """Test DDStatement.space property with list-format SPACE."""
 
@@ -114,6 +116,7 @@ class TestDDStatementSPACEList:
 # model.py — Job.get_sysin_statements — line 485
 # ---------------------------------------------------------------------------
 
+
 class TestJobGetSysinStatements:
     """Test Job.get_sysin_statements()."""
 
@@ -130,8 +133,12 @@ class TestJobGetSysinStatements:
 
     def test_get_sysin_statements_empty(self):
         """get_sysin_statements returns empty list when no SYSIN DDs."""
-        step = Step(name="S1", program="IEFBR14", dd_statements=[
-            DDStatement(name="SYSOUT"),
-        ])
+        step = Step(
+            name="S1",
+            program="IEFBR14",
+            dd_statements=[
+                DDStatement(name="SYSOUT"),
+            ],
+        )
         job = Job(name="TESTJOB", steps=[step])
         assert job.get_sysin_statements() == []

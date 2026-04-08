@@ -7,7 +7,6 @@ call_chain_upper backward-compat path.
 """
 
 import pytest
-from copy import deepcopy
 
 from jclparser.model import Job, Step, DDStatement, Procedure, ConditionalBlock
 from jclparser.explosion import (
@@ -16,17 +15,16 @@ from jclparser.explosion import (
     substitute_parameters_dict,
     expand_proc_invocation,
     explode_job,
-    _make_replacer,
     _explode_step,
 )
 from jclparser.proc_loader import InlineProcedureLoader
 from jclparser.errors import UndefinedSymbolError
-from jclparser.system_symbols import MockSystemSymbolProvider
 
 
 # ---------------------------------------------------------------------------
 # substitute_parameters_dict with nested dict — lines 305-308
 # ---------------------------------------------------------------------------
+
 
 class TestSubstituteNestedDict:
     """Test substitute_parameters_dict() with dict-valued parameters."""
@@ -65,6 +63,7 @@ class TestSubstituteNestedDict:
 # _make_replacer modes — lines 131-140
 # ---------------------------------------------------------------------------
 
+
 class TestMakeReplacerStrict:
     """Test _make_replacer in strict / allow_undefined / default modes."""
 
@@ -98,13 +97,17 @@ class TestMakeReplacerStrict:
     def test_allow_undefined_leaves_as_is(self):
         """allow_undefined=True leaves unresolved symbols in place (line 137)."""
         scope = SymbolScope()
-        result = substitute_symbols("&MISSING", scope, strict=False, allow_undefined=True)
+        result = substitute_symbols(
+            "&MISSING", scope, strict=False, allow_undefined=True
+        )
         assert result == "&MISSING"
 
     def test_undefined_non_strict_returns_empty(self):
         """Non-strict, non-allow_undefined replaces undefined symbol with '' (line 140)."""
         scope = SymbolScope()
-        result = substitute_symbols("&MISSING", scope, strict=False, allow_undefined=False)
+        result = substitute_symbols(
+            "&MISSING", scope, strict=False, allow_undefined=False
+        )
         assert result == ""
 
     def test_escaped_ampersand(self):
@@ -123,6 +126,7 @@ class TestMakeReplacerStrict:
 # ---------------------------------------------------------------------------
 # ConditionalBlock in explode_job — lines 441-446
 # ---------------------------------------------------------------------------
+
 
 class TestExplosionWithConditionals:
     """Test explosion of jobs containing ConditionalBlocks."""
@@ -167,6 +171,7 @@ class TestExplosionWithConditionals:
 # expand_proc_invocation with unnamed step — line 251
 # ---------------------------------------------------------------------------
 
+
 class TestExpandUnnamedStep:
     """Test expand_proc_invocation when the calling step has no name."""
 
@@ -201,6 +206,7 @@ class TestExpandUnnamedStep:
 # ---------------------------------------------------------------------------
 # _explode_step backward compat — line 550
 # ---------------------------------------------------------------------------
+
 
 class TestExplodeStepBackwardCompat:
     """Test _explode_step when call_chain_upper is not provided."""
@@ -239,6 +245,7 @@ class TestExplodeStepBackwardCompat:
 # Symbol substitution in expanded steps
 # ---------------------------------------------------------------------------
 
+
 class TestSymbolSubstitutionInExpansion:
     """Test that symbols are properly resolved during proc expansion."""
 
@@ -262,7 +269,9 @@ class TestSymbolSubstitutionInExpansion:
         proc = Procedure(
             name="MYPROC",
             parameters={"DSN": "MY.DATA"},
-            steps=[Step(name="S1", program="IEFBR14", dd_statements=[dd], line_number=2)],
+            steps=[
+                Step(name="S1", program="IEFBR14", dd_statements=[dd], line_number=2)
+            ],
             line_number=1,
         )
         step = Step(name="CALL", procedure="MYPROC", line_number=5)
