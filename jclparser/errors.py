@@ -12,6 +12,7 @@ from typing import Optional
 
 class ErrorType(Enum):
     """Types of errors that can occur during JCL parsing"""
+
     SYNTAX_ERROR = "syntax_error"
     VALIDATION_ERROR = "validation_error"
     STRUCTURE_ERROR = "structure_error"
@@ -20,6 +21,7 @@ class ErrorType(Enum):
 
 class ErrorSeverity(Enum):
     """Severity levels for parsing errors"""
+
     ERROR = "error"
     WARNING = "warning"
     INFO = "info"
@@ -29,7 +31,7 @@ class ErrorSeverity(Enum):
 class ParseError:
     """
     Represents a parsing error with detailed context information.
-    
+
     Attributes:
         error_type: Type of error (syntax, validation, etc.)
         message: Human-readable error description
@@ -38,6 +40,7 @@ class ParseError:
         context: Surrounding text context
         severity: Error severity level
     """
+
     error_type: ErrorType
     message: str
     line_number: int
@@ -48,13 +51,13 @@ class ParseError:
 
 class JCLParseError(Exception):
     """Base exception class for JCL parsing errors"""
-    
+
     def __init__(self, message: str, line_number: int = 0, context: str = ""):
         self.message = message
         self.line_number = line_number
         self.context = context
         super().__init__(self._format_message())
-    
+
     def _format_message(self) -> str:
         """Format error message with context information"""
         if self.line_number > 0:
@@ -64,22 +67,25 @@ class JCLParseError(Exception):
 
 class JCLSyntaxError(JCLParseError):
     """Exception raised for JCL syntax errors"""
+
     pass
 
 
 class JCLValidationError(JCLParseError):
     """Exception raised for JCL validation errors"""
+
     pass
 
 
 class JCLStructureError(JCLParseError):
     """Exception raised for JCL structure errors"""
+
     pass
 
 
 class UndefinedSymbolError(JCLParseError):
     """Exception raised when a symbolic parameter cannot be resolved"""
-    
+
     def __init__(self, symbol: str, line_number: int = 0, context: str = ""):
         self.symbol = symbol
         message = f"Undefined symbolic parameter: {symbol}"
@@ -88,7 +94,7 @@ class UndefinedSymbolError(JCLParseError):
 
 class ExplosionDepthError(JCLParseError):
     """Exception raised when procedure explosion depth exceeds maximum"""
-    
+
     def __init__(self, depth: int, max_depth: int, call_chain: list):
         self.depth = depth
         self.max_depth = max_depth
@@ -99,7 +105,7 @@ class ExplosionDepthError(JCLParseError):
 
 class CircularProcedureError(JCLParseError):
     """Exception raised when circular procedure references are detected"""
-    
+
     def __init__(self, procedure_name: str, call_chain: list):
         self.procedure_name = procedure_name
         self.call_chain = call_chain
@@ -109,7 +115,7 @@ class CircularProcedureError(JCLParseError):
 
 class ProcedureNotFoundError(JCLParseError):
     """Exception raised when a referenced procedure cannot be found"""
-    
+
     def __init__(self, procedure_name: str, line_number: int = 0):
         self.procedure_name = procedure_name
         message = f"Procedure not found: {procedure_name}"
@@ -118,12 +124,17 @@ class ProcedureNotFoundError(JCLParseError):
 
 class ValidationError:
     """Represents a validation error (non-exception form)"""
-    
-    def __init__(self, message: str, error_type: ErrorType = ErrorType.VALIDATION_ERROR, line_number: Optional[int] = None):
+
+    def __init__(
+        self,
+        message: str,
+        error_type: ErrorType = ErrorType.VALIDATION_ERROR,
+        line_number: Optional[int] = None,
+    ):
         self.message = message
         self.error_type = error_type
         self.line_number = line_number
-    
+
     def __str__(self) -> str:
         """String representation of validation error"""
         if self.line_number:

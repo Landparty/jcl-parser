@@ -34,17 +34,17 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
 
 
 # ---------------------------------------------------------------------------
 # AST node types
 # ---------------------------------------------------------------------------
 
+
 class ConditionNode:
     """Base class for all condition expression nodes."""
 
-    def evaluate(self, step_results: Dict[str, Tuple[int, bool]]) -> Optional[bool]:
+    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
         """
         Evaluate the condition against known step results.
 
@@ -62,11 +62,12 @@ class ConditionNode:
 @dataclass
 class ReturnCodeCondition(ConditionNode):
     """``[STEPNAME.]RC op value``"""
-    step_name: Optional[str]   # None means "last step executed"
-    operator: str              # EQ NE LT GT LE GE
+
+    step_name: str | None  # None means "last step executed"
+    operator: str  # EQ NE LT GT LE GE
     value: int
 
-    def evaluate(self, step_results: Dict[str, Tuple[int, bool]]) -> Optional[bool]:
+    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
         if self.step_name:
             result = step_results.get(self.step_name.upper())
             if result is None:
@@ -96,9 +97,10 @@ class ReturnCodeCondition(ConditionNode):
 @dataclass
 class AbendCondition(ConditionNode):
     """``[STEPNAME.]ABEND``"""
-    step_name: Optional[str]
 
-    def evaluate(self, step_results: Dict[str, Tuple[int, bool]]) -> Optional[bool]:
+    step_name: str | None
+
+    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
         if self.step_name:
             result = step_results.get(self.step_name.upper())
             if result is None:
@@ -112,9 +114,10 @@ class AbendCondition(ConditionNode):
 @dataclass
 class RunCondition(ConditionNode):
     """``[STEPNAME.]RUN`` — true if the step was executed."""
-    step_name: Optional[str]
 
-    def evaluate(self, step_results: Dict[str, Tuple[int, bool]]) -> Optional[bool]:
+    step_name: str | None
+
+    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
         if self.step_name:
             return self.step_name.upper() in step_results
         return bool(step_results)
@@ -123,9 +126,10 @@ class RunCondition(ConditionNode):
 @dataclass
 class NotCondition(ConditionNode):
     """``NOT condition``"""
+
     operand: ConditionNode
 
-    def evaluate(self, step_results: Dict[str, Tuple[int, bool]]) -> Optional[bool]:
+    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
         inner = self.operand.evaluate(step_results)
         return None if inner is None else not inner
 
@@ -133,14 +137,15 @@ class NotCondition(ConditionNode):
 @dataclass
 class AndCondition(ConditionNode):
     """``condition AND condition``"""
+
     left: ConditionNode
     right: ConditionNode
 
-    def evaluate(self, step_results: Dict[str, Tuple[int, bool]]) -> Optional[bool]:
+    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
         lv = self.left.evaluate(step_results)
         rv = self.right.evaluate(step_results)
         if lv is False or rv is False:
-            return False   # short-circuit: one False makes the AND False
+            return False  # short-circuit: one False makes the AND False
         if lv is None or rv is None:
             return None
         return True
@@ -149,14 +154,15 @@ class AndCondition(ConditionNode):
 @dataclass
 class OrCondition(ConditionNode):
     """``condition OR condition``"""
+
     left: ConditionNode
     right: ConditionNode
 
-    def evaluate(self, step_results: Dict[str, Tuple[int, bool]]) -> Optional[bool]:
+    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
         lv = self.left.evaluate(step_results)
         rv = self.right.evaluate(step_results)
         if lv is True or rv is True:
-            return True    # short-circuit: one True makes the OR True
+            return True  # short-circuit: one True makes the OR True
         if lv is None or rv is None:
             return None
         return False
@@ -166,18 +172,33 @@ class OrCondition(ConditionNode):
 # Operator mapping
 # ---------------------------------------------------------------------------
 
-_OP_MAP: Dict[str, str] = {
-    "EQ": "EQ", "NE": "NE", "LT": "LT", "GT": "GT", "LE": "LE", "GE": "GE",
+_OP_MAP: dict[str, str] = {
+    "EQ": "EQ",
+    "NE": "NE",
+    "LT": "LT",
+    "GT": "GT",
+    "LE": "LE",
+    "GE": "GE",
     # Symbol forms
-    "=":  "EQ",
-    "¬=": "NE", "^=": "NE", "~=": "NE", "!=": "NE", "<>": "NE",
-    "<":  "LT",
-    ">":  "GT",
+    "=": "EQ",
+    "¬=": "NE",
+    "^=": "NE",
+    "~=": "NE",
+    "!=": "NE",
+    "<>": "NE",
+    "<": "LT",
+    ">": "GT",
     "<=": "LE",
     ">=": "GE",
     # NOT-less-than / NOT-greater-than  (equivalent to GE / LE)
-    "¬<": "GE", "^<": "GE", "~<": "GE", "!<": "GE",
-    "¬>": "LE", "^>": "LE", "~>": "LE", "!>": "LE",
+    "¬<": "GE",
+    "^<": "GE",
+    "~<": "GE",
+    "!<": "GE",
+    "¬>": "LE",
+    "^>": "LE",
+    "~>": "LE",
+    "!>": "LE",
 }
 
 # Two-character operator prefixes (characters that combine with = / < / >)
@@ -191,9 +212,10 @@ _RE_DIGITS = re.compile(r"\d+$")
 # Tokenizer
 # ---------------------------------------------------------------------------
 
-def _tokenize(text: str) -> List[str]:
+
+def _tokenize(text: str) -> list[str]:
     """Split a condition string into tokens."""
-    tokens: List[str] = []
+    tokens: list[str] = []
     i = 0
     n = len(text)
 
@@ -213,7 +235,7 @@ def _tokenize(text: str) -> List[str]:
 
         # Two-character symbolic operators (¬=  ^=  ~=  !=  <=  >=  <>  ¬<  etc.)
         if ch in _TWO_CHAR_OP_STARTS and i + 1 < n:
-            two = text[i: i + 2]
+            two = text[i : i + 2]
             if two in _OP_MAP:
                 tokens.append(two)
                 i += 2
@@ -222,8 +244,8 @@ def _tokenize(text: str) -> List[str]:
         # Single-character symbolic operators
         if ch in "=<>":
             # Check for <= / >=
-            if i + 1 < n and text[i: i + 2] in _OP_MAP:
-                tokens.append(text[i: i + 2])
+            if i + 1 < n and text[i : i + 2] in _OP_MAP:
+                tokens.append(text[i : i + 2])
                 i += 2
             else:
                 tokens.append(ch)
@@ -235,7 +257,7 @@ def _tokenize(text: str) -> List[str]:
             j = i + 1
             while j < n:
                 if text[j] == "'" and j + 1 < n and text[j + 1] == "'":
-                    j += 2   # escaped apostrophe
+                    j += 2  # escaped apostrophe
                 elif text[j] == "'":
                     j += 1
                     break
@@ -264,14 +286,15 @@ def _tokenize(text: str) -> List[str]:
 # Recursive descent parser
 # ---------------------------------------------------------------------------
 
+
 class _Parser:
     """Internal recursive-descent parser for condition expressions."""
 
-    def __init__(self, tokens: List[str]) -> None:
+    def __init__(self, tokens: list[str]) -> None:
         self._tokens = tokens
         self._pos = 0
 
-    def _peek(self) -> Optional[str]:
+    def _peek(self) -> str | None:
         if self._pos < len(self._tokens):
             return self._tokens[self._pos]
         return None
@@ -281,7 +304,7 @@ class _Parser:
         self._pos += 1
         return tok
 
-    def _peek_upper(self) -> Optional[str]:
+    def _peek_upper(self) -> str | None:
         t = self._peek()
         return t.upper() if t else None
 
@@ -328,13 +351,13 @@ class _Parser:
 
         # Atom: [STEPNAME.]RC op value | [STEPNAME.]ABEND | [STEPNAME.]RUN
         token = self._consume()
-        step_name: Optional[str] = None
+        step_name: str | None = None
         attr: str
 
         if "." in token:
             dot = token.index(".")
             step_name = token[:dot].upper()
-            attr = token[dot + 1:].upper()
+            attr = token[dot + 1 :].upper()
         else:
             attr = token.upper()
 
@@ -359,7 +382,9 @@ class _Parser:
             val_tok = self._peek()
             if val_tok is not None and _RE_DIGITS.match(val_tok):
                 self._consume()
-                return ReturnCodeCondition(step_name=step_name, operator=op, value=int(val_tok))
+                return ReturnCodeCondition(
+                    step_name=step_name, operator=op, value=int(val_tok)
+                )
 
             return ReturnCodeCondition(step_name=step_name, operator=op, value=0)
 
@@ -373,9 +398,13 @@ class _Parser:
                 next_tok = self._peek()
                 if next_tok and next_tok.upper() == "RC":
                     self._consume()
-                    return ReturnCodeCondition(step_name=step_name, operator=op, value=int(attr))
+                    return ReturnCodeCondition(
+                        step_name=step_name, operator=op, value=int(attr)
+                    )
             # Fallback: single number, treat as RC EQ value
-            return ReturnCodeCondition(step_name=step_name, operator="EQ", value=int(attr))
+            return ReturnCodeCondition(
+                step_name=step_name, operator="EQ", value=int(attr)
+            )
 
         raise ValueError(f"Unrecognised condition atom: {token!r}")
 
@@ -384,7 +413,8 @@ class _Parser:
 # Public API
 # ---------------------------------------------------------------------------
 
-def parse_condition(condition_str: str) -> Optional[ConditionNode]:
+
+def parse_condition(condition_str: str) -> ConditionNode | None:
     """
     Parse a JCL IF condition string into a structured AST.
 

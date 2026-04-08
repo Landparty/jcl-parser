@@ -9,6 +9,7 @@ Regression tests for the audit bug fixes:
   5. CompositeProcedureLoader does not cache None results
   6. Three-part DD overrides (PROCSTEP.INNERST.DDNAME) applied during explosion
 """
+
 from jclparser import parse_jcl, validate_jcl
 from jclparser.model import DDStatement
 from jclparser.proc_loader import (
@@ -21,6 +22,7 @@ from jclparser.model import Procedure
 # ---------------------------------------------------------------------------
 # 1. Column-71 truncation
 # ---------------------------------------------------------------------------
+
 
 class TestSequenceNumberStripping:
     """Lines with 8-char sequence numbers in cols 73-80 must parse cleanly."""
@@ -86,8 +88,8 @@ class TestSequenceNumberStripping:
 # 2. DISP with omitted first subfield
 # ---------------------------------------------------------------------------
 
-class TestDispOmittedFirstSubfield:
 
+class TestDispOmittedFirstSubfield:
     def test_disp_omitted_status_catlg_delete(self):
         """DISP=(,CATLG,DELETE) must preserve the empty first element."""
         jcl = (
@@ -102,7 +104,7 @@ class TestDispOmittedFirstSubfield:
         disp = dd.disposition
         assert isinstance(disp, list)
         assert len(disp) == 3
-        assert disp[0] == ""        # omitted → empty string
+        assert disp[0] == ""  # omitted → empty string
         assert disp[1] == "CATLG"
         assert disp[2] == "DELETE"
 
@@ -147,8 +149,8 @@ class TestDispOmittedFirstSubfield:
 # 3. is_output / is_input correctness
 # ---------------------------------------------------------------------------
 
-class TestDispositionHelpers:
 
+class TestDispositionHelpers:
     def _make_dd(self, disp):
         return DDStatement(name="TEST", disposition=disp)
 
@@ -215,8 +217,8 @@ class TestDispositionHelpers:
 # 4. validate_jcl fallback merges continuations
 # ---------------------------------------------------------------------------
 
-class TestValidateJclContinuationFallback:
 
+class TestValidateJclContinuationFallback:
     def test_multi_line_valid_jcl_no_false_errors(self):
         """
         A syntactically correct multi-line JCL that previously failed
@@ -261,6 +263,7 @@ class TestValidateJclContinuationFallback:
 # 5. CompositeProcedureLoader does not cache None
 # ---------------------------------------------------------------------------
 
+
 class _ToggleLoader(ProcedureLoader):
     """A loader that is initially empty, then has a proc added."""
 
@@ -275,7 +278,6 @@ class _ToggleLoader(ProcedureLoader):
 
 
 class TestCompositeProcedureLoaderNoCacheNone:
-
     def test_none_not_cached(self):
         toggle = _ToggleLoader()
         loader = CompositeProcedureLoader([toggle])
@@ -310,6 +312,7 @@ class TestCompositeProcedureLoaderNoCacheNone:
 # 6. Three-part DD overrides
 # ---------------------------------------------------------------------------
 
+
 class TestThreePartDDOverride:
     """
     When a PROC invokes a nested PROC, the outer job can override DDs with
@@ -334,15 +337,14 @@ class TestThreePartDDOverride:
 
         # Find the innermost step after explosion
         from jclparser.model import iter_execution_steps
+
         all_steps = list(iter_execution_steps(exploded.steps))
 
         # Should find a step with the overridden DSN
         overridden = [
-            s for s in all_steps
-            if any(
-                dd.dataset_name == "OVERRIDDEN.DS"
-                for dd in s.dd_statements
-            )
+            s
+            for s in all_steps
+            if any(dd.dataset_name == "OVERRIDDEN.DS" for dd in s.dd_statements)
         ]
         assert overridden, (
             f"No step with OVERRIDDEN.DS found. Steps: "

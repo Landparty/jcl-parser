@@ -1,6 +1,7 @@
 """
 Tests for the JCL IF condition parser (condition_parser.py).
 """
+
 from jclparser.condition_parser import (
     parse_condition,
     ReturnCodeCondition,
@@ -16,8 +17,8 @@ from jclparser.condition_parser import (
 # parse_condition — structural tests
 # ---------------------------------------------------------------------------
 
-class TestParseConditionStructure:
 
+class TestParseConditionStructure:
     def test_simple_rc_eq(self):
         node = parse_condition("STEP1.RC EQ 0")
         assert isinstance(node, ReturnCodeCondition)
@@ -135,8 +136,8 @@ class TestParseConditionStructure:
 # evaluate() tests
 # ---------------------------------------------------------------------------
 
-class TestConditionEvaluate:
 
+class TestConditionEvaluate:
     def test_rc_eq_true(self):
         node = parse_condition("STEP1.RC EQ 0")
         assert node.evaluate({"STEP1": (0, False)}) is True

@@ -78,6 +78,7 @@ _SYMBOL_HEAVY = (
 # Benchmarks
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.benchmark
 def test_parse_jcl_small(benchmark):
     """Benchmark parse_jcl() on a small JCL string."""
@@ -121,25 +122,23 @@ def test_substitute_symbols(benchmark):
     """Benchmark substitute_symbols() on symbol-heavy text."""
     scope = SymbolScope(
         set_symbols={
-            'HLQ': 'MY.HLQ',
-            'RECFM': 'FB',
-            'LRECL': '80',
-            'BLKSIZE': '27920',
-            'UNIT': 'SYSDA',
-            'VOLSER': 'VOL001',
+            "HLQ": "MY.HLQ",
+            "RECFM": "FB",
+            "LRECL": "80",
+            "BLKSIZE": "27920",
+            "UNIT": "SYSDA",
+            "VOLSER": "VOL001",
         }
     )
     benchmark(substitute_symbols, _SYMBOL_HEAVY, scope, False, True)
+
 
 # ---------------------------------------------------------------------------
 # Algorithmic-fix benchmark fixtures
 # ---------------------------------------------------------------------------
 
 _LARGE_DD_JCL = "//DDJOB    JOB CLASS=A\n" + "".join(
-    f"//STEP{i:02d}   EXEC PGM=IEFBR14\n"
-    f"//DD{i:02d}     DD   *\n"
-    f"DATA LINE {i}\n"
-    "/*\n"
+    f"//STEP{i:02d}   EXEC PGM=IEFBR14\n//DD{i:02d}     DD   *\nDATA LINE {i}\n/*\n"
     for i in range(1, 51)
 )
 
