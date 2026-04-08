@@ -71,13 +71,29 @@ class TestMakeReplacerStrict:
     def test_strict_undefined_raises(self):
         """Strict mode raises UndefinedSymbolError from scope.resolve (line 80).
 
-        Note: The error is raised by SymbolScope.resolve(strict=True) before
-        the _replacer's own strict check at line 139 is reached.  Line 139 is
-        defensive dead code.
+        Note: With a standard SymbolScope, the error is raised by
+        scope.resolve(strict=True) before the _replacer's own strict check
+        at line 139 is reached.
         """
         scope = SymbolScope()
         with pytest.raises(UndefinedSymbolError):
             substitute_symbols("&UNDEFINED", scope, strict=True, allow_undefined=False)
+
+    def test_make_replacer_strict_fallback(self):
+        """_replacer's own strict check (line 139) raises when resolve returns None.
+
+        With a standard SymbolScope, resolve(strict=True) raises first, making
+        line 139 unreachable.  A custom scope that returns None without raising
+        exercises the defensive check.
+        """
+
+        class LenientScope(SymbolScope):
+            def resolve(self, symbol_name, strict=False):
+                return None  # Never raises, even when strict=True
+
+        scope = LenientScope()
+        with pytest.raises(UndefinedSymbolError):
+            substitute_symbols("&MISSING", scope, strict=True, allow_undefined=False)
 
     def test_allow_undefined_leaves_as_is(self):
         """allow_undefined=True leaves unresolved symbols in place (line 137)."""
