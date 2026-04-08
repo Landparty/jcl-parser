@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from jclparser.cli import main, _print_step_detail
-from jclparser.model import Step
+from jclparser.cli import main, _print_step_detail, _print_dd_detail
+from jclparser.model import Step, DDStatement
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 SORT_JCL = str(FIXTURES / "real_world" / "sort_job.jcl")
@@ -385,3 +385,52 @@ class TestCLIProcPath:
         proclibs = str(FIXTURES / "proclibs")
         rc = main([SORT_JCL, "--proc-path", proclibs])
         assert rc == 0
+
+
+@pytest.mark.unit
+class TestCLIDDPartialParams:
+    """Test DD detail with partial DCB/SPACE (cover False branches)."""
+
+    def test_dcb_only_dsorg_no_recfm_lrecl_blksize(self, capsys):
+        """DCB with no RECFM, LRECL, or BLKSIZE prints nothing for those fields."""
+        dd = DDStatement(name="DD1", parameters={"DCB": "DSORG=PS"}, line_number=1)
+        _print_dd_detail(dd)
+        out = capsys.readouterr().out
+        assert "RECFM=" not in out
+        assert "LRECL=" not in out
+        assert "BLKSIZE=" not in out
+        # DCB section should not appear since no displayable sub-fields
+        assert "DCB=" not in out
+
+    def test_dcb_recfm_only(self, capsys):
+        """DCB with only RECFM — LRECL and BLKSIZE branches are False."""
+        dd = DDStatement(name="DD1", parameters={"DCB": "RECFM=FB"}, line_number=1)
+        _print_dd_detail(dd)
+        out = capsys.readouterr().out
+        assert "RECFM=FB" in out
+        assert "LRECL=" not in out
+        assert "BLKSIZE=" not in out
+
+    def test_space_unit_only_no_primary_secondary(self, capsys):
+        """SPACE with only unit — primary/secondary branches are False."""
+        dd = DDStatement(name="DD1", parameters={"SPACE": "CYL"}, line_number=1)
+        _print_dd_detail(dd)
+        out = capsys.readouterr().out
+        # Space should show the unit
+        assert "SPACE=" in out
+        assert "CYL" in out
+
+    def test_space_unit_and_primary_no_secondary(self, capsys):
+        """SPACE with unit+primary but no secondary."""
+        dd = DDStatement(name="DD1", parameters={"SPACE": "TRK,10"}, line_number=1)
+        _print_dd_detail(dd)
+        out = capsys.readouterr().out
+        assert "TRK" in out
+        assert "10" in out
+
+    def test_space_empty_no_output(self, capsys):
+        """Empty SPACE value — all sub-fields None, no SPACE line printed."""
+        dd = DDStatement(name="DD1", parameters={"SPACE": ""}, line_number=1)
+        _print_dd_detail(dd)
+        out = capsys.readouterr().out
+        assert "SPACE=" not in out
