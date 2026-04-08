@@ -228,11 +228,13 @@ class TestParserEdgeCases:
         assert node.left.value == 0
 
     def test_rc_with_unrecognized_next_token(self):
-        """RC followed by something that's not an operator (line 378)."""
+        """RC followed by non-operator token defaults to RC EQ 0 (line 376-378)."""
         node = parse_condition("STEP1.RC STEP2.ABEND")
-        # "STEP2.ABEND" is not a recognized operator → defaults to RC EQ 0
-        # The parser continues but may not consume further
-        assert node is not None
+        # "STEP2.ABEND" is not in _OP_MAP → op is None → falls to line 378
+        assert isinstance(node, ReturnCodeCondition)
+        assert node.step_name == "STEP1"
+        assert node.operator == "EQ"
+        assert node.value == 0
 
     def test_bare_number_condition(self):
         """Bare number like '0' treated as RC EQ 0 (lines 392-407)."""
@@ -255,20 +257,41 @@ class TestParserEdgeCases:
         assert node.value == 4
 
     def test_unrecognized_atom_returns_none(self):
-        """Completely unrecognized atom raises ValueError → None (line 438)."""
+        """Unrecognized atom raises ValueError (line 409) caught by parse_condition (line 441)."""
         result = parse_condition("FOOBAR")
-        # "FOOBAR" is not RC/ABEND/RUN/digit → ValueError → None
+        # "FOOBAR" is not RC/ABEND/RUN/digit → ValueError → caught → None
         assert result is None
 
     def test_missing_close_paren_tolerance(self):
-        """Parenthesized expression missing ')' still parses (line 348)."""
+        """Parenthesized expression missing ')' still parses (line 348 branch-not-taken)."""
         node = parse_condition("(STEP1.RC EQ 0")
         # Should not crash; missing ')' is tolerated
         assert isinstance(node, ReturnCodeCondition)
 
-    def test_empty_tokens_returns_none(self):
-        """If tokenizing produces no tokens, return None (line 438)."""
+    def test_empty_whitespace_returns_none(self):
+        """Whitespace-only input returns None via early check (line 433)."""
         result = parse_condition("   ")
+        assert result is None
+
+    def test_stray_chars_only_produces_empty_tokens(self):
+        """Input with only stray chars produces empty token list → None (line 438)."""
+        result = parse_condition(";")
+        assert result is None
+
+    def test_unexpected_end_of_expression(self):
+        """Trailing AND with no right operand raises ValueError (line 343) → None."""
+        result = parse_condition("STEP1.RC EQ 0 AND")
+        # After consuming AND, _parse_not → _parse_primary finds no tokens → ValueError
+        assert result is None
+
+    def test_trailing_or_returns_none(self):
+        """Trailing OR with no right operand → None."""
+        result = parse_condition("STEP1.ABEND OR")
+        assert result is None
+
+    def test_trailing_not_returns_none(self):
+        """Trailing NOT with no operand → None."""
+        result = parse_condition("NOT")
         assert result is None
 
     def test_nested_parens_with_and_or(self):

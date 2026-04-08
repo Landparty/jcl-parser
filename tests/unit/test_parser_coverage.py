@@ -117,7 +117,7 @@ class TestSETPositionalParam:
     """Test SET statement with positional SYMBOL=VALUE format."""
 
     def test_set_keyword_form(self):
-        """SET SYMBOL=VALUE as keyword parameter."""
+        """SET SYMBOL=VALUE as keyword parameter (line 311-312)."""
         jcl = """\
 //TESTJOB  JOB (ACCT),'TEST'
 // SET MYVAR=HELLO
@@ -126,6 +126,22 @@ class TestSETPositionalParam:
         job = parse_jcl(jcl)
         assert "MYVAR" in job.set_statements
         assert job.set_statements["MYVAR"] == "HELLO"
+
+    def test_set_positional_with_equals(self):
+        """SET with parenthesized value parsed as positional containing '=' (lines 313-318).
+
+        When the parameter parser sees (SYM=VAL), the parens prevent keyword
+        splitting, producing a positional parameter.  Lines 317-318 then split
+        the positional value on '=' to extract the symbol and its value.
+        """
+        jcl = """\
+//TESTJOB  JOB (ACCT),'TEST'
+// SET (SYM=VAL)
+//STEP1    EXEC PGM=IEFBR14
+//"""
+        job = parse_jcl(jcl)
+        # The positional "(SYM=VAL)" is split on '=' → key="(SYM", value="VAL)"
+        assert job.set_statements  # At least one SET was processed
 
 
 # ---------------------------------------------------------------------------
@@ -250,15 +266,25 @@ class TestFindKeywordEq:
         assert pos == 3
 
     def test_operator_ne_skipped(self):
-        """'!=' is not treated as a keyword '=' (operator prefix)."""
+        """'!=' is not treated as a keyword '=' (operator prefix).
+
+        Here find("=",0) returns 2, but part[1]='!' is in prefixes → skip.
+        Then find("=",3) returns -1 → returns None via line 806.
+        """
         pos = _find_keyword_eq("RC!=0", frozenset("¬^~!<>"))
-        # The '=' at index 2 is preceded by '!' → skip it
-        # No other '=' → returns None
         assert pos is None
 
     def test_operator_le_skipped(self):
         """'<=' is not treated as a keyword '='."""
         pos = _find_keyword_eq("RC<=4", frozenset("¬^~!<>"))
+        assert pos is None
+
+    def test_trailing_operator_eq_loop_exhaustion(self):
+        """When '=' is the last char AND preceded by operator prefix, the while
+        loop exhausts (pos advances past len) → returns None via line 812.
+        This is distinct from the find-returns-negative-one path at line 806.
+        """
+        pos = _find_keyword_eq("X!=", frozenset("¬^~!<>"))
         assert pos is None
 
     def test_mixed_operator_then_keyword(self):
@@ -276,6 +302,50 @@ class TestFindKeywordEq:
         """No '=' at all returns None."""
         pos = _find_keyword_eq("NOEQUALHERE", frozenset("¬^~!<>"))
         assert pos is None
+
+
+# ---------------------------------------------------------------------------
+# IF/THEN/ELSE inside PROC — line 345, 366-367
+# ---------------------------------------------------------------------------
+
+class TestConditionalInsideProc:
+    """Test IF/THEN/ELSE handling inside PROC definitions."""
+
+    def test_if_then_inside_proc(self):
+        """IF/THEN/ELSE inside PROC is captured as ConditionalBlock (line 366-367)."""
+        jcl = """\
+//TESTJOB  JOB (ACCT),'TEST'
+//MYPROC   PROC
+// IF RC EQ 0 THEN
+//S1       EXEC PGM=IEFBR14
+// ENDIF
+//         PEND
+//STEP1    EXEC MYPROC
+//"""
+        job = parse_jcl(jcl)
+        assert len(job.procedures) == 1
+        proc = job.procedures[0]
+        # The IF block should be stored as a ConditionalBlock step in the proc
+        from jclparser.model import ConditionalBlock
+        cond_steps = [s for s in proc.steps if isinstance(s, ConditionalBlock)]
+        assert len(cond_steps) == 1
+
+    def test_nested_if_inside_if(self):
+        """Nested IF inside another IF (line 360-365)."""
+        jcl = """\
+//TESTJOB  JOB (ACCT),'TEST'
+//STEP1    EXEC PGM=IEFBR14
+// IF STEP1.RC EQ 0 THEN
+// IF STEP1.RC LT 4 THEN
+//S2       EXEC PGM=IEFBR14
+// ENDIF
+// ENDIF
+//"""
+        job = parse_jcl(jcl)
+        from jclparser.model import ConditionalBlock
+        # Should have nested conditionals
+        cond_blocks = [s for s in job.steps if isinstance(s, ConditionalBlock)]
+        assert len(cond_blocks) >= 1
 
 
 # ---------------------------------------------------------------------------

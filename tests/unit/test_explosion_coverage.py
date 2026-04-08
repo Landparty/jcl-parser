@@ -62,14 +62,19 @@ class TestSubstituteNestedDict:
 
 
 # ---------------------------------------------------------------------------
-# _make_replacer strict mode — line 139
+# _make_replacer modes — lines 131-140
 # ---------------------------------------------------------------------------
 
 class TestMakeReplacerStrict:
-    """Test _make_replacer in strict mode with undefined symbols."""
+    """Test _make_replacer in strict / allow_undefined / default modes."""
 
     def test_strict_undefined_raises(self):
-        """Strict mode with undefined symbol raises UndefinedSymbolError (line 139)."""
+        """Strict mode raises UndefinedSymbolError from scope.resolve (line 80).
+
+        Note: The error is raised by SymbolScope.resolve(strict=True) before
+        the _replacer's own strict check at line 139 is reached.  Line 139 is
+        defensive dead code.
+        """
         scope = SymbolScope()
         with pytest.raises(UndefinedSymbolError):
             substitute_symbols("&UNDEFINED", scope, strict=True, allow_undefined=False)
@@ -80,11 +85,23 @@ class TestMakeReplacerStrict:
         result = substitute_symbols("&MISSING", scope, strict=False, allow_undefined=True)
         assert result == "&MISSING"
 
+    def test_undefined_non_strict_returns_empty(self):
+        """Non-strict, non-allow_undefined replaces undefined symbol with '' (line 140)."""
+        scope = SymbolScope()
+        result = substitute_symbols("&MISSING", scope, strict=False, allow_undefined=False)
+        assert result == ""
+
     def test_escaped_ampersand(self):
-        """'&&' is replaced with '&' (line 132)."""
+        """'&&' is replaced with '&' (line 131-132)."""
         scope = SymbolScope()
         result = substitute_symbols("&&TEMP", scope)
         assert result == "&TEMP"
+
+    def test_non_string_input_passthrough(self):
+        """Non-string input is returned unchanged (line 167-168)."""
+        scope = SymbolScope()
+        assert substitute_symbols("", scope) == ""
+        assert substitute_symbols(None, scope) is None
 
 
 # ---------------------------------------------------------------------------
