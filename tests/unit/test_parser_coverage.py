@@ -88,19 +88,22 @@ class TestValidateJCLLevels:
         assert any("JOB" in e.message.upper() for e in errors)
 
     def test_validate_nonexistent_file(self):
-        """validate_jcl with non-existent path raises FileNotFoundError (lines 559-568).
+        """validate_jcl with non-existent path raises FileNotFoundError.
 
-        The first call to parse_jcl (strict_mode=True) raises FileNotFoundError
-        before the line-by-line fallback is reached. The line-by-line path's
-        FileNotFoundError handling (lines 559-568) requires the initial parse
-        to fail with JCLSyntaxError/JCLValidationError first.
+        Note: The line-by-line path's FileNotFoundError handler (lines 559-568)
+        is unreachable here because FileNotFoundError from the initial
+        parse_jcl(strict_mode=True) propagates before the fallback is entered.
         """
         with pytest.raises(FileNotFoundError):
             validate_jcl(Path("/nonexistent/file.jcl"))
 
-    def test_validate_catches_validation_error(self):
-        """validate_jcl line-by-line catches JCLValidationError (lines 650-651)."""
-        # An EXEC with no PGM or positional should trigger a validation-like error
+    def test_validate_exec_missing_pgm_line_by_line(self):
+        """validate_jcl line-by-line detects EXEC missing PGM (lines 620-632).
+
+        Note: The JCLValidationError catch at lines 650-651 is defensive code —
+        parse_statement() never raises JCLValidationError, so that branch is
+        unreachable with the standard parser.
+        """
         jcl = """\
 //TESTJOB  JOB (ACCT),'TEST'
 //STEP1    EXEC
@@ -206,7 +209,7 @@ class TestExecProgramVsProcedure:
 
 
 # ---------------------------------------------------------------------------
-# parse_statement edge cases — lines 741, 198
+# parse_statement edge cases
 # ---------------------------------------------------------------------------
 
 class TestParseStatementEdgeCases:
@@ -254,7 +257,7 @@ class TestParseStatementEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# _find_keyword_eq — lines 682, 695, 812
+# _find_keyword_eq — lines 796-812
 # ---------------------------------------------------------------------------
 
 class TestFindKeywordEq:
@@ -268,8 +271,8 @@ class TestFindKeywordEq:
     def test_operator_ne_skipped(self):
         """'!=' is not treated as a keyword '=' (operator prefix).
 
-        Here find("=",0) returns 2, but part[1]='!' is in prefixes → skip.
-        Then find("=",3) returns -1 → returns None via line 806.
+        In 'RC!=0': '=' is at index 3, preceded by '!' which is in prefixes → skip.
+        Then find("=",4) returns -1 → returns None via line 806.
         """
         pos = _find_keyword_eq("RC!=0", frozenset("¬^~!<>"))
         assert pos is None
@@ -290,7 +293,7 @@ class TestFindKeywordEq:
     def test_mixed_operator_then_keyword(self):
         """First '=' is operator, second is keyword delimiter."""
         pos = _find_keyword_eq("RC!=0,KEY=VAL", frozenset("¬^~!<>"))
-        # First '=' (pos 2) is after '!' → skip; next '=' (pos 9) is keyword
+        # First '=' (pos 3) is after '!' → skip; next '=' (pos 9) is keyword
         assert pos == 9
 
     def test_eq_at_start(self):
