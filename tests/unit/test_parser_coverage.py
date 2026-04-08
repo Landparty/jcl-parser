@@ -31,9 +31,10 @@ SOME INLINE DATA
 //"""
         job = parse_jcl(jcl)
         step = job.steps[0]
-        # XMIT should appear as a DD on the step
+        # XMIT should appear as a DD on the step with captured inline data
         xmit_dds = [dd for dd in step.dd_statements if dd.name == "XMITDD"]
         assert len(xmit_dds) == 1
+        assert xmit_dds[0].inline_data == "SOME INLINE DATA"
 
     def test_xmit_before_exec_ignored(self):
         """XMIT before any EXEC is silently ignored (line 420-421)."""
@@ -48,14 +49,14 @@ SOME INLINE DATA
 
 
 # ---------------------------------------------------------------------------
-# validate_jcl at different levels — lines 523-540, 559-568, 650-651
+# validate_jcl at different levels
 # ---------------------------------------------------------------------------
 
 class TestValidateJCLLevels:
     """Test validate_jcl() with different validation levels."""
 
     def test_validate_structure_level(self):
-        """validate_jcl with level='structure' runs structural validation (line 523)."""
+        """validate_jcl with level='structure' runs structural validation (line 522-523)."""
         jcl = """\
 //TESTJOB  JOB (ACCT),'TEST'
 //STEP1    EXEC PGM=IEFBR14
@@ -63,7 +64,7 @@ class TestValidateJCLLevels:
 //"""
         errors = validate_jcl(jcl, level="structure")
         # Valid JCL should produce no errors at structure level
-        assert isinstance(errors, list)
+        assert errors == []
 
     def test_validate_semantic_level(self):
         """validate_jcl with level='semantic' invokes plugin validators (line 535)."""
@@ -216,10 +217,11 @@ class TestParseStatementEdgeCases:
     """Test parse_statement edge cases."""
 
     def test_single_token_name_only(self):
-        """Single token after // with no operation field (line 751-754)."""
+        """Single token after // with no operation field → UNKNOWN type."""
         stmt = parse_statement("//MYNAME", 5)
-        # Only a name, no type — should be UNKNOWN or handled gracefully
         assert stmt is not None
+        assert stmt.type == "UNKNOWN"
+        assert stmt.name == "MYNAME"
 
     def test_continuation_line_returns_none(self):
         """Continuation line (// followed by spaces + non-type) returns None (line 727)."""
