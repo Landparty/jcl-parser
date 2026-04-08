@@ -7,11 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from jclparser.cli import main
+from jclparser.cli import main, _print_step_detail
+from jclparser.model import Step
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 SORT_JCL = str(FIXTURES / "real_world" / "sort_job.jcl")
 COMPLEX_JCL = str(FIXTURES / "real_world" / "complex_proc.jcl")
+ADVANCED_DD_JCL = str(FIXTURES / "sample_jcl" / "advanced_dd_statements.jcl")
+CONDITIONAL_JCL = str(FIXTURES / "sample_jcl" / "conditional_if.jcl")
+COND_CODES_JCL = str(FIXTURES / "real_world" / "cond_codes.jcl")
 
 
 @pytest.mark.unit
@@ -193,3 +197,191 @@ class TestCLIVersion:
         assert exc_info.value.code == 0
         out = capsys.readouterr().out
         assert "1.0.0" in out
+
+
+@pytest.mark.unit
+class TestCLIExplode:
+    """Test --explode flag."""
+
+    def test_explode_expands_procs(self, capsys):
+        rc = main([COMPLEX_JCL, "--explode"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # After explosion, PROC steps are expanded into real PGM steps
+        assert "PGM=" in out
+
+    def test_explode_with_json(self, capsys):
+        rc = main([COMPLEX_JCL, "--explode", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["name"] == "COMPLEX"
+
+    def test_explode_error(self, capsys, tmp_path):
+        """A job referencing an undefined external proc should error on explode."""
+        jcl = tmp_path / "bad_proc.jcl"
+        jcl.write_text("//BADJOB  JOB (ACCT),'TEST'\n//STEP1   EXEC NOPROC\n")
+        rc = main([str(jcl), "--explode", "--proc-path", str(tmp_path)])
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "error" in err.lower()
+
+
+@pytest.mark.unit
+class TestCLIValidateErrors:
+    """Test --validate when errors are present."""
+
+    def test_validate_reports_syntax_errors(self, capsys, tmp_path):
+        """Malformed JCL triggers error reporting loop (lines 133-139)."""
+        jcl = tmp_path / "bad.jcl"
+        jcl.write_text("//BAD JOB\nGARBAGE LINE\n//MISSING\n")
+        rc = main([str(jcl), "--validate"])
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "[" in out  # severity tag like [ERROR]
+        assert "GARBAGE" in out or "Invalid" in out
+
+
+@pytest.mark.unit
+class TestCLIEmptySteps:
+    """Test output for a job with no execution steps."""
+
+    def test_no_steps_message(self, capsys, tmp_path):
+        jcl = tmp_path / "empty.jcl"
+        jcl.write_text("//EMPTYJOB JOB (ACCT),'EMPTY'\n")
+        rc = main([str(jcl)])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "(no steps)" in out
+
+
+@pytest.mark.unit
+class TestCLIStepWithProcedure:
+    """Test step detail for a procedure-calling step."""
+
+    def test_proc_step_shows_proc_name(self, capsys):
+        rc = main([COMPLEX_JCL, "RUN1"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "PROC=MYPROC" in out
+
+    def test_proc_step_no_dds(self, capsys):
+        """PROC-calling steps without DD overrides show (no DD statements)."""
+        rc = main([COMPLEX_JCL, "RUN2"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "(no DD statements)" in out
+
+
+@pytest.mark.unit
+class TestCLIStepParameters:
+    """Test step detail with EXEC parameters."""
+
+    def test_step_shows_cond_parameter(self, capsys):
+        rc = main([COND_CODES_JCL, "STEP2"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "COND=" in out
+
+
+@pytest.mark.unit
+class TestCLIDDDetail:
+    """Test detailed DD display paths (DSN, DISP, SYSOUT, DCB, SPACE, extra params)."""
+
+    def test_dd_detail_shows_dsn_and_disp(self, capsys):
+        rc = main([SORT_JCL, "STEP1.SORTIN"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "DSN=INPUT.DATA" in out
+        assert "DISP=" in out
+
+    def test_dd_detail_shows_sysout(self, capsys):
+        rc = main([SORT_JCL, "STEP1.SYSSOUT"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "SYSOUT=*" in out
+
+    def test_dd_detail_shows_dcb(self, capsys):
+        rc = main([ADVANCED_DD_JCL, "STEP1.DD1"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "RECFM=" in out
+        assert "LRECL=" in out
+
+    def test_dd_detail_shows_space(self, capsys):
+        rc = main([ADVANCED_DD_JCL, "STEP1.DD1"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "SPACE=" in out
+
+    def test_dd_detail_shows_extra_params(self, capsys):
+        rc = main([ADVANCED_DD_JCL, "STEP1.DD6"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # DD6 has DEST, OUTLIM, HOLD, FREE params beyond the standard ones
+        assert "DEST=" in out or "HOLD=" in out or "OUTLIM=" in out
+
+
+@pytest.mark.unit
+class TestCLIJSONConditional:
+    """Test JSON output with IF/THEN/ELSE conditional blocks."""
+
+    def test_json_includes_conditionals(self, capsys):
+        rc = main([CONDITIONAL_JCL, "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        # The conditional JCL has IF/THEN/ELSE blocks which become conditionals
+        types = [s["type"] for s in data["steps"]]
+        assert "conditional" in types
+
+    def test_json_conditional_has_then_else(self, capsys):
+        rc = main([CONDITIONAL_JCL, "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        conds = [s for s in data["steps"] if s["type"] == "conditional"]
+        assert len(conds) > 0
+        cond = conds[0]
+        assert "condition" in cond
+        assert "then_steps" in cond
+        assert "else_steps" in cond
+
+
+@pytest.mark.unit
+class TestCLIStepComments:
+    """Test step detail displays comments."""
+
+    def test_step_with_comments(self, capsys):
+        step = Step(
+            name="MYSTEP",
+            program="IEFBR14",
+            comments=["This step does nothing", "Just a placeholder"],
+            line_number=5,
+        )
+        _print_step_detail(step)
+        out = capsys.readouterr().out
+        assert "* This step does nothing" in out
+        assert "* Just a placeholder" in out
+
+
+@pytest.mark.unit
+class TestCLISummaryMinimal:
+    """Test summary for a job without accounting info or parameters."""
+
+    def test_summary_no_accounting(self, capsys, tmp_path):
+        jcl = tmp_path / "noacct.jcl"
+        jcl.write_text("//MYJOB   JOB\n//S1 EXEC PGM=IEFBR14\n")
+        rc = main([str(jcl)])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "MYJOB" in out
+        # Should NOT show Acct: line
+        assert "Acct:" not in out
+
+
+@pytest.mark.unit
+class TestCLIProcPath:
+    """Test --proc-path flag."""
+
+    def test_proc_path_passed(self, capsys):
+        proclibs = str(FIXTURES / "proclibs")
+        rc = main([SORT_JCL, "--proc-path", proclibs])
+        assert rc == 0
