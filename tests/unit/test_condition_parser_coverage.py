@@ -144,12 +144,12 @@ class TestTokenizer:
         assert ">" in tokens
 
     def test_two_char_le(self):
-        """'<=' should be tokenized as a single token (lines 247-249)."""
+        """'<=' tokenized as a single token via _TWO_CHAR_OP_STARTS (lines 237-241)."""
         tokens = _tokenize("RC <= 4")
         assert "<=" in tokens
 
     def test_two_char_ge(self):
-        """>=' should be tokenized as a single token (lines 247-249)."""
+        """'>=' tokenized as a single token via _TWO_CHAR_OP_STARTS (lines 237-241)."""
         tokens = _tokenize("RC >= 4")
         assert ">=" in tokens
 
@@ -250,11 +250,18 @@ class TestParserEdgeCases:
         assert node.operator == "GT"
 
     def test_bare_number_with_operator_no_rc(self):
-        """Bare number with operator but without RC keyword (lines 393-405)."""
-        node = parse_condition("4 EQ")
-        # After consuming EQ, next token is None/not "RC" → falls through
+        """Bare number with operator but no 'RC' keyword after it (lines 393-407).
+
+        The consumed operator ('GT') is discarded when 'RC' doesn't follow it.
+        The fallback at line 405-407 always returns operator='EQ'.
+        Using 'GT' (not 'EQ') to verify the operator is from the fallback,
+        not from the consumed token.
+        """
+        node = parse_condition("4 GT")
         assert isinstance(node, ReturnCodeCondition)
         assert node.value == 4
+        # The consumed GT is discarded; fallback always returns EQ
+        assert node.operator == "EQ"
 
     def test_unrecognized_atom_returns_none(self):
         """Unrecognized atom raises ValueError (line 409) caught by parse_condition (line 441)."""
