@@ -42,6 +42,9 @@ test = [
     "tomli>=1.1.0; python_version < '3.11'",
 ]
 
+[project.scripts]
+jcl-parser = "jclparser.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/landparty/jcl-parser"
 Repository = "https://github.com/landparty/jcl-parser"
