@@ -16,17 +16,12 @@ class TestDeeplyNestedConditions:
     def test_three_level_nesting(self):
         """Parse condition with 3 levels of parenthetical nesting."""
         result = parse_condition("(STEP1.RC EQ 0 AND (STEP2.RC EQ 0 OR STEP3.RC EQ 4))")
-        # Should parse without error; may return structured AST or None
-        # The key is that it doesn't crash
-        if result is not None:
-            assert result is not None
+        assert result is not None
 
     def test_not_with_nested_and_or(self):
         """Parse NOT (A AND (B OR C)) pattern."""
         result = parse_condition("NOT (STEP1.RC EQ 0 AND (STEP2.RC EQ 0 OR STEP3.RC EQ 4))")
-        # Should parse successfully
-        if result is not None:
-            assert result is not None
+        assert result is not None
 
     def test_multiple_or_branches(self):
         """Parse condition with multiple OR branches."""
@@ -39,10 +34,11 @@ class TestDeeplyNestedConditions:
         assert result is not None
 
     def test_deeply_nested_with_not(self):
-        """Parse NOT NOT condition (double negation)."""
+        """Double-NOT is not supported and returns None."""
         result = parse_condition("NOT NOT STEP1.RC EQ 0")
-        # May or may not parse; the key is no crash
-        assert result is not None or result is None
+        # Current parser behavior: the second NOT is treated as an
+        # unrecognised atom, so double-NOT returns None.
+        assert result is None
 
 
 @pytest.mark.unit
@@ -94,23 +90,17 @@ class TestSpecialOperators:
 class TestQuotedStringsInConditions:
     """Test conditions containing quoted string literals."""
 
-    def test_quoted_value(self):
-        """Tokenizer should handle a quoted string value."""
-        # Quoted values in conditions are rare but the tokenizer supports them
-        result = parse_condition("STEP1.RC EQ 0")
-        assert result is not None
-
     def test_condition_with_single_quotes(self):
         """Quoted string with single quotes in condition expression."""
-        # This may not produce a valid AST but should not crash
         result = parse_condition("STEP1.RC EQ 'VALUE'")
-        # May return None (unparseable) or a result; key is no exception
-        assert result is None or result is not None
+        # Current parser behavior: builds an AST, treating non-numeric
+        # quoted values as 0 during parsing.
+        assert result is not None
 
     def test_escaped_quote_in_condition(self):
         """Escaped quotes ('') inside a quoted string."""
         result = parse_condition("STEP1.RC EQ 'O''BRIEN'")
-        assert result is None or result is not None
+        assert result is not None
 
 
 @pytest.mark.unit
@@ -128,21 +118,19 @@ class TestMalformedConditions:
         assert result is None
 
     def test_unmatched_open_paren(self):
-        """Extra open paren is tolerated or returns None."""
+        """Missing close paren is tolerated — parser still produces an AST."""
         result = parse_condition("(STEP1.RC EQ 0")
-        # Parser may tolerate or return None
-        assert result is None or result is not None
+        assert result is not None
 
     def test_extra_close_paren(self):
-        """Extra close paren at end."""
+        """Extra close paren at end is tolerated."""
         result = parse_condition("STEP1.RC EQ 0)")
-        assert result is None or result is not None
+        assert result is not None
 
     def test_double_operator(self):
-        """Two operators in a row."""
+        """Two operators in a row — second is treated as a non-numeric value."""
         result = parse_condition("STEP1.RC EQ GT 0")
-        # Likely returns None (unparseable)
-        assert result is None or result is not None
+        assert result is not None
 
     def test_trailing_and(self):
         """Condition ending with AND keyword."""
@@ -155,20 +143,19 @@ class TestMalformedConditions:
         assert result is None
 
     def test_leading_and(self):
-        """Condition starting with AND keyword."""
+        """Condition starting with AND keyword returns None."""
         result = parse_condition("AND STEP1.RC EQ 0")
-        # May return None or parse the second part
-        assert result is None or result is not None
+        assert result is None
 
     def test_just_a_number(self):
-        """Just a bare number as condition."""
+        """Bare number is treated as RC EQ <value>."""
         result = parse_condition("4")
-        assert result is None or result is not None
+        assert result is not None
 
     def test_nonsense_text(self):
         """Completely invalid text returns None."""
         result = parse_condition("XYZZY PLUGH")
-        assert result is None or result is not None
+        assert result is None
 
 
 @pytest.mark.unit
@@ -196,10 +183,9 @@ class TestAtomTypes:
         assert result is not None
 
     def test_abendcc(self):
-        """Parse ABENDCC comparison."""
+        """ABENDCC is currently unsupported and should not parse."""
         result = parse_condition("STEP1.ABENDCC EQ S0C4")
-        # May or may not parse depending on implementation
-        assert result is None or result is not None
+        assert result is None
 
     def test_rc_without_step_name(self):
         """Parse bare RC comparison (no step prefix)."""

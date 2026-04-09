@@ -39,10 +39,10 @@ class TestConditionalBlocksInsideProcs:
             if isinstance(item, ConditionalBlock):
                 has_conditional = True
                 assert len(item.then_steps) >= 1
-                # Verify the step inside THEN got qualified naming
+                # Verify the step inside THEN got qualified naming (CALLSTEP.PROCSTEP)
                 then_step = item.then_steps[0]
-                assert "RUN" in then_step.name or "STEP2" in then_step.name
-        assert has_conditional or len(exploded.steps) >= 2
+                assert then_step.name.startswith("RUN.")
+        assert has_conditional
 
     def test_proc_with_if_then_else(self):
         """A PROC containing IF/THEN/ELSE/ENDIF expands both branches."""

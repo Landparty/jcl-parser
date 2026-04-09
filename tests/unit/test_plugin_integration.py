@@ -80,20 +80,29 @@ class NamingConventionValidator(ValidationPlugin):
 def _clean_registry():
     """Ensure the global plugin registry is clean before and after each test."""
     registry = get_plugin_registry()
-    # Snapshot current state
-    old_stmt = registry._statement_plugins.copy()
-    old_val = registry._validation_plugins.copy()
-    old_names = registry._plugin_names.copy()
-    # Clean for test
-    registry._statement_plugins.clear()
-    registry._validation_plugins.clear()
-    registry._plugin_names.clear()
+    # Snapshot current state using the public API.
+    old_stmt = list(registry.get_statement_plugins())
+    old_val = list(registry.get_validators())
+
+    # Clean for test using the public API.
+    for plugin in old_stmt:
+        registry.unregister_plugin(plugin.__class__.__name__)
+    for plugin in old_val:
+        registry.unregister_plugin(plugin.__class__.__name__)
+
     yield
-    # Restore
-    registry._statement_plugins[:] = old_stmt
-    registry._validation_plugins[:] = old_val
-    registry._plugin_names.clear()
-    registry._plugin_names.update(old_names)
+
+    # Remove anything registered during the test.
+    for plugin in list(registry.get_statement_plugins()):
+        registry.unregister_plugin(plugin.__class__.__name__)
+    for plugin in list(registry.get_validators()):
+        registry.unregister_plugin(plugin.__class__.__name__)
+
+    # Restore original plugins in their original order.
+    for plugin in old_stmt:
+        registry.register_statement_plugin(plugin)
+    for plugin in old_val:
+        registry.register_validation_plugin(plugin)
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +218,7 @@ class TestValidationPluginEndToEnd:
         plugin_errors = [e for e in errors if "must start with" in e.message]
         assert len(plugin_errors) == 0
 
-    def test_validation_plugin_invoked_at_structure_level_does_not_call_plugin(self):
+    def test_validation_plugin_not_invoked_at_structure_level(self):
         """validate_jcl(level='structure') does structure validation but NOT plugin."""
         plugin = NamingConventionValidator()
         registry = get_plugin_registry()

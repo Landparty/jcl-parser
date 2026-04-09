@@ -160,12 +160,13 @@ class TestFileTypeEdgeCases:
         assert "TESTJOB" in content
 
     def test_string_that_looks_like_path_but_invalid(self):
-        """String with no newlines but with invalid path characters."""
+        """String with embedded null byte triggers ValueError in path handling."""
         from jclparser.jcl_file_type import _read_source
 
-        # A string shorter than 500 chars with no newlines could be a path
-        # but with null bytes it should trigger OSError/ValueError
-        test_input = "/nonexistent/path/that/does/not/exist.jcl"
+        # A string shorter than 500 chars with no newlines could be a path.
+        # An embedded null byte is a platform-safe way to trigger ValueError
+        # during path handling so the OSError/ValueError fallback is exercised.
+        test_input = "/invalid\0path.jcl"
         result = _read_source(test_input)
         # Should fall through to treating it as content
         assert result == test_input
@@ -177,16 +178,17 @@ class TestFileTypeEdgeCases:
 
 
 @pytest.mark.unit
-class TestUtilsBinaryFallback:
-    """Test the binary fallback in _read_file_with_fallback."""
+class TestUtilsEncodingFallback:
+    """Test text decoding fallback behavior in _read_file_with_fallback."""
 
-    def test_binary_fallback_for_undecodable_file(self):
-        """File with bytes that fail all standard encodings uses binary fallback."""
+    def test_latin1_fallback_for_non_utf8_file(self):
+        """File with non-UTF-8 bytes is still read successfully via fallback decoding."""
         from jclparser.utils import _read_file_with_fallback
 
         with tempfile.NamedTemporaryFile(suffix=".jcl", delete=False) as f:
-            # Write bytes that are invalid in UTF-8 and problematic in Latin-1
-            # Latin-1 can decode ANY byte, so we verify the function returns content
+            # Write bytes that are invalid in UTF-8.
+            # Since Latin-1 can decode any byte, this exercises the encoding
+            # fallback to Latin-1 rather than any binary-fallback branch.
             f.write(b"//TESTJOB JOB CLASS=A\n//STEP1 EXEC PGM=PROG\xff\xfe\n")
             f.flush()
             tmp_path = f.name

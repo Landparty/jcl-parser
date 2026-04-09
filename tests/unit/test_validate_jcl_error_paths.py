@@ -24,7 +24,7 @@ class TestValidateJCLLineLevelFallback:
 """
         errors = validate_jcl(jcl, level="basic")
         messages = " ".join(e.message for e in errors)
-        assert "Multiple JOB" in messages or "JOB" in messages
+        assert "Multiple JOB statements found" in messages
 
     def test_exec_before_job_detected(self):
         """Line-by-line validation catches EXEC before JOB."""
@@ -34,7 +34,7 @@ class TestValidateJCLLineLevelFallback:
 """
         errors = validate_jcl(jcl, level="basic")
         messages = " ".join(e.message for e in errors)
-        assert "EXEC" in messages or len(errors) > 0
+        assert "EXEC statement before JOB statement" in messages
 
     def test_exec_missing_program_detected(self):
         """Line-by-line validation catches EXEC with no PGM or PROC."""
@@ -44,8 +44,8 @@ class TestValidateJCLLineLevelFallback:
 //STEP2   EXEC
 """
         errors = validate_jcl(jcl, level="basic")
-        # The duplicate JOB or missing program should appear
-        assert isinstance(errors, list)
+        messages = " ".join(e.message for e in errors)
+        assert "EXEC statement missing program or procedure" in messages
 
     def test_proc_pend_tracking_in_validation(self):
         """PROC/PEND toggle the in_proc flag so EXEC inside PROC is not flagged."""
@@ -135,7 +135,7 @@ class TestValidateJCLStructureLevel:
 //SYSOUT  DD SYSOUT=*
 """
         errors = validate_jcl(jcl, level="structure")
-        assert isinstance(errors, list)
+        assert errors == []
 
 
 @pytest.mark.unit

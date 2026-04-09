@@ -107,9 +107,9 @@ class TestParseValidateExplodePipeline:
 //STEP2   EXEC PGM=PROG2
 """
         errors = validate_jcl(bad_jcl, level="basic")
-        # Should detect EXEC before JOB
+        # Should detect the specific EXEC-before-JOB structural error
         error_messages = " ".join(e.message for e in errors)
-        assert "EXEC" in error_messages or "JOB" in error_messages or len(errors) > 0
+        assert "EXEC statement before JOB statement" in error_messages
 
     def test_exploded_job_validates_cleanly(self):
         """After explosion, the resulting job should also pass validation."""
