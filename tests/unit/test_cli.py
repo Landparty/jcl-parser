@@ -434,3 +434,74 @@ class TestCLIDDPartialParams:
         _print_dd_detail(dd)
         out = capsys.readouterr().out
         assert "SPACE=" not in out
+
+
+@pytest.mark.unit
+class TestCLIJSONWithQuery:
+    """Test --json combined with query arguments."""
+
+    def test_json_summary(self, capsys):
+        """--json without a query outputs the full job."""
+        rc = main([SORT_JCL, "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["name"] == "SORTJOB"
+
+    def test_json_steps(self, capsys):
+        """--json steps outputs a JSON list of steps."""
+        rc = main([SORT_JCL, "steps", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert isinstance(data, list)
+        assert len(data) == 2
+        assert data[0]["name"] == "STEP1"
+
+    def test_json_step_detail(self, capsys):
+        """--json STEP outputs JSON for that single step."""
+        rc = main([SORT_JCL, "STEP1", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["name"] == "STEP1"
+        assert data["program"] == "SORT"
+        assert data["type"] == "step"
+
+    def test_json_step_dd(self, capsys):
+        """--json STEP.DD outputs JSON for that single DD."""
+        rc = main([SORT_JCL, "STEP1.SORTIN", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["name"] == "SORTIN"
+        assert data["dataset_name"] == "INPUT.DATA"
+
+    def test_json_dd_across_steps(self, capsys):
+        """--json DDNAME outputs JSON list of matching DDs with step labels."""
+        rc = main([SORT_JCL, "SYSIN", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert isinstance(data, list)
+        assert len(data) == 2
+        assert data[0]["step"] == "STEP1"
+        assert data[1]["step"] == "STEP2"
+
+
+@pytest.mark.unit
+class TestCLIValidateJSON:
+    """Test --validate --json outputs structured JSON errors."""
+
+    def test_validate_json_ok(self, capsys):
+        rc = main([SORT_JCL, "--validate", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["valid"] is True
+        assert data["errors"] == []
+
+    def test_validate_json_with_errors(self, capsys, tmp_path):
+        jcl = tmp_path / "bad.jcl"
+        jcl.write_text("//BAD JOB\nGARBAGE LINE\n//MISSING\n")
+        rc = main([str(jcl), "--validate", "--json"])
+        assert rc == 1
+        data = json.loads(capsys.readouterr().out)
+        assert data["valid"] is False
+        assert len(data["errors"]) > 0
+        assert "message" in data["errors"][0]
+        assert "severity" in data["errors"][0]

@@ -20,7 +20,15 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .errors import JCLSyntaxError, JCLValidationError, JCLStructureError
+from .errors import (
+    JCLSyntaxError,
+    JCLValidationError,
+    JCLStructureError,
+    UndefinedSymbolError,
+    CircularProcedureError,
+    ExplosionDepthError,
+    ProcedureNotFoundError,
+)
 from .model import ConditionalBlock, DDStatement, Job, Step, iter_execution_steps
 from .parser import parse_jcl, validate_jcl
 
@@ -70,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # --- validate mode ---
     if args.validate:
-        return _cmd_validate(path)
+        return _cmd_validate(path, json_output=args.json_output)
 
     # --- parse ---
     try:
@@ -86,38 +94,51 @@ def main(argv: list[str] | None = None) -> int:
     if args.explode:
         try:
             job = job.explode()
-        except Exception as exc:
+        except (
+            ProcedureNotFoundError,
+            CircularProcedureError,
+            ExplosionDepthError,
+            UndefinedSymbolError,
+        ) as exc:
             print(f"Explosion error: {exc}", file=sys.stderr)
             return 1
 
-    # --- json mode ---
-    if args.json_output:
-        print(json.dumps(_job_to_dict(job), indent=2))
-        return 0
-
-    # --- query mode ---
+    # --- resolve query target ---
     query = args.query
+    json_out = args.json_output
+
     if query is None:
-        _print_summary(job)
+        if json_out:
+            print(json.dumps(_job_to_dict(job), indent=2))
+        else:
+            _print_summary(job)
         return 0
 
     if query.lower() == "steps":
-        _print_steps(job)
+        if json_out:
+            steps = [_step_or_cond_to_dict(s) for s in job.steps]
+            print(json.dumps(steps, indent=2))
+        else:
+            _print_steps(job)
         return 0
 
-    # STEP.DDNAME
+    # STEP.DDNAME — split on first dot only; the remainder is the full DD name
+    # (JCL DD names don't contain dots, but this is safe for any input)
     if "." in query:
         step_name, dd_name = query.split(".", 1)
-        return _print_step_dd(job, step_name, dd_name)
+        return _print_step_dd(job, step_name, dd_name, json_out)
 
     # Try as step name first
     step = job.get_step(query.upper())
     if step is not None:
-        _print_step_detail(step)
+        if json_out:
+            print(json.dumps(_step_to_dict(step), indent=2))
+        else:
+            _print_step_detail(step)
         return 0
 
     # Fall back to DD name across all steps
-    return _print_dd_across_steps(job, query.upper())
+    return _print_dd_across_steps(job, query.upper(), json_out)
 
 
 # ---------------------------------------------------------------------------
@@ -125,8 +146,23 @@ def main(argv: list[str] | None = None) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _cmd_validate(path: Path) -> int:
-    errors = validate_jcl(path)
+def _cmd_validate(path: Path, json_output: bool = False) -> int:
+    errors = validate_jcl(path, level="structure")
+    if json_output:
+        items = [
+            {
+                "severity": (
+                    getattr(err, "severity", None)
+                    and getattr(err, "severity").name
+                    or "ERROR"
+                ),
+                "line": getattr(err, "line_number", None),
+                "message": err.message,
+            }
+            for err in errors
+        ]
+        print(json.dumps({"valid": len(items) == 0, "errors": items}, indent=2))
+        return 0 if not items else 1
     if not errors:
         print("OK - no errors found.")
         return 0
@@ -191,7 +227,9 @@ def _print_step_detail(step: Step) -> None:
         _print_dd_brief(dd, indent=2)
 
 
-def _print_step_dd(job: Job, step_name: str, dd_name: str) -> int:
+def _print_step_dd(
+    job: Job, step_name: str, dd_name: str, json_output: bool = False
+) -> int:
     step = job.get_step(step_name.upper())
     if step is None:
         print(f"Step not found: {step_name}", file=sys.stderr)
@@ -203,26 +241,35 @@ def _print_step_dd(job: Job, step_name: str, dd_name: str) -> int:
             file=sys.stderr,
         )
         return 1
-    _print_dd_detail(dd, step)
+    if json_output:
+        print(json.dumps(_dd_to_dict(dd), indent=2))
+    else:
+        _print_dd_detail(dd)
     return 0
 
 
-def _print_dd_across_steps(job: Job, dd_name: str) -> int:
-    found = False
+def _print_dd_across_steps(job: Job, dd_name: str, json_output: bool = False) -> int:
+    found_dds: list[tuple[str, DDStatement]] = []
     for step in iter_execution_steps(job.steps):
         for dd in step.dd_statements:
             if dd.name == dd_name:
-                step_label = step.name or "(unnamed)"
-                print(f"[{step_label}]")
-                _print_dd_detail(dd, step)
-                print()
-                found = True
-    if not found:
+                found_dds.append((step.name or "(unnamed)", dd))
+    if not found_dds:
         print(
             f"No step or DD named '{dd_name}' found.",
             file=sys.stderr,
         )
         return 1
+    if json_output:
+        items = [
+            {**_dd_to_dict(dd), "step": step_label} for step_label, dd in found_dds
+        ]
+        print(json.dumps(items, indent=2))
+    else:
+        for step_label, dd in found_dds:
+            print(f"[{step_label}]")
+            _print_dd_detail(dd)
+            print()
     return 0
 
 
@@ -243,7 +290,7 @@ def _print_dd_brief(dd: DDStatement, indent: int = 0) -> None:
     print(f"{pad}{dd.name:<12} {detail}{inline}")
 
 
-def _print_dd_detail(dd: DDStatement, step: Step | None = None) -> None:
+def _print_dd_detail(dd: DDStatement) -> None:
     print(f"  DD: {dd.name}  (line {dd.line_number})")
     if dd.dataset_name:
         print(f"    DSN={dd.dataset_name}")
