@@ -20,7 +20,9 @@ class TestDeeplyNestedConditions:
 
     def test_not_with_nested_and_or(self):
         """Parse NOT (A AND (B OR C)) pattern."""
-        result = parse_condition("NOT (STEP1.RC EQ 0 AND (STEP2.RC EQ 0 OR STEP3.RC EQ 4))")
+        result = parse_condition(
+            "NOT (STEP1.RC EQ 0 AND (STEP2.RC EQ 0 OR STEP3.RC EQ 4))"
+        )
         assert result is not None
 
     def test_multiple_or_branches(self):

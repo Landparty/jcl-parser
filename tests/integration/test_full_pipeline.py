@@ -129,9 +129,7 @@ class TestParseValidateExplodePipeline:
         validation_errors = exploded.validate()
         # Filter for genuine structural errors (not warnings about naming)
         structural = [
-            e
-            for e in validation_errors
-            if "structure" in str(e.error_type).lower()
+            e for e in validation_errors if "structure" in str(e.error_type).lower()
         ]
         assert len(structural) == 0
 

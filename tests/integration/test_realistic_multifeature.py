@@ -68,9 +68,7 @@ class TestRealisticMultiFeatureJob:
         assert len(job.procedures) == 1
 
         # Verify conditionals were parsed
-        has_conditional = any(
-            isinstance(s, ConditionalBlock) for s in job.steps
-        )
+        has_conditional = any(isinstance(s, ConditionalBlock) for s in job.steps)
         assert has_conditional
 
         # Explode

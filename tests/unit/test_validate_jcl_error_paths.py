@@ -58,7 +58,9 @@ class TestValidateJCLLineLevelFallback:
 """
         errors = validate_jcl(jcl, level="basic")
         # Should not flag EXEC inside PROC as "EXEC before JOB"
-        exec_before_job = [e for e in errors if "EXEC" in e.message and "before JOB" in e.message]
+        exec_before_job = [
+            e for e in errors if "EXEC" in e.message and "before JOB" in e.message
+        ]
         assert len(exec_before_job) == 0
 
     def test_dd_before_exec_allowed(self):
@@ -107,7 +109,10 @@ class TestValidateJCLFileNotFound:
                 errors = validate_jcl("some_input", level="basic")
 
         assert len(errors) >= 1
-        assert any("No such file" in e.message or "not found" in e.message.lower() for e in errors)
+        assert any(
+            "No such file" in e.message or "not found" in e.message.lower()
+            for e in errors
+        )
 
 
 @pytest.mark.unit

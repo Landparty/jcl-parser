@@ -85,7 +85,9 @@ class TestParameterValidatorEdgeCases:
         result = DatasetNameValidator.validate("&&")
         # After removing &&, the name is empty
         assert result.is_valid is False
-        assert any("no qualifiers" in e.lower() or "empty" in e.lower() for e in result.errors)
+        assert any(
+            "no qualifiers" in e.lower() or "empty" in e.lower() for e in result.errors
+        )
 
     def test_dataset_name_only_gdg_suffix(self):
         """DSN with only a GDG suffix and nothing else."""
@@ -131,7 +133,11 @@ class TestValidatorDispEdgeCases:
             disposition="INVALID",
         )
         errors = validate_dd_statement(dd)
-        disp_errors = [e for e in errors if "DISP" in e.message or "disposition" in e.message.lower()]
+        disp_errors = [
+            e
+            for e in errors
+            if "DISP" in e.message or "disposition" in e.message.lower()
+        ]
         assert len(disp_errors) >= 1
 
 
