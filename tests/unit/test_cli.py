@@ -735,12 +735,13 @@ class TestCLIProcs:
 
     def test_procs_explode_resolved_shows_defaults(self, capsys):
         """Resolved params include PROC defaults not overridden by EXEC."""
-        # RUN1 calls MYPROC with no overrides → resolved should have all defaults
+        # RUN1 calls MYPROC with no overrides → resolved should show all defaults
         rc = main([COMPLEX_JCL, "procs", "--explode"])
         assert rc == 0
         out = capsys.readouterr().out
-        # MYPROC has DSN='DEFAULT.DATA' as default
-        assert "DEFAULT.DATA" in out or "Resolved:" in out
+        # MYPROC has DSN='DEFAULT.DATA' as default; RUN1 has no overrides so
+        # resolved value must contain the default
+        assert "DEFAULT.DATA" in out
 
     def test_procs_explode_json_has_resolved_parameters(self, capsys):
         rc = main([COMPLEX_JCL, "procs", "--explode", "--json"])
@@ -769,7 +770,6 @@ class TestCLIProcs:
         rc = main([COMPLEX_JCL, "--explode", "--json"])
         assert rc == 0
         data = json.loads(capsys.readouterr().out)
-        from jclparser.model import iter_execution_steps
         steps = [s for s in data["steps"] if s.get("type") == "step"]
         assert any(s.get("is_exploded") is True for s in steps)
 

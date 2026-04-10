@@ -33,7 +33,7 @@ from .errors import (
     ExplosionDepthError,
     ProcedureNotFoundError,
 )
-from .model import ConditionalBlock, DDStatement, Job, Step, iter_execution_steps
+from .model import ConditionalBlock, DDStatement, Job, Procedure, Step, iter_execution_steps
 from .parser import parse_jcl, validate_jcl
 from .proc_loader import JCLLIBProcedureLoader
 
@@ -245,7 +245,7 @@ def _cmd_list_available(
         if any(p.name.upper() == n for p in job.procedures)
     )
     if used_count:
-        print(f"(* = referenced by this job)")
+        print("(* = referenced by this job)")
     return 0
 
 
@@ -306,7 +306,7 @@ def _print_procs(job: Job, proc_path: str | None = None) -> None:
         )
 
 
-def _print_proc_detail(proc: Any) -> None:
+def _print_proc_detail(proc: Procedure) -> None:
     """Print full detail for a single PROC definition."""
     tag = "[external]" if proc.is_external else "[inline]"
     print(f"PROC: {proc.name}  {tag}  (line {proc.line_number})")
@@ -527,7 +527,7 @@ def _step_or_cond_to_dict(item: Step | ConditionalBlock) -> dict[str, Any]:
 
 
 def _step_to_dict(step: Step) -> dict[str, Any]:
-    d: dict[str, Any] = {
+    return {
         "type": "step",
         "name": step.name,
         "program": step.program,
@@ -538,13 +538,11 @@ def _step_to_dict(step: Step) -> dict[str, Any]:
         "comments": step.comments,
         "is_exploded": step.is_exploded,
         "original_proc_call": step.original_proc_call,
+        "dd_overrides": {k: _dd_to_dict(v) for k, v in step.dd_overrides.items()},
     }
-    if step.dd_overrides:
-        d["dd_overrides"] = {k: _dd_to_dict(v) for k, v in step.dd_overrides.items()}
-    return d
 
 
-def _proc_to_dict(proc: Any) -> dict[str, Any]:
+def _proc_to_dict(proc: Procedure) -> dict[str, Any]:
     """Serialize a single Procedure to a dict."""
     return {
         "name": proc.name,
@@ -557,15 +555,7 @@ def _proc_to_dict(proc: Any) -> dict[str, Any]:
 
 def _procs_to_dict(job: Job) -> list[dict[str, Any]]:
     """Serialize PROC definitions to a list of dicts."""
-    return [
-        {
-            "name": proc.name,
-            "source": "external" if proc.is_external else "inline",
-            "parameters": proc.parameters,
-            "steps": [_step_or_cond_to_dict(s) for s in proc.steps],
-        }
-        for proc in job.procedures
-    ]
+    return [_proc_to_dict(proc) for proc in job.procedures]
 
 
 def _explosion_audit_to_dict(job: Job) -> list[dict[str, Any]]:
