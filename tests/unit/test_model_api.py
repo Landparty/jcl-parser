@@ -367,3 +367,66 @@ class TestModelIntegration:
         assert any(
             "dd" in msg.lower() or "name" in msg.lower() for msg in error_messages
         )
+
+
+class TestDDStatementCacheInvalidation:
+    """DDStatement lazy parse caches must be cleared when backing fields change."""
+
+    def test_dcb_cache_cleared_on_parameters_update(self):
+        """Replacing parameters dict invalidates the DCB cache."""
+        dd = DDStatement(
+            name="DD1",
+            parameters={"DCB": "RECFM=FB,LRECL=80,BLKSIZE=27920"},
+        )
+        first = dd.dcb
+        assert first is not None
+        assert first.lrecl == 80
+
+        # Replace parameters - cache must be cleared
+        dd.parameters = {"DCB": "RECFM=VB,LRECL=255,BLKSIZE=32760"}
+        second = dd.dcb
+        assert second is not None
+        assert second.lrecl == 255
+        assert first is not second
+
+    def test_space_cache_cleared_on_parameters_update(self):
+        """Replacing parameters dict invalidates the SPACE cache."""
+        dd = DDStatement(
+            name="DD1",
+            parameters={"SPACE": "(CYL,(10,5))"},
+        )
+        first = dd.space
+        assert first is not None
+        assert first.primary == 10
+
+        dd.parameters = {"SPACE": "(TRK,(50,10))"}
+        second = dd.space
+        assert second is not None
+        assert second.primary == 50
+        assert first is not second
+
+    def test_disp_tokens_cache_cleared_on_disposition_update(self):
+        """Changing disposition invalidates the disposition token cache."""
+        dd = DDStatement(
+            name="DD1",
+            dataset_name="MY.DATASET",
+            disposition="SHR",
+        )
+        assert dd.is_input() is True
+        assert dd.is_output() is False
+
+        # Change disposition - cache must reflect the new value
+        dd.disposition = "NEW"
+        assert dd.is_input() is False
+        assert dd.is_output() is True
+
+    def test_cache_not_broken_at_construction(self):
+        """__setattr__ override must not break normal DDStatement construction."""
+        dd = DDStatement(
+            name="DD1",
+            dataset_name="MY.DS",
+            disposition="SHR",
+            parameters={"DCB": "RECFM=FB,LRECL=80"},
+        )
+        assert dd.dcb is not None
+        assert dd.is_input() is True

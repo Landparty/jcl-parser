@@ -57,6 +57,10 @@ _STATEMENT_TYPES: frozenset = frozenset(
 #: Lazily-initialised ParameterParser instance shared across calls (same pattern as utils.py).
 _PARAMETER_PARSER = None
 
+#: Characters that can precede '=' to form a relational operator (¬=, ^=, ~=, !=, <=, >=).
+#: Defined at module level so the frozenset is built exactly once.
+_OPERATOR_PREFIXES: frozenset = frozenset("¬^~!<>")
+
 
 def parse_jcl(
     source: str | Path | IO,
@@ -816,10 +820,12 @@ def _check_param_balance(param_string: str, line_number: int) -> None:
     """Validate that *param_string* has balanced quotes and parentheses.
 
     Raises JCLSyntaxError with a descriptive message on the first imbalance
-    detected.
+    detected, including the 1-based column position of the offending character.
     """
     in_quotes = False
     paren_depth = 0
+    quote_open_col: int = 0      # 1-based column of the unclosed opening quote
+    paren_open_cols: list = []   # stack of 1-based columns for open parens
     i = 0
     while i < len(param_string):
         c = param_string[i]
@@ -827,15 +833,28 @@ def _check_param_balance(param_string: str, line_number: int) -> None:
             if in_quotes and i + 1 < len(param_string) and param_string[i + 1] == "'":
                 i += 2
                 continue
+            if not in_quotes:
+                quote_open_col = i + 1  # record where this quote was opened
             in_quotes = not in_quotes
         elif c == "(" and not in_quotes:
+            paren_open_cols.append(i + 1)
             paren_depth += 1
         elif c == ")" and not in_quotes:
             paren_depth -= 1
+            if paren_depth < 0:
+                raise JCLSyntaxError(
+                    f"Unmatched parentheses in parameter: {param_string}",
+                    line_number,
+                    column_number=i + 1,
+                )
+            if paren_open_cols:
+                paren_open_cols.pop()
         i += 1
     if in_quotes:
         raise JCLSyntaxError(
-            f"Unclosed quote in parameter: {param_string}", line_number
+            f"Unclosed quote in parameter: {param_string}",
+            line_number,
+            column_number=quote_open_col,
         )
     if paren_depth != 0:
         hint = (
@@ -843,9 +862,11 @@ def _check_param_balance(param_string: str, line_number: int) -> None:
             " use JCL continuation lines to break long statements"
             " across multiple records)"
         )
+        col = paren_open_cols[0] if paren_open_cols else 0
         raise JCLSyntaxError(
             f"Unmatched parentheses in parameter: {param_string}{hint}",
             line_number,
+            column_number=col,
         )
 
 
@@ -882,10 +903,6 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> dict[str, Any]
     parts = _PARAMETER_PARSER._split_parameters(param_string)
 
     # Parse individual parameters
-    # Characters that form relational operators when followed by '='
-    # (e.g., ¬=, ^=, ~=, !=, <=, >= in JCL IF conditions)
-    _OPERATOR_PREFIXES = frozenset("¬^~!<>")
-
     for i, part in enumerate(parts):
         # Find the first '=' that acts as a keyword parameter delimiter
         # (not part of a relational operator like ¬=, ^=, ~=, !=, <=, >=)

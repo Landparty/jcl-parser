@@ -6,6 +6,7 @@ Simplified tests focusing on achievable edge cases without complex mocking.
 
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 from jclparser.proc_loader import (
     JCLLIBProcedureLoader,
     InlineProcedureLoader,
@@ -221,3 +222,168 @@ class TestCompositeProcedureLoader:
         assert proc is None
 
         assert not composite.has_procedure("ANYPROC")
+
+
+class TestListAllProcedures:
+    """Test JCLLIBProcedureLoader.list_all_procedures() directory scanning."""
+
+    def test_list_all_procedures_basic(self):
+        """list_all_procedures returns library -> [proc names] mapping."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            lib1 = base / "SYS1.PROCLIB"
+            lib1.mkdir()
+            (lib1 / "PROC1.jcl").write_text("//PROC1 PROC\n//S1 EXEC PGM=P\n//PEND\n")
+            (lib1 / "PROC2.jcl").write_text("//PROC2 PROC\n//S1 EXEC PGM=P\n//PEND\n")
+
+            lib2 = base / "USER.PROCLIB"
+            lib2.mkdir()
+            (lib2 / "UPROC.jcl").write_text("//UPROC PROC\n//S1 EXEC PGM=P\n//PEND\n")
+
+            loader = JCLLIBProcedureLoader(base_path=base)
+            result = loader.list_all_procedures()
+
+            assert "SYS1.PROCLIB" in result
+            assert "USER.PROCLIB" in result
+            assert "PROC1" in result["SYS1.PROCLIB"]
+            assert "PROC2" in result["SYS1.PROCLIB"]
+            assert "UPROC" in result["USER.PROCLIB"]
+
+    def test_list_all_procedures_non_jcl_files_excluded(self):
+        """Only .jcl and no-extension files are listed; .txt etc. are excluded."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            lib = base / "MYLIB"
+            lib.mkdir()
+            (lib / "GOODPROC.jcl").write_text("//GOODPROC PROC\n//PEND\n")
+            (lib / "README.txt").write_text("documentation")
+            (lib / "NOEXT").write_text("//NOEXT PROC\n//PEND\n")
+
+            loader = JCLLIBProcedureLoader(base_path=base)
+            result = loader.list_all_procedures()
+
+            assert "MYLIB" in result
+            assert "GOODPROC" in result["MYLIB"]
+            assert "NOEXT" in result["MYLIB"]
+            assert "README" not in result["MYLIB"]
+
+    def test_list_all_procedures_empty_base(self):
+        """Returns empty dict when base_path has no library subdirectories."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            loader = JCLLIBProcedureLoader(base_path=Path(tmpdir))
+            result = loader.list_all_procedures()
+            assert result == {}
+
+    def test_list_all_procedures_nonexistent_base(self):
+        """Returns empty dict when base_path does not exist."""
+        loader = JCLLIBProcedureLoader(base_path=Path("/nonexistent/path/xyz"))
+        result = loader.list_all_procedures()
+        assert result == {}
+
+    def test_list_all_procedures_skips_files_at_base_level(self):
+        """Files directly under base_path (not in subdirs) are ignored."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            # A file directly at base level - should be ignored
+            (base / "TOPLEVEL.jcl").write_text("//TOPLEVEL PROC\n//PEND\n")
+            # A proper library subdirectory
+            lib = base / "REALLIB"
+            lib.mkdir()
+            (lib / "REALPROC.jcl").write_text("//REALPROC PROC\n//PEND\n")
+
+            loader = JCLLIBProcedureLoader(base_path=base)
+            result = loader.list_all_procedures()
+
+            assert "REALLIB" in result
+            # TOPLEVEL.jcl was at base level (is_dir() is False), so not in result
+            assert "TOPLEVEL" not in result.get("REALLIB", [])
+
+
+class TestParseProcedureFileEdgeCases:
+    """Tests for _parse_procedure_file() paths not covered by main tests."""
+
+    def test_parse_unknown_file_type_with_steps(self):
+        """A file of UNKNOWN type whose content has steps is returned as a Procedure."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            lib = base / "LIB"
+            lib.mkdir()
+            # Neither a JCL job (no JOB card) nor an explicit PROC/PEND block.
+            # The parser will produce a job with steps when wrapped.
+            proc_file = lib / "IMPLICIT.jcl"
+            proc_file.write_text(
+                "//STEP1 EXEC PGM=IEFBR14\n//DD1 DD DSN=MY.FILE,DISP=SHR\n"
+            )
+
+            loader = JCLLIBProcedureLoader(base_path=base)
+            proc = loader.load_procedure("IMPLICIT", ["LIB"])
+
+            # Should fall through to the step-based fallback
+            assert proc is not None
+            assert proc.name == "IMPLICIT"
+            assert proc.is_external is True
+
+    def test_parse_jcl_file_rejected(self):
+        """A file with a JOB card is rejected (returns None)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            lib = base / "LIB"
+            lib.mkdir()
+            proc_file = lib / "ISJOB.jcl"
+            proc_file.write_text(
+                "//ISJOB JOB CLASS=A\n//STEP1 EXEC PGM=IEFBR14\n"
+            )
+
+            loader = JCLLIBProcedureLoader(base_path=base)
+            proc = loader.load_procedure("ISJOB", ["LIB"])
+            assert proc is None
+
+    def test_parse_proc_file_with_wrong_name_falls_back_to_steps(self):
+        """If file defines OTHERPROC but we asked for MYPROC, step fallback fires."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            lib = base / "LIB"
+            lib.mkdir()
+            proc_file = lib / "MYPROC.jcl"
+            proc_file.write_text(
+                "//OTHERPROC PROC\n//S1 EXEC PGM=IEFBR14\n//PEND\n"
+            )
+
+            loader = JCLLIBProcedureLoader(base_path=base)
+            proc = loader.load_procedure("MYPROC", ["LIB"])
+
+            # No procedure named MYPROC found, but steps exist -> step fallback
+            # OR the loader returns None because the explicit PROC is OTHERPROC.
+            # Either result is acceptable; what must NOT happen is an unhandled exception.
+            # (The step fallback returns a Procedure from job.steps if any.)
+            assert proc is None or proc.name == "MYPROC"
+
+    def test_parse_procedure_file_os_error(self):
+        """OSError during file open is caught and returns None."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            lib = base / "LIB"
+            lib.mkdir()
+            proc_file = lib / "BROKEN.jcl"
+            proc_file.write_text("//BROKEN PROC\n//S1 EXEC PGM=P\n//PEND\n")
+
+            loader = JCLLIBProcedureLoader(base_path=base)
+
+            with patch("builtins.open", side_effect=OSError("disk error")):
+                proc = loader.load_procedure("BROKEN", ["LIB"])
+
+            assert proc is None
+
+    def test_path_traversal_candidate_skipped(self):
+        """Candidates whose resolved path escapes the library directory are skipped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            lib = base / "LIB"
+            lib.mkdir()
+
+            loader = JCLLIBProcedureLoader(base_path=base)
+
+            # A name with path traversal that won't match any real file still
+            # exercises the OSError/ValueError guard in _load_from_library.
+            proc = loader.load_procedure("../../etc/passwd", ["LIB"])
+            assert proc is None

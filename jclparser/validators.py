@@ -8,7 +8,7 @@ and data integrity checks for parsed JCL structures.
 import re
 from typing import List, Set, Dict, Any
 from .model import Job, Step, DDStatement, iter_execution_steps
-from .errors import ValidationError, ErrorType
+from .errors import ValidationError, ErrorType, ErrorSeverity
 from .parameter_validators import DatasetNameValidator, DISPValidator
 
 # Precompiled regex patterns for performance
@@ -148,12 +148,16 @@ def validate_step_structure(step: Step) -> List[ValidationError]:
     # Validate DD name uniqueness within step (except for empty names used in concatenation)
     dd_names: Set[str] = set()
     for dd in step.dd_statements:
-        # Empty DD names are allowed for concatenation - skip duplicate check
+        # Empty DD names are allowed for concatenation - skip duplicate check.
+        # Duplicate DD names are reported as WARNING (not ERROR) because some
+        # JES2 implementations accept them, treating the last definition as
+        # authoritative.  They indicate a likely mistake but are not always fatal.
         if dd.name and dd.name in dd_names:
             errors.append(
                 ValidationError(
                     f"Duplicate DD name in step {step.name or '(unnamed)'}: {dd.name}",
                     ErrorType.VALIDATION_ERROR,
+                    severity=ErrorSeverity.WARNING,
                 )
             )
         elif dd.name:  # Only add non-empty names to the set
@@ -302,13 +306,17 @@ def validate_data_dependencies(job: Job) -> List[ValidationError]:
                         temp_datasets_used[temp_ds] = []
                     temp_datasets_used[temp_ds].append(step_name)
 
-    # Check that temporary datasets are created before use
+    # Check that temporary datasets are created before use.
+    # Reported as WARNING rather than ERROR because the validator is flow-blind:
+    # the creating step may be inside a conditional branch that the flat step list
+    # does not reflect, so a hard ERROR here would produce false positives.
     for temp_ds, using_steps in temp_datasets_used.items():
         if temp_ds not in temp_datasets_created:
             errors.append(
                 ValidationError(
                     f"Temporary dataset {temp_ds} used but never created",
                     ErrorType.VALIDATION_ERROR,
+                    severity=ErrorSeverity.WARNING,
                 )
             )
 

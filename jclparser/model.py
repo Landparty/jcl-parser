@@ -140,6 +140,20 @@ class DDStatement:
         default=None, init=False, repr=False, compare=False
     )
 
+    def __setattr__(self, name: str, value) -> None:
+        object.__setattr__(self, name, value)
+        # Invalidate lazy parse caches whenever the backing data fields change.
+        # Use __dict__ membership to avoid AttributeError during __init__ (the
+        # cache fields are declared with init=False so they are set last).
+        d = self.__dict__
+        if name == "parameters":
+            if "_dcb_parsed" in d:
+                object.__setattr__(self, "_dcb_parsed", None)
+            if "_space_parsed" in d:
+                object.__setattr__(self, "_space_parsed", None)
+        elif name == "disposition" and "_disp_tokens_cache" in d:
+            object.__setattr__(self, "_disp_tokens_cache", None)
+
     @property
     def dcb(self) -> DCBParameter | None:
         """
@@ -499,6 +513,7 @@ class Job:
     def explode(
         self,
         max_depth: int = 10,
+        max_steps: int = 0,
         loader: Any | None = None,
         audit: bool = True,
         system_provider: Any | None = None,
@@ -512,6 +527,8 @@ class Job:
 
         Args:
             max_depth: Maximum procedure nesting depth (default 10)
+            max_steps: Maximum total expanded steps, 0 = unlimited (default 0).
+                       Raises JCLStructureError if the limit is exceeded.
             loader: Optional custom procedure loader
             audit: Whether to generate audit logs (default True)
             system_provider: Optional system symbol provider
@@ -522,6 +539,7 @@ class Job:
 
         Raises:
             ExplosionDepthError: If nesting exceeds max_depth
+            JCLStructureError: If max_steps > 0 and expanded step count exceeds it
             CircularProcedureError: If circular references detected
             ProcedureNotFoundError: If referenced procedure not found
             UndefinedSymbolError: If strict_symbols=True and symbol undefined
@@ -532,6 +550,7 @@ class Job:
             job=self,
             proc_loader=loader,
             max_depth=max_depth,
+            max_steps=max_steps,
             audit=audit,
             system_provider=system_provider,
             strict_symbols=strict_symbols,
