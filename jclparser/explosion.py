@@ -17,6 +17,7 @@ from .errors import (
     ExplosionDepthError,
     CircularProcedureError,
     ProcedureNotFoundError,
+    JCLStructureError,
 )
 from .proc_loader import ProcedureLoader, create_default_loader
 from .system_symbols import SystemSymbolProvider, get_default_provider
@@ -124,19 +125,26 @@ class ProcExpansionInfo:
     expanded_step_names: List[str]
 
 
-def _make_replacer(scope: "SymbolScope", strict: bool, allow_undefined: bool):
+def _make_replacer(
+    scope: "SymbolScope",
+    strict: bool,
+    allow_undefined: bool,
+    source_text: str = "",
+):
     """Create a regex replacer function for symbol substitution."""
 
     def _replacer(m: re.Match) -> str:
         if m.group(0) == "&&":
             return "&"
         symbol_name = m.group(1)
-        value = scope.resolve(symbol_name, strict=strict)
+        # Always resolve with strict=False so that UndefinedSymbolError is raised
+        # here (with full source context) rather than inside scope.resolve().
+        value = scope.resolve(symbol_name, strict=False)
         if value is None:
             if allow_undefined:
                 return m.group(0)  # leave as-is
             if strict:
-                raise UndefinedSymbolError(symbol_name)
+                raise UndefinedSymbolError(symbol_name, source_text=source_text)
             return ""
         return value
 
@@ -166,7 +174,9 @@ def substitute_symbols(
     """
     if not text or not isinstance(text, str):
         return text
-    return _SYMBOL_SUB_PATTERN.sub(_make_replacer(scope, strict, allow_undefined), text)
+    return _SYMBOL_SUB_PATTERN.sub(
+        _make_replacer(scope, strict, allow_undefined, source_text=text), text
+    )
 
 
 def detect_circular_refs(
@@ -391,6 +401,7 @@ def explode_job(
     job: Job,
     proc_loader: Optional[ProcedureLoader] = None,
     max_depth: int = 10,
+    max_steps: int = 0,
     audit: bool = True,
     system_provider: Optional[SystemSymbolProvider] = None,
     strict_symbols: bool = False,
@@ -405,6 +416,8 @@ def explode_job(
         job: Original job with procedure invocations
         proc_loader: Procedure loader (defaults to inline + JCLLIB)
         max_depth: Maximum procedure nesting depth
+        max_steps: Maximum total expanded steps (0 = unlimited). Protects against
+                   runaway step proliferation when a PROC is called many times.
         audit: Whether to generate audit logs
         system_provider: System symbol provider (defaults to mock provider)
         strict_symbols: If True, raise errors for undefined symbols
@@ -414,6 +427,7 @@ def explode_job(
 
     Raises:
         ExplosionDepthError: If nesting exceeds max_depth
+        JCLStructureError: If max_steps > 0 and the expanded step count exceeds it
         CircularProcedureError: If circular references detected
         ProcedureNotFoundError: If referenced procedure not found
         UndefinedSymbolError: If strict_symbols=True and symbol undefined
@@ -434,6 +448,21 @@ def explode_job(
     # Track explosion metadata
     explosion_audit: List[ExplosionRecord] = []
     explosion_map: Dict[str, ProcExpansionInfo] = {}
+
+    # Mutable step counter shared across all _process_steps recursions.
+    # Using a list (not int) so the nested closure can mutate it.
+    _step_count: List[int] = [0]
+
+    def _check_step_limit(new_steps: int) -> None:
+        """Raise JCLStructureError if adding new_steps would exceed max_steps."""
+        if max_steps > 0:
+            _step_count[0] += new_steps
+            if _step_count[0] > max_steps:
+                raise JCLStructureError(
+                    f"Procedure explosion produced more than {max_steps} steps "
+                    f"(currently {_step_count[0]}). Use max_steps= to raise the "
+                    f"limit or check for runaway PROC expansion."
+                )
 
     # Process steps
     def _process_steps(steps_list):
@@ -463,6 +492,7 @@ def explode_job(
                     strict_symbols=strict_symbols,
                     jcllib_order=job.jcllib_order or None,
                 )
+                _check_step_limit(len(expanded))
                 result.extend(expanded)
             else:
                 # Regular step - just substitute symbols
@@ -480,6 +510,7 @@ def explode_job(
                 for dd in substituted_step.dd_statements:
                     substitute_dd_statement(dd, base_scope, strict=strict_symbols)
 
+                _check_step_limit(1)
                 result.append(substituted_step)
         return result
 

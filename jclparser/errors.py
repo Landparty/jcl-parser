@@ -52,14 +52,23 @@ class ParseError:
 class JCLParseError(Exception):
     """Base exception class for JCL parsing errors"""
 
-    def __init__(self, message: str, line_number: int = 0, context: str = ""):
+    def __init__(
+        self,
+        message: str,
+        line_number: int = 0,
+        context: str = "",
+        column_number: int = 0,
+    ):
         self.message = message
         self.line_number = line_number
         self.context = context
+        self.column_number = column_number
         super().__init__(self._format_message())
 
     def _format_message(self) -> str:
         """Format error message with context information"""
+        if self.line_number > 0 and self.column_number > 0:
+            return f"Line {self.line_number}, column {self.column_number}: {self.message}"
         if self.line_number > 0:
             return f"Line {self.line_number}: {self.message}"
         return self.message
@@ -86,9 +95,19 @@ class JCLStructureError(JCLParseError):
 class UndefinedSymbolError(JCLParseError):
     """Exception raised when a symbolic parameter cannot be resolved"""
 
-    def __init__(self, symbol: str, line_number: int = 0, context: str = ""):
+    def __init__(
+        self,
+        symbol: str,
+        line_number: int = 0,
+        context: str = "",
+        source_text: str = "",
+    ):
         self.symbol = symbol
-        message = f"Undefined symbolic parameter: {symbol}"
+        self.source_text = source_text
+        message = (
+            f"Undefined symbolic parameter: &{symbol}"
+            + (f" in '{source_text}'" if source_text else "")
+        )
         super().__init__(message, line_number, context)
 
 
@@ -130,13 +149,21 @@ class ValidationError:
         message: str,
         error_type: ErrorType = ErrorType.VALIDATION_ERROR,
         line_number: Optional[int] = None,
+        severity: ErrorSeverity = ErrorSeverity.ERROR,
     ):
         self.message = message
         self.error_type = error_type
         self.line_number = line_number
+        self.severity = severity
+
+    @property
+    def is_warning(self) -> bool:
+        """True if this is a WARNING-level issue (not necessarily fatal)."""
+        return self.severity == ErrorSeverity.WARNING
 
     def __str__(self) -> str:
         """String representation of validation error"""
+        prefix = f"[{self.severity.value.upper()}] " if self.severity != ErrorSeverity.ERROR else ""
         if self.line_number:
-            return f"Line {self.line_number}: {self.message}"
-        return self.message
+            return f"Line {self.line_number}: {prefix}{self.message}"
+        return f"{prefix}{self.message}"

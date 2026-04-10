@@ -513,6 +513,7 @@ class Job:
     def explode(
         self,
         max_depth: int = 10,
+        max_steps: int = 0,
         loader: Any | None = None,
         audit: bool = True,
         system_provider: Any | None = None,
@@ -526,6 +527,8 @@ class Job:
 
         Args:
             max_depth: Maximum procedure nesting depth (default 10)
+            max_steps: Maximum total expanded steps, 0 = unlimited (default 0).
+                       Raises JCLStructureError if the limit is exceeded.
             loader: Optional custom procedure loader
             audit: Whether to generate audit logs (default True)
             system_provider: Optional system symbol provider
@@ -536,6 +539,7 @@ class Job:
 
         Raises:
             ExplosionDepthError: If nesting exceeds max_depth
+            JCLStructureError: If max_steps > 0 and expanded step count exceeds it
             CircularProcedureError: If circular references detected
             ProcedureNotFoundError: If referenced procedure not found
             UndefinedSymbolError: If strict_symbols=True and symbol undefined
@@ -546,6 +550,7 @@ class Job:
             job=self,
             proc_loader=loader,
             max_depth=max_depth,
+            max_steps=max_steps,
             audit=audit,
             system_provider=system_provider,
             strict_symbols=strict_symbols,
