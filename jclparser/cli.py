@@ -2,13 +2,15 @@
 Command-line interface for jclparser.
 
 Usage:
-    jcl-parser FILE                     Show job summary
-    jcl-parser FILE steps               List all steps
-    jcl-parser FILE STEP                Show step details
-    jcl-parser FILE STEP.DDNAME         Show a specific DD statement
-    jcl-parser FILE DDNAME              Show all DDs with that name across steps
-    jcl-parser FILE --json              Full parse result as JSON
-    jcl-parser FILE --validate          Validate the JCL
+    jcl-parser FILE                         Show job summary
+    jcl-parser FILE steps                   List all steps
+    jcl-parser FILE procs                   List inline procedure definitions
+    jcl-parser FILE procs --explode         Show procedure expansion audit
+    jcl-parser FILE STEP                    Show step details
+    jcl-parser FILE STEP.DDNAME             Show a specific DD statement
+    jcl-parser FILE DDNAME                  Show all DDs with that name across steps
+    jcl-parser FILE --json                  Full parse result as JSON
+    jcl-parser FILE --validate              Validate the JCL
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
         nargs="?",
         default=None,
         help=(
-            "Query: 'steps', a step name, STEP.DDNAME, "
+            "Query: 'steps', 'procs', a step name, STEP.DDNAME, "
             "or a DD name to find across all steps"
         ),
     )
@@ -120,6 +122,19 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(steps, indent=2))
         else:
             _print_steps(job)
+        return 0
+
+    if query.lower() == "procs":
+        if args.explode:
+            if json_out:
+                print(json.dumps(_explosion_audit_to_dict(job), indent=2))
+            else:
+                _print_explosion_audit(job)
+        else:
+            if json_out:
+                print(json.dumps(_procs_to_dict(job), indent=2))
+            else:
+                _print_procs(job)
         return 0
 
     # STEP.DDNAME — split on first dot only; the remainder is the full DD name
@@ -204,6 +219,45 @@ def _print_steps(job: Job) -> None:
         kind = "PROC" if step.is_procedure else "PGM"
         dd_count = len(step.dd_statements)
         print(f"  {name:<{name_w}}  {kind}={target:<16} DDs: {dd_count}")
+
+
+def _print_procs(job: Job) -> None:
+    """Print inline PROC definitions."""
+    if not job.procedures:
+        print("(no inline procedures)")
+        return
+    for proc in job.procedures:
+        print(f"PROC: {proc.name}")
+        if proc.parameters:
+            for k, v in proc.parameters.items():
+                print(f"  {k}={v}")
+        steps = list(iter_execution_steps(proc.steps))
+        print(f"  Steps: {len(steps)}")
+        for step in steps:
+            target = step.program or step.procedure or ""
+            kind = "PROC" if step.is_procedure else "PGM"
+            dd_count = len(step.dd_statements)
+            print(f"    {step.name or '(unnamed)'}  {kind}={target:<16} DDs: {dd_count}")
+        print()
+
+
+def _print_explosion_audit(job: Job) -> None:
+    """Print procedure expansion audit records."""
+    audit = job.explosion_audit
+    if not audit:
+        print("(no procedure expansions recorded)")
+        return
+    for record in audit:
+        print(
+            f"Expansion: {record.step_name} -> {record.proc_name}"
+            f"  (depth {record.depth})"
+        )
+        if record.parameters:
+            for k, v in record.parameters.items():
+                print(f"  {k}={v}")
+        if record.expanded_steps:
+            print(f"  Expanded steps: {', '.join(record.expanded_steps)}")
+        print()
 
 
 def _print_step_detail(step: Step) -> None:
@@ -381,6 +435,23 @@ def _step_to_dict(step: Step) -> dict[str, Any]:
         "line_number": step.line_number,
         "comments": step.comments,
     }
+
+
+def _procs_to_dict(job: Job) -> list[dict[str, Any]]:
+    """Serialize inline PROC definitions to a list of dicts."""
+    return [
+        {
+            "name": proc.name,
+            "parameters": proc.parameters,
+            "steps": [_step_or_cond_to_dict(s) for s in proc.steps],
+        }
+        for proc in job.procedures
+    ]
+
+
+def _explosion_audit_to_dict(job: Job) -> list[dict[str, Any]]:
+    """Serialize explosion audit records to a list of dicts."""
+    return [record.to_dict() for record in job.explosion_audit]
 
 
 def _dd_to_dict(dd: DDStatement) -> dict[str, Any]:

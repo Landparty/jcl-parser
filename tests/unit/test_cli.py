@@ -505,3 +505,96 @@ class TestCLIValidateJSON:
         assert len(data["errors"]) > 0
         assert "message" in data["errors"][0]
         assert "severity" in data["errors"][0]
+
+
+@pytest.mark.unit
+class TestCLIProcs:
+    """Test 'procs' query — inline PROC definitions and explosion audit."""
+
+    def test_procs_lists_inline_proc(self, capsys):
+        rc = main([COMPLEX_JCL, "procs"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "MYPROC" in out
+
+    def test_procs_shows_proc_parameters(self, capsys):
+        rc = main([COMPLEX_JCL, "procs"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # MYPROC defines DSN, UNIT, SPACE, VOL parameters
+        assert "DSN=" in out or "UNIT=" in out
+
+    def test_procs_shows_step_count(self, capsys):
+        rc = main([COMPLEX_JCL, "procs"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Steps:" in out
+
+    def test_procs_no_inline_procs(self, capsys):
+        rc = main([SORT_JCL, "procs"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "(no inline procedures)" in out
+
+    def test_procs_json(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert isinstance(data, list)
+        assert len(data) > 0
+        assert data[0]["name"] == "MYPROC"
+        assert "parameters" in data[0]
+        assert "steps" in data[0]
+
+    def test_procs_json_no_inline_procs(self, capsys):
+        rc = main([SORT_JCL, "procs", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data == []
+
+    def test_procs_explode_shows_audit(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--explode"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # Should show expansion records for RUN1 and RUN2 calling MYPROC
+        assert "MYPROC" in out
+        assert "Expansion:" in out
+
+    def test_procs_explode_shows_depth(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--explode"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "depth" in out
+
+    def test_procs_explode_shows_expanded_steps(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--explode"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Expanded steps:" in out
+
+    def test_procs_explode_json(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--explode", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert isinstance(data, list)
+        assert len(data) > 0
+        record = data[0]
+        assert "step_name" in record
+        assert "proc_name" in record
+        assert "parameters" in record
+        assert "depth" in record
+        assert "expanded_steps" in record
+
+    def test_procs_explode_json_proc_name(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--explode", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        proc_names = [r["proc_name"] for r in data]
+        assert "MYPROC" in proc_names
+
+    def test_procs_explode_no_procs_empty_audit(self, capsys):
+        """A job with no PROC calls has no audit records after explosion."""
+        rc = main([SORT_JCL, "procs", "--explode"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "(no procedure expansions recorded)" in out
