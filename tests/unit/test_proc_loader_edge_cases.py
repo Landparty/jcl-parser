@@ -4,8 +4,6 @@ Test edge cases for proc_loader.py to improve coverage.
 Simplified tests focusing on achievable edge cases without complex mocking.
 """
 
-import os
-import stat
 import tempfile
 from pathlib import Path
 from unittest.mock import patch

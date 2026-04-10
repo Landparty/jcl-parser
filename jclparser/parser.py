@@ -841,6 +841,12 @@ def _check_param_balance(param_string: str, line_number: int) -> None:
             paren_depth += 1
         elif c == ")" and not in_quotes:
             paren_depth -= 1
+            if paren_depth < 0:
+                raise JCLSyntaxError(
+                    f"Unmatched parentheses in parameter: {param_string}",
+                    line_number,
+                    column_number=i + 1,
+                )
             if paren_open_cols:
                 paren_open_cols.pop()
         i += 1
