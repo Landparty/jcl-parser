@@ -505,3 +505,335 @@ class TestCLIValidateJSON:
         assert len(data["errors"]) > 0
         assert "message" in data["errors"][0]
         assert "severity" in data["errors"][0]
+
+
+@pytest.mark.unit
+class TestCLIProcs:
+    """Test 'procs' query — inline PROC definitions and explosion audit."""
+
+    def test_procs_lists_inline_proc(self, capsys):
+        rc = main([COMPLEX_JCL, "procs"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "MYPROC" in out
+
+    def test_procs_shows_inline_tag(self, capsys):
+        rc = main([COMPLEX_JCL, "procs"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "[inline]" in out
+
+    def test_procs_shows_proc_parameters(self, capsys):
+        rc = main([COMPLEX_JCL, "procs"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # MYPROC defines DSN, UNIT, SPACE, VOL parameters
+        assert "DSN=" in out or "UNIT=" in out
+
+    def test_procs_shows_step_count(self, capsys):
+        rc = main([COMPLEX_JCL, "procs"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Steps:" in out
+
+    def test_procs_no_inline_procs(self, capsys):
+        rc = main([SORT_JCL, "procs"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "(no inline procedures)" in out
+
+    def test_procs_proc_path_hint(self, capsys):
+        """When --proc-path is given without --explode, a hint is shown."""
+        proclibs = str(FIXTURES / "proclibs")
+        rc = main([SORT_JCL, "procs", "--proc-path", proclibs])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "external" in out.lower()
+        assert "--explode" in out
+
+    def test_procs_json(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert isinstance(data, list)
+        assert len(data) > 0
+        assert data[0]["name"] == "MYPROC"
+        assert "parameters" in data[0]
+        assert "steps" in data[0]
+
+    def test_procs_json_no_inline_procs(self, capsys):
+        rc = main([SORT_JCL, "procs", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data == []
+
+    def test_procs_explode_shows_audit(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--explode"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # Should show expansion records for RUN1 and RUN2 calling MYPROC
+        assert "MYPROC" in out
+        assert "Expansion:" in out
+
+    def test_procs_explode_shows_inline_tag(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--explode"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "[inline]" in out
+
+    def test_procs_explode_shows_depth(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--explode"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "depth" in out
+
+    def test_procs_explode_shows_expanded_steps(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--explode"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Expanded steps:" in out
+
+    def test_procs_explode_json(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--explode", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert isinstance(data, list)
+        assert len(data) > 0
+        record = data[0]
+        assert "step_name" in record
+        assert "proc_name" in record
+        assert "parameters" in record
+        assert "depth" in record
+        assert "expanded_steps" in record
+        assert "source" in record
+
+    def test_procs_explode_json_inline_source(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--explode", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        proc_names = [r["proc_name"] for r in data]
+        assert "MYPROC" in proc_names
+        sources = {r["proc_name"]: r["source"] for r in data}
+        assert sources["MYPROC"] == "inline"
+
+    def test_procs_explode_no_procs_empty_audit(self, capsys):
+        """A job with no PROC calls has no audit records after explosion."""
+        rc = main([SORT_JCL, "procs", "--explode"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "(no procedure expansions recorded)" in out
+
+    def test_procs_explode_external_proc_tag(self, capsys, tmp_path):
+        """External PROCs loaded via --proc-path are tagged [external] in audit."""
+        proclibs = str(FIXTURES / "proclibs")
+        jcl = tmp_path / "ext.jcl"
+        jcl.write_text(
+            "//EXTJOB  JOB (ACCT),'EXT TEST'\n"
+            "//         JCLLIB ORDER=(SYS1.PROCLIB)\n"
+            "//STEP1   EXEC SORTPROC\n"
+        )
+        rc = main([str(jcl), "procs", "--explode", "--proc-path", proclibs])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "[external]" in out
+        assert "SORTPROC" in out
+
+    def test_procs_explode_external_proc_json_source(self, capsys, tmp_path):
+        """External PROCs have source='external' in JSON audit output."""
+        proclibs = str(FIXTURES / "proclibs")
+        jcl = tmp_path / "ext.jcl"
+        jcl.write_text(
+            "//EXTJOB  JOB (ACCT),'EXT TEST'\n"
+            "//         JCLLIB ORDER=(SYS1.PROCLIB)\n"
+            "//STEP1   EXEC SORTPROC\n"
+        )
+        rc = main([str(jcl), "procs", "--explode", "--proc-path", proclibs, "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert any(r["source"] == "external" for r in data)
+
+    # ------------------------------------------------------------------
+    # DD names visible in PROC text output (improvement 3)
+    # ------------------------------------------------------------------
+
+    def test_procs_text_shows_dd_names(self, capsys):
+        """Text output of procs shows individual DD names, not just a count."""
+        rc = main([COMPLEX_JCL, "procs"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # MYPROC STEP1 has DD1 with DSN=&DSN
+        assert "DD1" in out
+
+    # ------------------------------------------------------------------
+    # Single PROC detail query (improvement 4)
+    # ------------------------------------------------------------------
+
+    def test_procs_single_by_name(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "MYPROC"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "MYPROC" in out
+        assert "[inline]" in out
+
+    def test_procs_single_case_insensitive(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "myproc"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "MYPROC" in out
+
+    def test_procs_single_shows_parameters(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "MYPROC"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "DSN=" in out or "UNIT=" in out
+
+    def test_procs_single_shows_steps(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "MYPROC"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Steps:" in out
+        assert "STEP1" in out
+
+    def test_procs_single_shows_dd_names(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "MYPROC"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "DD1" in out
+
+    def test_procs_single_not_found(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "NOPROC"])
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "not found" in err.lower()
+
+    def test_procs_single_json(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "MYPROC", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["name"] == "MYPROC"
+        assert data["source"] == "inline"
+        assert "parameters" in data
+        assert "steps" in data
+
+    def test_procs_single_json_has_line_number(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "MYPROC", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert "line_number" in data
+        assert data["line_number"] > 0
+
+    # ------------------------------------------------------------------
+    # explosion_map resolved parameters in audit (improvement 2)
+    # ------------------------------------------------------------------
+
+    def test_procs_explode_shows_resolved(self, capsys):
+        """Audit shows Resolved: line with merged param values."""
+        rc = main([COMPLEX_JCL, "procs", "--explode"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Resolved:" in out
+
+    def test_procs_explode_resolved_shows_defaults(self, capsys):
+        """Resolved params include PROC defaults not overridden by EXEC."""
+        # RUN1 calls MYPROC with no overrides → resolved should show all defaults
+        rc = main([COMPLEX_JCL, "procs", "--explode"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # MYPROC has DSN='DEFAULT.DATA' as default; RUN1 has no overrides so
+        # resolved value must contain the default
+        assert "DEFAULT.DATA" in out
+
+    def test_procs_explode_json_has_resolved_parameters(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--explode", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert any("resolved_parameters" in r for r in data)
+
+    def test_procs_explode_json_has_source_line_numbers(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--explode", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert any("source_line_numbers" in r for r in data)
+
+    def test_procs_explode_shows_overrides_separately(self, capsys):
+        """RUN2 uses overrides; audit shows both Overrides: and Resolved: lines."""
+        rc = main([COMPLEX_JCL, "procs", "--explode"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Overrides:" in out
+
+    # ------------------------------------------------------------------
+    # Step explosion metadata in JSON (improvement 1)
+    # ------------------------------------------------------------------
+
+    def test_json_exploded_step_has_is_exploded(self, capsys):
+        rc = main([COMPLEX_JCL, "--explode", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        steps = [s for s in data["steps"] if s.get("type") == "step"]
+        assert any(s.get("is_exploded") is True for s in steps)
+
+    def test_json_exploded_step_has_original_proc_call(self, capsys):
+        rc = main([COMPLEX_JCL, "--explode", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        steps = [s for s in data["steps"] if s.get("type") == "step"]
+        exploded = [s for s in steps if s.get("is_exploded")]
+        assert all("original_proc_call" in s for s in exploded)
+
+    def test_json_non_exploded_step_is_exploded_false(self, capsys):
+        """Non-exploded steps have is_exploded=False in JSON."""
+        rc = main([SORT_JCL, "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        steps = [s for s in data["steps"] if s.get("type") == "step"]
+        assert all(s.get("is_exploded") is False for s in steps)
+
+    # ------------------------------------------------------------------
+    # --list-available flag (improvement 5)
+    # ------------------------------------------------------------------
+
+    def test_list_available_shows_proc_names(self, capsys):
+        proclibs = str(FIXTURES / "proclibs")
+        rc = main([SORT_JCL, "procs", "--proc-path", proclibs, "--list-available"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "SORTPROC" in out
+
+    def test_list_available_organises_by_library(self, capsys):
+        proclibs = str(FIXTURES / "proclibs")
+        rc = main([SORT_JCL, "procs", "--proc-path", proclibs, "--list-available"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # fixture has SYS1.PROCLIB and USER.PROCLIB
+        assert "SYS1.PROCLIB" in out or "USER.PROCLIB" in out
+
+    def test_list_available_marks_referenced_procs(self, capsys, tmp_path):
+        """PROCs referenced by the job are marked with * in the listing."""
+        proclibs = str(FIXTURES / "proclibs")
+        jcl = tmp_path / "ref.jcl"
+        jcl.write_text(
+            "//REFJOB  JOB (ACCT),'REF'\n"
+            "//         JCLLIB ORDER=(SYS1.PROCLIB)\n"
+            "//STEP1   EXEC SORTPROC\n"
+        )
+        rc = main([str(jcl), "procs", "--proc-path", proclibs, "--list-available"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "SORTPROC *" in out
+
+    def test_list_available_json(self, capsys):
+        proclibs = str(FIXTURES / "proclibs")
+        rc = main([SORT_JCL, "procs", "--proc-path", proclibs, "--list-available", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert isinstance(data, dict)
+        # keys are library names, values are lists of PROC names
+        all_procs = [p for procs in data.values() for p in procs]
+        assert "SORTPROC" in all_procs
+
+    def test_list_available_no_proc_path(self, capsys):
+        rc = main([SORT_JCL, "procs", "--list-available"])
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "--proc-path" in err

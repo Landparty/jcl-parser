@@ -589,12 +589,13 @@ def _explode_step(
         )
         audit_records.append(record)
 
-    # Record expansion info
+    # Record expansion info — resolved_parameters is PROC defaults merged with
+    # EXEC overrides (overrides win), giving the full effective parameter set.
     if step.name:
         expansion_map[step.name] = ProcExpansionInfo(
             original_statement=f"EXEC {proc_name}",
             proc_definition=procedure.name,
-            resolved_parameters=overrides,
+            resolved_parameters={**procedure.parameters, **overrides},
             source_line_numbers=[step.line_number],
             expanded_step_names=[
                 s.name for s in expanded if hasattr(s, "name") and s.name

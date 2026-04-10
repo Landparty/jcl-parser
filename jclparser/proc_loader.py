@@ -130,6 +130,33 @@ class JCLLIBProcedureLoader(ProcedureLoader):
         self._cache[cache_key] = None
         return None
 
+    def list_all_procedures(self) -> dict[str, list[str]]:
+        """Discover all available PROCs under the base path.
+
+        Scans each immediate subdirectory of base_path as a library and
+        returns a mapping of library_name -> sorted list of PROC names.
+        """
+        result: dict[str, list[str]] = {}
+        if not self.base_path.exists() or not self.base_path.is_dir():
+            return result
+        for lib_dir in sorted(self.base_path.iterdir()):
+            if not lib_dir.is_dir():
+                continue
+            procs: list[str] = []
+            for f in sorted(lib_dir.iterdir()):
+                if not f.is_file():
+                    continue
+                try:
+                    if not f.resolve().is_relative_to(lib_dir.resolve()):
+                        continue
+                except (OSError, ValueError):
+                    continue
+                if f.suffix.lower() in (".jcl",) or not f.suffix:
+                    procs.append(f.stem.upper())
+            if procs:
+                result[lib_dir.name] = sorted(procs)
+        return result
+
     def _load_from_library(self, name: str, library: str) -> Procedure | None:
         """
         Load procedure from a specific library.
@@ -217,13 +244,15 @@ class JCLLIBProcedureLoader(ProcedureLoader):
             # Look for the procedure in the parsed job
             for proc in job.procedures:
                 if proc.name.upper() == proc_name.upper():
+                    proc.is_external = True
                     return proc
 
             # If no explicit PROC/PEND, treat entire file as procedure
             # This is a simplified approach - real z/OS might differ
             if job.steps:
                 return Procedure(
-                    name=proc_name, parameters={}, steps=job.steps, line_number=0
+                    name=proc_name, parameters={}, steps=job.steps,
+                    line_number=0, is_external=True,
                 )
 
         except (JCLSyntaxError, JCLValidationError, OSError, ValueError):

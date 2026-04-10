@@ -2,13 +2,17 @@
 Command-line interface for jclparser.
 
 Usage:
-    jcl-parser FILE                     Show job summary
-    jcl-parser FILE steps               List all steps
-    jcl-parser FILE STEP                Show step details
-    jcl-parser FILE STEP.DDNAME         Show a specific DD statement
-    jcl-parser FILE DDNAME              Show all DDs with that name across steps
-    jcl-parser FILE --json              Full parse result as JSON
-    jcl-parser FILE --validate          Validate the JCL
+    jcl-parser FILE                              Show job summary
+    jcl-parser FILE steps                        List all steps
+    jcl-parser FILE procs                        List procedure definitions
+    jcl-parser FILE procs PROCNAME               Show a specific procedure
+    jcl-parser FILE procs --explode              Show procedure expansion audit
+    jcl-parser FILE procs --list-available       List PROCs in --proc-path libraries
+    jcl-parser FILE STEP                         Show step details
+    jcl-parser FILE STEP.DDNAME                  Show a specific DD statement
+    jcl-parser FILE DDNAME                       Show all DDs with that name
+    jcl-parser FILE --json                       Full parse result as JSON
+    jcl-parser FILE --validate                   Validate the JCL
 """
 
 from __future__ import annotations
@@ -29,8 +33,9 @@ from .errors import (
     ExplosionDepthError,
     ProcedureNotFoundError,
 )
-from .model import ConditionalBlock, DDStatement, Job, Step, iter_execution_steps
+from .model import ConditionalBlock, DDStatement, Job, Procedure, Step, iter_execution_steps
 from .parser import parse_jcl, validate_jcl
+from .proc_loader import JCLLIBProcedureLoader
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -42,10 +47,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("file", metavar="FILE", help="JCL file to parse")
     parser.add_argument(
         "query",
-        nargs="?",
-        default=None,
+        nargs="*",
+        default=[],
         help=(
-            "Query: 'steps', a step name, STEP.DDNAME, "
+            "Query: 'steps', 'procs [PROCNAME]', a step name, STEP.DDNAME, "
             "or a DD name to find across all steps"
         ),
     )
@@ -64,6 +69,11 @@ def main(argv: list[str] | None = None) -> int:
         "--proc-path",
         default=None,
         help="Base path for external PROC libraries",
+    )
+    parser.add_argument(
+        "--list-available",
+        action="store_true",
+        help="List PROCs available in --proc-path libraries (use with 'procs')",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
@@ -104,7 +114,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     # --- resolve query target ---
-    query = args.query
+    tokens = args.query          # list[str]
+    query = tokens[0] if tokens else None
+    subquery = tokens[1].upper() if len(tokens) > 1 else None
     json_out = args.json_output
 
     if query is None:
@@ -120,6 +132,34 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(steps, indent=2))
         else:
             _print_steps(job)
+        return 0
+
+    if query.lower() == "procs":
+        # jcl-parser FILE procs PROCNAME  — single proc detail
+        if subquery:
+            proc = job.get_procedure(subquery)
+            if proc is None:
+                print(f"Procedure not found: {subquery}", file=sys.stderr)
+                return 1
+            if json_out:
+                print(json.dumps(_proc_to_dict(proc), indent=2))
+            else:
+                _print_proc_detail(proc)
+            return 0
+        # jcl-parser FILE procs --list-available
+        if args.list_available:
+            return _cmd_list_available(args.proc_path, job, json_out)
+        # jcl-parser FILE procs [--explode]
+        if args.explode:
+            if json_out:
+                print(json.dumps(_explosion_audit_to_dict(job), indent=2))
+            else:
+                _print_explosion_audit(job)
+        else:
+            if json_out:
+                print(json.dumps(_procs_to_dict(job), indent=2))
+            else:
+                _print_procs(job, proc_path=args.proc_path)
         return 0
 
     # STEP.DDNAME — split on first dot only; the remainder is the full DD name
@@ -175,6 +215,40 @@ def _cmd_validate(path: Path, json_output: bool = False) -> int:
     return 1
 
 
+def _cmd_list_available(
+    proc_path: str | None, job: Job, json_output: bool = False
+) -> int:
+    """List all PROC names available in the proc-path libraries."""
+    if not proc_path:
+        print(
+            "Error: --proc-path is required for --list-available", file=sys.stderr
+        )
+        return 1
+    loader = JCLLIBProcedureLoader(Path(proc_path))
+    available = loader.list_all_procedures()
+    if json_output:
+        print(json.dumps(available, indent=2))
+        return 0
+    if not available:
+        print(f"(no PROCs found under '{proc_path}')")
+        return 0
+    for lib_name, procs in available.items():
+        print(f"{lib_name}:")
+        for name in procs:
+            used = any(p.name.upper() == name for p in job.procedures)
+            marker = " *" if used else ""
+            print(f"  {name}{marker}")
+    print()
+    used_count = sum(
+        1 for lib_procs in available.values()
+        for n in lib_procs
+        if any(p.name.upper() == n for p in job.procedures)
+    )
+    if used_count:
+        print("(* = referenced by this job)")
+    return 0
+
+
 def _print_summary(job: Job) -> None:
     steps = list(iter_execution_steps(job.steps))
     print(f"Job:    {job.name}")
@@ -204,6 +278,88 @@ def _print_steps(job: Job) -> None:
         kind = "PROC" if step.is_procedure else "PGM"
         dd_count = len(step.dd_statements)
         print(f"  {name:<{name_w}}  {kind}={target:<16} DDs: {dd_count}")
+
+
+def _print_procs(job: Job, proc_path: str | None = None) -> None:
+    """Print PROC definitions (inline and externally-loaded)."""
+    if not job.procedures:
+        print("(no inline procedures)")
+    else:
+        for proc in job.procedures:
+            tag = "[external]" if proc.is_external else "[inline]"
+            print(f"PROC: {proc.name}  {tag}")
+            if proc.parameters:
+                for k, v in proc.parameters.items():
+                    print(f"  {k}={v}")
+            steps = list(iter_execution_steps(proc.steps))
+            print(f"  Steps: {len(steps)}")
+            for step in steps:
+                target = step.program or step.procedure or ""
+                kind = "PROC" if step.is_procedure else "PGM"
+                print(f"    {step.name or '(unnamed)'}  {kind}={target}")
+                for dd in step.dd_statements:
+                    _print_dd_brief(dd, indent=6)
+            print()
+    if proc_path and not any(p.is_external for p in job.procedures):
+        print(
+            f"Note: external PROCs from '{proc_path}' are expanded with --explode"
+        )
+
+
+def _print_proc_detail(proc: Procedure) -> None:
+    """Print full detail for a single PROC definition."""
+    tag = "[external]" if proc.is_external else "[inline]"
+    print(f"PROC: {proc.name}  {tag}  (line {proc.line_number})")
+    if proc.parameters:
+        print("  Parameters (defaults):")
+        for k, v in proc.parameters.items():
+            print(f"    {k}={v}")
+    steps = list(iter_execution_steps(proc.steps))
+    print(f"  Steps: {len(steps)}")
+    for step in steps:
+        target = step.program or step.procedure or ""
+        kind = "PROC" if step.is_procedure else "PGM"
+        print(f"    Step: {step.name or '(unnamed)'}  {kind}={target}  (line {step.line_number})")
+        if step.dd_statements:
+            for dd in step.dd_statements:
+                _print_dd_brief(dd, indent=6)
+        else:
+            print("      (no DD statements)")
+
+
+def _print_explosion_audit(job: Job) -> None:
+    """Print procedure expansion audit records, enriched from explosion_map."""
+    audit = job.explosion_audit
+    if not audit:
+        print("(no procedure expansions recorded)")
+        return
+    proc_source = {p.name.upper(): "external" if p.is_external else "inline"
+                   for p in job.procedures}
+    for record in audit:
+        source_label = proc_source.get(record.proc_name.upper(), "external")
+        tag = f"[{source_label}]"
+        info = job.explosion_map.get(record.step_name)
+        src_lines = (
+            f"  line {info.source_line_numbers[0]}" if info and info.source_line_numbers
+            else ""
+        )
+        print(
+            f"Expansion: {record.step_name} -> {record.proc_name} {tag}"
+            f"  (depth {record.depth}{src_lines})"
+        )
+        # Show EXEC overrides (what the caller supplied)
+        if record.parameters:
+            overrides = ", ".join(f"{k}={v}" for k, v in record.parameters.items())
+            print(f"  Overrides: {overrides}")
+        # Show resolved parameters (merged EXEC overrides + PROC defaults + SET symbols)
+        if info and info.resolved_parameters:
+            resolved = ", ".join(
+                f"{k}={v}" for k, v in info.resolved_parameters.items()
+            )
+            print(f"  Resolved:  {resolved}")
+        if record.expanded_steps:
+            print(f"  Expanded steps: {', '.join(record.expanded_steps)}")
+        print()
 
 
 def _print_step_detail(step: Step) -> None:
@@ -380,7 +536,42 @@ def _step_to_dict(step: Step) -> dict[str, Any]:
         "dd_statements": [_dd_to_dict(dd) for dd in step.dd_statements],
         "line_number": step.line_number,
         "comments": step.comments,
+        "is_exploded": step.is_exploded,
+        "original_proc_call": step.original_proc_call,
+        "dd_overrides": {k: _dd_to_dict(v) for k, v in step.dd_overrides.items()},
     }
+
+
+def _proc_to_dict(proc: Procedure) -> dict[str, Any]:
+    """Serialize a single Procedure to a dict."""
+    return {
+        "name": proc.name,
+        "source": "external" if proc.is_external else "inline",
+        "line_number": proc.line_number,
+        "parameters": proc.parameters,
+        "steps": [_step_or_cond_to_dict(s) for s in proc.steps],
+    }
+
+
+def _procs_to_dict(job: Job) -> list[dict[str, Any]]:
+    """Serialize PROC definitions to a list of dicts."""
+    return [_proc_to_dict(proc) for proc in job.procedures]
+
+
+def _explosion_audit_to_dict(job: Job) -> list[dict[str, Any]]:
+    """Serialize explosion audit records, enriched with explosion_map data."""
+    proc_source = {p.name.upper(): "external" if p.is_external else "inline"
+                   for p in job.procedures}
+    result = []
+    for record in job.explosion_audit:
+        d = record.to_dict()
+        d["source"] = proc_source.get(record.proc_name.upper(), "external")
+        info = job.explosion_map.get(record.step_name)
+        if info:
+            d["resolved_parameters"] = info.resolved_parameters
+            d["source_line_numbers"] = info.source_line_numbers
+        result.append(d)
+    return result
 
 
 def _dd_to_dict(dd: DDStatement) -> dict[str, Any]:

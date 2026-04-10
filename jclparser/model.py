@@ -99,6 +99,7 @@ class Procedure:
     parameters: dict[str, Any] = field(default_factory=dict)
     steps: list[Step | ConditionalBlock] = field(default_factory=list)
     line_number: int = 0
+    is_external: bool = False
 
     def add_step(self, step: Step | ConditionalBlock) -> None:
         """Add a step to this procedure"""
