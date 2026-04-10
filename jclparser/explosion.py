@@ -235,7 +235,9 @@ def expand_proc_invocation(
         for proc_step in steps_list:
             if isinstance(proc_step, ConditionalBlock):
                 new_cond = ConditionalBlock(
-                    condition=proc_step.condition, line_number=proc_step.line_number
+                    condition=proc_step.condition,
+                    line_number=proc_step.line_number,
+                    condition_ast=proc_step.condition_ast,
                 )
                 new_cond.then_steps = _process_proc_steps(proc_step.then_steps)
                 new_cond.else_steps = _process_proc_steps(proc_step.else_steps)
@@ -439,7 +441,9 @@ def explode_job(
         for step in steps_list:
             if isinstance(step, ConditionalBlock):
                 new_cond = ConditionalBlock(
-                    condition=step.condition, line_number=step.line_number
+                    condition=step.condition,
+                    line_number=step.line_number,
+                    condition_ast=step.condition_ast,
                 )
                 new_cond.then_steps = _process_steps(step.then_steps)
                 new_cond.else_steps = _process_steps(step.else_steps)
@@ -611,7 +615,9 @@ def _explode_step(
         for s in steps_list:
             if isinstance(s, ConditionalBlock):
                 new_cond = ConditionalBlock(
-                    condition=s.condition, line_number=s.line_number
+                    condition=s.condition,
+                    line_number=s.line_number,
+                    condition_ast=s.condition_ast,
                 )
                 new_cond.then_steps = _explode_nested(s.then_steps)
                 new_cond.else_steps = _explode_nested(s.else_steps)

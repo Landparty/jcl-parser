@@ -139,6 +139,102 @@ class TestConditionalBlocksInsideProcs:
 
 
 @pytest.mark.unit
+class TestConditionalAstPreservation:
+    """Verify condition_ast is carried through all ConditionalBlock copy sites."""
+
+    def test_condition_ast_preserved_in_proc_expansion(self):
+        """condition_ast must survive PROC explosion (_process_proc_steps path)."""
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//MYPROC  PROC
+//S1      EXEC PGM=PGM1
+// IF (S1.RC EQ 0) THEN
+//S2      EXEC PGM=PGM2
+// ENDIF
+//        PEND
+//RUN     EXEC MYPROC
+"""
+        job = parse_jcl(jcl)
+        exploded = job.explode()
+
+        cond_blocks = [s for s in exploded.steps if isinstance(s, ConditionalBlock)]
+        assert cond_blocks, "Expected at least one ConditionalBlock in exploded job"
+        # condition_ast should be non-None (parse_condition produces an AST for
+        # this well-formed condition).
+        assert cond_blocks[0].condition_ast is not None, (
+            "condition_ast was lost during PROC explosion"
+        )
+
+    def test_condition_ast_preserved_in_top_level_conditionals(self):
+        """condition_ast must survive the top-level _process_steps copy path."""
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//STEP1   EXEC PGM=PGM1
+// IF (STEP1.RC EQ 0) THEN
+//STEP2   EXEC PGM=PGM2
+// ENDIF
+"""
+        job = parse_jcl(jcl)
+        exploded = job.explode()
+
+        cond_blocks = [s for s in exploded.steps if isinstance(s, ConditionalBlock)]
+        assert cond_blocks, "Expected at least one ConditionalBlock"
+        assert cond_blocks[0].condition_ast is not None, (
+            "condition_ast was lost during top-level step processing"
+        )
+
+    def test_condition_ast_preserved_in_nested_proc_explosion(self):
+        """condition_ast must survive the _explode_nested copy path.
+
+        Uses a simple one-level step reference so the condition parser can
+        produce an AST (three-level refs like OS1.IS1.RC are not supported by
+        condition_parser and would yield None both before and after explosion).
+        """
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//MYPROC  PROC
+//PS1     EXEC PGM=INNER1
+// IF (PS1.RC EQ 0) THEN
+//PS2     EXEC PGM=OUTER2
+// ENDIF
+//        PEND
+//CALL    EXEC MYPROC
+"""
+        job = parse_jcl(jcl)
+
+        # Collect condition_ast values from the un-exploded PROC definition
+        proc = job.get_procedure("MYPROC")
+        assert proc is not None
+        orig_ast_by_condition = {}
+        for item in proc.steps:
+            if isinstance(item, ConditionalBlock):
+                orig_ast_by_condition[item.condition] = item.condition_ast
+
+        exploded = job.explode()
+
+        # Collect all ConditionalBlocks anywhere in the exploded tree
+        def collect_conds(steps_list):
+            conds = []
+            for item in steps_list:
+                if isinstance(item, ConditionalBlock):
+                    conds.append(item)
+                    conds.extend(collect_conds(item.then_steps))
+                    conds.extend(collect_conds(item.else_steps))
+            return conds
+
+        all_conds = collect_conds(exploded.steps)
+        assert all_conds, "Expected ConditionalBlocks in nested explosion"
+
+        # Every ConditionalBlock in the explosion must carry the same
+        # condition_ast object (or None) that the original PROC had.
+        for cond in all_conds:
+            if cond.condition in orig_ast_by_condition:
+                assert cond.condition_ast is orig_ast_by_condition[cond.condition], (
+                    f"condition_ast not preserved for: {cond.condition!r}"
+                )
+
+
+@pytest.mark.unit
 class TestConditionalBlockExpansionDirect:
     """Test the ConditionalBlock handling in expand_proc_invocation() directly."""
 

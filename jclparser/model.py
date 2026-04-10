@@ -140,6 +140,20 @@ class DDStatement:
         default=None, init=False, repr=False, compare=False
     )
 
+    def __setattr__(self, name: str, value) -> None:
+        object.__setattr__(self, name, value)
+        # Invalidate lazy parse caches whenever the backing data fields change.
+        # Use __dict__ membership to avoid AttributeError during __init__ (the
+        # cache fields are declared with init=False so they are set last).
+        if name in ("parameters", "disposition"):
+            d = self.__dict__
+            if "_dcb_parsed" in d:
+                object.__setattr__(self, "_dcb_parsed", None)
+            if "_space_parsed" in d:
+                object.__setattr__(self, "_space_parsed", None)
+            if "_disp_tokens_cache" in d:
+                object.__setattr__(self, "_disp_tokens_cache", None)
+
     @property
     def dcb(self) -> DCBParameter | None:
         """
