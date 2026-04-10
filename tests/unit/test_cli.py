@@ -517,6 +517,12 @@ class TestCLIProcs:
         out = capsys.readouterr().out
         assert "MYPROC" in out
 
+    def test_procs_shows_inline_tag(self, capsys):
+        rc = main([COMPLEX_JCL, "procs"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "[inline]" in out
+
     def test_procs_shows_proc_parameters(self, capsys):
         rc = main([COMPLEX_JCL, "procs"])
         assert rc == 0
@@ -535,6 +541,15 @@ class TestCLIProcs:
         assert rc == 0
         out = capsys.readouterr().out
         assert "(no inline procedures)" in out
+
+    def test_procs_proc_path_hint(self, capsys):
+        """When --proc-path is given without --explode, a hint is shown."""
+        proclibs = str(FIXTURES / "proclibs")
+        rc = main([SORT_JCL, "procs", "--proc-path", proclibs])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "external" in out.lower()
+        assert "--explode" in out
 
     def test_procs_json(self, capsys):
         rc = main([COMPLEX_JCL, "procs", "--json"])
@@ -560,6 +575,12 @@ class TestCLIProcs:
         assert "MYPROC" in out
         assert "Expansion:" in out
 
+    def test_procs_explode_shows_inline_tag(self, capsys):
+        rc = main([COMPLEX_JCL, "procs", "--explode"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "[inline]" in out
+
     def test_procs_explode_shows_depth(self, capsys):
         rc = main([COMPLEX_JCL, "procs", "--explode"])
         assert rc == 0
@@ -584,13 +605,16 @@ class TestCLIProcs:
         assert "parameters" in record
         assert "depth" in record
         assert "expanded_steps" in record
+        assert "source" in record
 
-    def test_procs_explode_json_proc_name(self, capsys):
+    def test_procs_explode_json_inline_source(self, capsys):
         rc = main([COMPLEX_JCL, "procs", "--explode", "--json"])
         assert rc == 0
         data = json.loads(capsys.readouterr().out)
         proc_names = [r["proc_name"] for r in data]
         assert "MYPROC" in proc_names
+        sources = {r["proc_name"]: r["source"] for r in data}
+        assert sources["MYPROC"] == "inline"
 
     def test_procs_explode_no_procs_empty_audit(self, capsys):
         """A job with no PROC calls has no audit records after explosion."""
@@ -598,3 +622,32 @@ class TestCLIProcs:
         assert rc == 0
         out = capsys.readouterr().out
         assert "(no procedure expansions recorded)" in out
+
+    def test_procs_explode_external_proc_tag(self, capsys, tmp_path):
+        """External PROCs loaded via --proc-path are tagged [external] in audit."""
+        proclibs = str(FIXTURES / "proclibs")
+        jcl = tmp_path / "ext.jcl"
+        jcl.write_text(
+            "//EXTJOB  JOB (ACCT),'EXT TEST'\n"
+            "//         JCLLIB ORDER=(SYS1.PROCLIB)\n"
+            "//STEP1   EXEC SORTPROC\n"
+        )
+        rc = main([str(jcl), "procs", "--explode", "--proc-path", proclibs])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "[external]" in out
+        assert "SORTPROC" in out
+
+    def test_procs_explode_external_proc_json_source(self, capsys, tmp_path):
+        """External PROCs have source='external' in JSON audit output."""
+        proclibs = str(FIXTURES / "proclibs")
+        jcl = tmp_path / "ext.jcl"
+        jcl.write_text(
+            "//EXTJOB  JOB (ACCT),'EXT TEST'\n"
+            "//         JCLLIB ORDER=(SYS1.PROCLIB)\n"
+            "//STEP1   EXEC SORTPROC\n"
+        )
+        rc = main([str(jcl), "procs", "--explode", "--proc-path", proclibs, "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert any(r["source"] == "external" for r in data)

@@ -217,13 +217,15 @@ class JCLLIBProcedureLoader(ProcedureLoader):
             # Look for the procedure in the parsed job
             for proc in job.procedures:
                 if proc.name.upper() == proc_name.upper():
+                    proc.is_external = True
                     return proc
 
             # If no explicit PROC/PEND, treat entire file as procedure
             # This is a simplified approach - real z/OS might differ
             if job.steps:
                 return Procedure(
-                    name=proc_name, parameters={}, steps=job.steps, line_number=0
+                    name=proc_name, parameters={}, steps=job.steps,
+                    line_number=0, is_external=True,
                 )
 
         except (JCLSyntaxError, JCLValidationError, OSError, ValueError):

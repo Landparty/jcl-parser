@@ -134,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
             if json_out:
                 print(json.dumps(_procs_to_dict(job), indent=2))
             else:
-                _print_procs(job)
+                _print_procs(job, proc_path=args.proc_path)
         return 0
 
     # STEP.DDNAME — split on first dot only; the remainder is the full DD name
@@ -221,24 +221,29 @@ def _print_steps(job: Job) -> None:
         print(f"  {name:<{name_w}}  {kind}={target:<16} DDs: {dd_count}")
 
 
-def _print_procs(job: Job) -> None:
-    """Print inline PROC definitions."""
+def _print_procs(job: Job, proc_path: str | None = None) -> None:
+    """Print PROC definitions (inline and externally-loaded)."""
     if not job.procedures:
         print("(no inline procedures)")
-        return
-    for proc in job.procedures:
-        print(f"PROC: {proc.name}")
-        if proc.parameters:
-            for k, v in proc.parameters.items():
-                print(f"  {k}={v}")
-        steps = list(iter_execution_steps(proc.steps))
-        print(f"  Steps: {len(steps)}")
-        for step in steps:
-            target = step.program or step.procedure or ""
-            kind = "PROC" if step.is_procedure else "PGM"
-            dd_count = len(step.dd_statements)
-            print(f"    {step.name or '(unnamed)'}  {kind}={target:<16} DDs: {dd_count}")
-        print()
+    else:
+        for proc in job.procedures:
+            tag = "[external]" if proc.is_external else "[inline]"
+            print(f"PROC: {proc.name}  {tag}")
+            if proc.parameters:
+                for k, v in proc.parameters.items():
+                    print(f"  {k}={v}")
+            steps = list(iter_execution_steps(proc.steps))
+            print(f"  Steps: {len(steps)}")
+            for step in steps:
+                target = step.program or step.procedure or ""
+                kind = "PROC" if step.is_procedure else "PGM"
+                dd_count = len(step.dd_statements)
+                print(f"    {step.name or '(unnamed)'}  {kind}={target:<16} DDs: {dd_count}")
+            print()
+    if proc_path and not any(p.is_external for p in job.procedures):
+        print(
+            f"Note: external PROCs from '{proc_path}' are expanded with --explode"
+        )
 
 
 def _print_explosion_audit(job: Job) -> None:
@@ -247,9 +252,13 @@ def _print_explosion_audit(job: Job) -> None:
     if not audit:
         print("(no procedure expansions recorded)")
         return
+    proc_source = {p.name.upper(): "external" if p.is_external else "inline"
+                   for p in job.procedures}
     for record in audit:
+        source_label = proc_source.get(record.proc_name.upper(), "external")
+        tag = f"[{source_label}]"
         print(
-            f"Expansion: {record.step_name} -> {record.proc_name}"
+            f"Expansion: {record.step_name} -> {record.proc_name} {tag}"
             f"  (depth {record.depth})"
         )
         if record.parameters:
@@ -438,10 +447,11 @@ def _step_to_dict(step: Step) -> dict[str, Any]:
 
 
 def _procs_to_dict(job: Job) -> list[dict[str, Any]]:
-    """Serialize inline PROC definitions to a list of dicts."""
+    """Serialize PROC definitions to a list of dicts."""
     return [
         {
             "name": proc.name,
+            "source": "external" if proc.is_external else "inline",
             "parameters": proc.parameters,
             "steps": [_step_or_cond_to_dict(s) for s in proc.steps],
         }
@@ -450,8 +460,18 @@ def _procs_to_dict(job: Job) -> list[dict[str, Any]]:
 
 
 def _explosion_audit_to_dict(job: Job) -> list[dict[str, Any]]:
-    """Serialize explosion audit records to a list of dicts."""
-    return [record.to_dict() for record in job.explosion_audit]
+    """Serialize explosion audit records to a list of dicts.
+
+    Each record includes a 'source' field: 'inline' or 'external'.
+    """
+    proc_source = {p.name.upper(): "external" if p.is_external else "inline"
+                   for p in job.procedures}
+    result = []
+    for record in job.explosion_audit:
+        d = record.to_dict()
+        d["source"] = proc_source.get(record.proc_name.upper(), "external")
+        result.append(d)
+    return result
 
 
 def _dd_to_dict(dd: DDStatement) -> dict[str, Any]:
