@@ -397,19 +397,14 @@ class TestSysoutDDOverrideExplosion:
 class TestBinaryFallbackFileReading:
     """Test _read_file_with_fallback when all text encodings fail."""
 
-    def test_binary_fallback_for_undecodable_file(self):
-        """File with bytes that fail utf-8, latin-1, and cp1252 still gets read."""
-        # Create a file with a mix of valid UTF-8 and raw bytes that include
-        # surrogate-range sequences. latin-1 and cp1252 decode any single byte,
-        # so we need to force them to fail using the mock approach.
+    def test_utf8_failure_falls_back_to_latin1(self):
+        """File with bytes invalid in UTF-8 but valid in latin-1 is read via latin-1 fallback."""
         with tempfile.NamedTemporaryFile(suffix=".jcl", delete=False, mode="wb") as f:
-            # Write some valid JCL-like text mixed with problematic bytes
             f.write(b"//MYJOB JOB\n")
-            f.write(b"Hello \x80\x81\x82\n")  # valid in latin-1/cp1252
+            f.write(b"Hello \x80\x81\x82\n")  # invalid UTF-8, valid latin-1/cp1252
             path = Path(f.name)
 
         try:
-            # This should succeed (latin-1 handles these bytes)
             content = _read_file_with_fallback(path)
             assert "MYJOB" in content
         finally:
@@ -492,18 +487,16 @@ class TestMainModule:
         assert result.returncode == 0
         assert "usage" in result.stdout.lower() or "jclparser" in result.stdout.lower()
 
-    def test_main_module_parse_stdin(self):
-        """Running python -m jclparser with JCL on stdin should produce output."""
-        jcl = "//MYJOB JOB (ACCT),'DESC'\n//STEP1 EXEC PGM=IEFBR14\n"
+    def test_main_module_nonexistent_file(self):
+        """Running python -m jclparser with a nonexistent file exits with error."""
         result = subprocess.run(
-            [sys.executable, "-m", "jclparser", "-"],
-            input=jcl,
+            [sys.executable, "-m", "jclparser", "/nonexistent/path.jcl"],
             capture_output=True,
             text=True,
             timeout=10,
         )
-        # Should either succeed or show usage—either way, it ran
-        assert result.returncode is not None
+        assert result.returncode != 0
+        assert "not found" in result.stderr.lower() or "error" in result.stderr.lower()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
