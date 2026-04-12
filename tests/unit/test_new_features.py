@@ -10,9 +10,21 @@ Tests for the six new parser features:
 """
 
 from jclparser import parse_jcl
-from jclparser.condition_parser import parse_condition, ReturnCodeCondition, AbendCondition, RunCondition
-from jclparser.include_loader import DictMemberLoader, resolve_includes, _extract_include_member
-from jclparser.dataset_lifecycle import analyze_dataset_lifecycle, validate_dataset_lifecycle
+from jclparser.condition_parser import (
+    parse_condition,
+    ReturnCodeCondition,
+    AbendCondition,
+    RunCondition,
+)
+from jclparser.include_loader import (
+    DictMemberLoader,
+    resolve_includes,
+    _extract_include_member,
+)
+from jclparser.dataset_lifecycle import (
+    analyze_dataset_lifecycle,
+    validate_dataset_lifecycle,
+)
 from jclparser.model import OutputStatement
 
 
@@ -25,7 +37,9 @@ class TestJobParameterProperties:
     """Typed accessors for NOTIFY, TYPRUN, RESTART, MSGCLASS, CLASS, etc."""
 
     def _job(self, params: str):
-        return parse_jcl(f"//TESTJOB JOB (ACCT),'USER',{params}\n//S1 EXEC PGM=IEFBR14\n")
+        return parse_jcl(
+            f"//TESTJOB JOB (ACCT),'USER',{params}\n//S1 EXEC PGM=IEFBR14\n"
+        )
 
     def test_notify(self):
         job = self._job("NOTIFY=JOEUSER")
@@ -113,9 +127,7 @@ class TestOutputStatement:
 
     def _job(self, output_line: str):
         return parse_jcl(
-            f"//MYJOB  JOB (ACCT),'TEST'\n"
-            f"{output_line}\n"
-            f"//S1     EXEC PGM=IEFBR14\n"
+            f"//MYJOB  JOB (ACCT),'TEST'\n{output_line}\n//S1     EXEC PGM=IEFBR14\n"
         )
 
     def test_is_output_statement_instance(self):
@@ -177,7 +189,10 @@ class TestOutputStatement:
 
     def test_from_statement_classmethod(self):
         from jclparser.model import Statement
-        raw = Statement(type="OUTPUT", name="X", parameters={"DEST": "LOCAL"}, line_number=5)
+
+        raw = Statement(
+            type="OUTPUT", name="X", parameters={"DEST": "LOCAL"}, line_number=5
+        )
         out = OutputStatement.from_statement(raw)
         assert out.name == "X"
         assert out.dest == "LOCAL"
@@ -262,10 +277,7 @@ class TestJOBLIBSTEPLIB:
         assert order == ["STEPLIB1", "STEPLIB2"]
 
     def test_steplib_empty_when_absent(self):
-        jcl = (
-            "//MYJOB  JOB (ACCT),'USER'\n"
-            "//S1     EXEC PGM=IEFBR14\n"
-        )
+        jcl = "//MYJOB  JOB (ACCT),'USER'\n//S1     EXEC PGM=IEFBR14\n"
         job = parse_jcl(jcl)
         step = job.get_step("S1")
         assert step.steplib == []
@@ -456,10 +468,12 @@ class TestResolveIncludes:
         assert "INCLUDE" in result
 
     def test_nested_include_expanded(self):
-        loader = DictMemberLoader({
-            "OUTER": "// INCLUDE MEMBER=INNER\n",
-            "INNER": "//S3 EXEC PGM=SORT\n",
-        })
+        loader = DictMemberLoader(
+            {
+                "OUTER": "// INCLUDE MEMBER=INNER\n",
+                "INNER": "//S3 EXEC PGM=SORT\n",
+            }
+        )
         src = "// INCLUDE MEMBER=OUTER\n"
         result = resolve_includes(src, loader)
         assert "//S3 EXEC PGM=SORT" in result
@@ -483,9 +497,7 @@ class TestIncludeInParser:
     """End-to-end: INCLUDE is resolved before the parse loop."""
 
     def test_included_exec_step_appears_in_job(self):
-        loader = DictMemberLoader({
-            "COMMON": "//COMSTEP EXEC PGM=IEFBR14\n"
-        })
+        loader = DictMemberLoader({"COMMON": "//COMSTEP EXEC PGM=IEFBR14\n"})
         jcl = (
             "//MYJOB  JOB (ACCT),'USER'\n"
             "//S1     EXEC PGM=IEFBR14\n"
@@ -542,35 +554,23 @@ class TestDatasetLifecycleAnalysis:
         return parse_jcl(f"//MYJOB  JOB (ACCT),'USER'\n{steps_jcl}")
 
     def test_single_allocation_recorded(self):
-        jcl = (
-            "//S1  EXEC PGM=IEFBR14\n"
-            "//DD1   DD DSN=MY.DATA,DISP=(NEW,CATLG,DELETE)\n"
-        )
+        jcl = "//S1  EXEC PGM=IEFBR14\n//DD1   DD DSN=MY.DATA,DISP=(NEW,CATLG,DELETE)\n"
         events = analyze_dataset_lifecycle(self._job(jcl))
         assert "MY.DATA" in events
         assert events["MY.DATA"][0].action == "ALLOCATE"
 
     def test_open_old_recorded(self):
-        jcl = (
-            "//S1  EXEC PGM=IEFBR14\n"
-            "//DD1   DD DSN=MY.DATA,DISP=OLD\n"
-        )
+        jcl = "//S1  EXEC PGM=IEFBR14\n//DD1   DD DSN=MY.DATA,DISP=OLD\n"
         events = analyze_dataset_lifecycle(self._job(jcl))
         assert events["MY.DATA"][0].action == "OPEN_EXCLUSIVE"
 
     def test_open_shr_recorded(self):
-        jcl = (
-            "//S1  EXEC PGM=IEFBR14\n"
-            "//DD1   DD DSN=MY.DATA,DISP=SHR\n"
-        )
+        jcl = "//S1  EXEC PGM=IEFBR14\n//DD1   DD DSN=MY.DATA,DISP=SHR\n"
         events = analyze_dataset_lifecycle(self._job(jcl))
         assert events["MY.DATA"][0].action == "OPEN_SHARED"
 
     def test_extend_recorded(self):
-        jcl = (
-            "//S1  EXEC PGM=IEFBR14\n"
-            "//DD1   DD DSN=MY.DATA,DISP=(MOD,KEEP)\n"
-        )
+        jcl = "//S1  EXEC PGM=IEFBR14\n//DD1   DD DSN=MY.DATA,DISP=(MOD,KEEP)\n"
         events = analyze_dataset_lifecycle(self._job(jcl))
         assert events["MY.DATA"][0].action == "EXTEND"
 
@@ -587,28 +587,19 @@ class TestDatasetLifecycleAnalysis:
         assert events["MY.DATA"][1].action == "OPEN_SHARED"
 
     def test_normal_disp_captured(self):
-        jcl = (
-            "//S1  EXEC PGM=IEFBR14\n"
-            "//DD1   DD DSN=MY.DATA,DISP=(NEW,CATLG,DELETE)\n"
-        )
+        jcl = "//S1  EXEC PGM=IEFBR14\n//DD1   DD DSN=MY.DATA,DISP=(NEW,CATLG,DELETE)\n"
         events = analyze_dataset_lifecycle(self._job(jcl))
         evt = events["MY.DATA"][0]
         assert evt.disp_normal == "CATLG"
         assert evt.disp_abnormal == "DELETE"
 
     def test_dsn_key_is_uppercase(self):
-        jcl = (
-            "//S1  EXEC PGM=IEFBR14\n"
-            "//DD1   DD DSN=My.Dataset,DISP=SHR\n"
-        )
+        jcl = "//S1  EXEC PGM=IEFBR14\n//DD1   DD DSN=My.Dataset,DISP=SHR\n"
         events = analyze_dataset_lifecycle(self._job(jcl))
         assert "MY.DATASET" in events
 
     def test_dd_without_dsn_ignored(self):
-        jcl = (
-            "//S1  EXEC PGM=IEFBR14\n"
-            "//SYSOUT  DD SYSOUT=*\n"
-        )
+        jcl = "//S1  EXEC PGM=IEFBR14\n//SYSOUT  DD SYSOUT=*\n"
         events = analyze_dataset_lifecycle(self._job(jcl))
         assert events == {}
 
@@ -755,26 +746,31 @@ class TestIncludeWithJCLLIB:
 
     def test_extract_jcllib_order_no_label(self):
         from jclparser.parser import _extract_jcllib_order
+
         content = "//MYJOB JOB\n// JCLLIB ORDER=(LIB1,LIB2)\n"
         assert _extract_jcllib_order(content) == ["LIB1", "LIB2"]
 
     def test_extract_jcllib_order_with_label(self):
         from jclparser.parser import _extract_jcllib_order
+
         content = "//MYJOB JOB\n//LBL JCLLIB ORDER=(A.B,C.D)\n"
         assert _extract_jcllib_order(content) == ["A.B", "C.D"]
 
     def test_extract_jcllib_order_single_lib_no_parens(self):
         from jclparser.parser import _extract_jcllib_order
+
         content = "//MYJOB JOB\n// JCLLIB ORDER=SYS1.JCLLIB\n"
         assert _extract_jcllib_order(content) == ["SYS1.JCLLIB"]
 
     def test_extract_jcllib_order_no_jcllib_returns_empty(self):
         from jclparser.parser import _extract_jcllib_order
+
         content = "//MYJOB JOB\n//S1 EXEC PGM=IEFBR14\n"
         assert _extract_jcllib_order(content) == []
 
     def test_extract_jcllib_order_comment_line_ignored(self):
         from jclparser.parser import _extract_jcllib_order
+
         content = "//* JCLLIB ORDER=(IGNORE.ME)\n// JCLLIB ORDER=REAL.LIB\n"
         assert _extract_jcllib_order(content) == ["REAL.LIB"]
 

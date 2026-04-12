@@ -68,7 +68,9 @@ class JCLParseError(Exception):
     def _format_message(self) -> str:
         """Format error message with context information"""
         if self.line_number > 0 and self.column_number > 0:
-            return f"Line {self.line_number}, column {self.column_number}: {self.message}"
+            return (
+                f"Line {self.line_number}, column {self.column_number}: {self.message}"
+            )
         if self.line_number > 0:
             return f"Line {self.line_number}: {self.message}"
         return self.message
@@ -104,9 +106,8 @@ class UndefinedSymbolError(JCLParseError):
     ):
         self.symbol = symbol
         self.source_text = source_text
-        message = (
-            f"Undefined symbolic parameter: &{symbol}"
-            + (f" in '{source_text}'" if source_text else "")
+        message = f"Undefined symbolic parameter: &{symbol}" + (
+            f" in '{source_text}'" if source_text else ""
         )
         super().__init__(message, line_number, context)
 
@@ -163,7 +164,11 @@ class ValidationError:
 
     def __str__(self) -> str:
         """String representation of validation error"""
-        prefix = f"[{self.severity.value.upper()}] " if self.severity != ErrorSeverity.ERROR else ""
+        prefix = (
+            f"[{self.severity.value.upper()}] "
+            if self.severity != ErrorSeverity.ERROR
+            else ""
+        )
         if self.line_number:
             return f"Line {self.line_number}: {prefix}{self.message}"
         return f"{prefix}{self.message}"

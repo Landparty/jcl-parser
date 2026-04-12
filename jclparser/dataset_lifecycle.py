@@ -205,7 +205,9 @@ def validate_dataset_lifecycle(job: Job) -> List[ValidationError]:
         _first_alloc_pos: int | None = None
 
         for pos, evt in enumerate(events):
-            is_catlg = evt.disp_normal in _CATLG_VALUES or evt.disp_abnormal in _CATLG_VALUES
+            is_catlg = (
+                evt.disp_normal in _CATLG_VALUES or evt.disp_abnormal in _CATLG_VALUES
+            )
 
             if evt.action == "ALLOCATE":
                 if _first_alloc_pos is None:
@@ -248,13 +250,17 @@ def validate_dataset_lifecycle(job: Job) -> List[ValidationError]:
                 # Forward-reference check: dataset opened (OLD or SHR) before
                 # it is allocated anywhere in the job — heuristic warning because
                 # the dataset may already exist in the catalog from a prior run.
-                if evt.action in ("OPEN_EXCLUSIVE", "OPEN_SHARED") and _first_alloc_pos is None:
+                if (
+                    evt.action in ("OPEN_EXCLUSIVE", "OPEN_SHARED")
+                    and _first_alloc_pos is None
+                ):
                     has_later_alloc = any(
-                        e.action == "ALLOCATE"
-                        for e in events[pos + 1:]
+                        e.action == "ALLOCATE" for e in events[pos + 1 :]
                     )
                     if has_later_alloc:
-                        disp_label = "DISP=OLD" if evt.action == "OPEN_EXCLUSIVE" else "DISP=SHR"
+                        disp_label = (
+                            "DISP=OLD" if evt.action == "OPEN_EXCLUSIVE" else "DISP=SHR"
+                        )
                         errors.append(
                             ValidationError(
                                 f"Dataset '{dsn}' opened {disp_label} in step "
@@ -268,7 +274,10 @@ def validate_dataset_lifecycle(job: Job) -> List[ValidationError]:
                         )
 
             # Track uncatalog dispositions
-            if evt.disp_normal in _UNCATLG_VALUES or evt.disp_abnormal in _UNCATLG_VALUES:
+            if (
+                evt.disp_normal in _UNCATLG_VALUES
+                or evt.disp_abnormal in _UNCATLG_VALUES
+            ):
                 _uncatalog_steps.append(pos)
             elif evt.disp_normal in _DELETE_VALUES:
                 # DELETE resets the active-catalog count for subsequent steps

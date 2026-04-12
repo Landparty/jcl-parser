@@ -11,7 +11,15 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any, IO
-from .model import Job, Step, DDStatement, Statement, ConditionalBlock, Procedure, OutputStatement
+from .model import (
+    Job,
+    Step,
+    DDStatement,
+    Statement,
+    ConditionalBlock,
+    Procedure,
+    OutputStatement,
+)
 from .errors import (
     JCLSyntaxError,
     JCLValidationError,
@@ -30,6 +38,7 @@ from .utils import (
 from .continuation_handler import ContinuationLineHandler
 from .condition_parser import parse_condition
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from .include_loader import IncludeMemberLoader
 
@@ -107,6 +116,7 @@ def parse_jcl(
     # Expand INCLUDE MEMBER= statements before the main parse loop so that
     # inlined content participates in continuation-line merging and everything
     # else that follows.
+    _expanded_includes: list[str] = []
     if _has_include_statement(content):
         from .include_loader import resolve_includes, JCLLIBMemberLoader
 
@@ -117,7 +127,12 @@ def parse_jcl(
         # ORDER values spread across continuation lines are not picked up here
         # (those are rare in practice).
         jcllib_libs = _extract_jcllib_order(content) or None
-        content = resolve_includes(content, loader=include_loader, libraries=jcllib_libs)
+        content = resolve_includes(
+            content,
+            loader=include_loader,
+            libraries=jcllib_libs,
+            _collected=_expanded_includes,
+        )
 
     # Parse the content
     raw_lines = content.splitlines()
@@ -532,6 +547,13 @@ def parse_jcl(
                         "Each DD must belong to a step."
                     )
 
+    # Record any INCLUDE members that were expanded during pre-processing.
+    # Members resolved before the main parse loop never reach the INCLUDE
+    # handler in the loop, so we add them here to keep job.includes complete.
+    for _member in _expanded_includes:
+        if _member not in job.includes:
+            job.includes.append(_member)
+
     # Validate the parsed job if in strict mode
     if strict_mode:
         validation_errors = job.validate()
@@ -861,8 +883,8 @@ def _check_param_balance(param_string: str, line_number: int) -> None:
     """
     in_quotes = False
     paren_depth = 0
-    quote_open_col: int = 0      # 1-based column of the unclosed opening quote
-    paren_open_cols: list = []   # stack of 1-based columns for open parens
+    quote_open_col: int = 0  # 1-based column of the unclosed opening quote
+    paren_open_cols: list = []  # stack of 1-based columns for open parens
     i = 0
     while i < len(param_string):
         c = param_string[i]
@@ -1070,7 +1092,7 @@ def _extract_jcllib_order(content: str) -> list[str]:
         order_idx = upper_params.find("ORDER=")
         if order_idx == -1:
             continue
-        rest = params_part[order_idx + 6:].strip()
+        rest = params_part[order_idx + 6 :].strip()
         # Strip surrounding parentheses if present
         if rest.startswith("("):
             end = rest.find(")")

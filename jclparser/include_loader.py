@@ -157,6 +157,7 @@ def resolve_includes(
     libraries: list[str] | None = None,
     max_depth: int = 8,
     _depth: int = 0,
+    _collected: "list[str] | None" = None,
 ) -> str:
     """
     Expand ``// INCLUDE MEMBER=name`` statements by inlining member content.
@@ -174,27 +175,37 @@ def resolve_includes(
         loader: Member loader used to fetch included content.
         libraries: JCLLIB library names passed to the loader.
         max_depth: Maximum recursion depth for nested INCLUDEs.
+            Expansion stops when ``_depth >= max_depth``.
         _depth: Current recursion depth (internal — do not pass).
+        _collected: If provided, member names that were successfully
+            expanded are appended to this list (internal — callers may
+            pass an empty list to collect all resolved member names).
 
     Returns:
         JCL text with all resolvable INCLUDE statements expanded.
     """
-    if _depth > max_depth:
+    if _depth >= max_depth:
         return content
 
     result: list[str] = []
     for line in content.splitlines(keepends=True):
-        stripped = line.strip()
-        member = _extract_include_member(stripped)
+        # Preserve leading whitespace: only strip the line terminator so that
+        # in-stream data lines (which may contain '//' after leading spaces)
+        # are never mistaken for JCL statements.
+        statement_line = line.rstrip("\r\n")
+        member = _extract_include_member(statement_line)
         if member is not None:
             member_content = loader.load_member(member, libraries)
             if member_content is not None:
+                if _collected is not None:
+                    _collected.append(member)
                 expanded = resolve_includes(
                     member_content,
                     loader=loader,
                     libraries=libraries,
                     max_depth=max_depth,
                     _depth=_depth + 1,
+                    _collected=_collected,
                 )
                 # Ensure the inlined content ends with a newline
                 if not expanded.endswith("\n"):
@@ -260,7 +271,7 @@ def _extract_include_member(line: str) -> str | None:
     if member_idx == -1:
         return None
 
-    name_part = params_part[member_idx + 7:].strip()
+    name_part = params_part[member_idx + 7 :].strip()
     # Strip optional surrounding parentheses
     if name_part.startswith("("):
         name_part = name_part[1:]
