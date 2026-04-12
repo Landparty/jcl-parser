@@ -1025,7 +1025,7 @@ def _parse_list_parameter(list_content: str) -> list[str]:
 #   //LABEL INCLUDE ... (label present, INCLUDE is the operation token)
 # The word boundary \b ensures we don't match partial tokens like INCLUDES.
 _RE_HAS_INCLUDE = re.compile(
-    r"^//(?:[^\s*/][^\s]*\s+|\s+)?INCLUDE\b",
+    r"^\s*//(?:[^\s*/][^\s]*\s+|\s+)?INCLUDE\b",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -1044,9 +1044,9 @@ def _extract_jcllib_order(content: str) -> list[str]:
     """
     libraries: list[str] = []
     for line in content.splitlines():
+        line = line.lstrip()
         if not line.startswith("//") or line.startswith("//*"):
             continue
-        upper = line.upper()
         # Detect JCLLIB operation token (same token-match approach as INCLUDE)
         statement = line[2:]
         stripped = statement.lstrip()

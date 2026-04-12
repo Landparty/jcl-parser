@@ -30,7 +30,7 @@ Usage::
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List
 
 from .model import Job, iter_execution_steps
@@ -71,7 +71,6 @@ class DatasetEvent:
 # DISP parsing helpers
 # ---------------------------------------------------------------------------
 
-_VALID_STATUS = frozenset({"NEW", "OLD", "SHR", "MOD"})
 _CATLG_VALUES = frozenset({"CATLG", "CATALOG"})
 _DELETE_VALUES = frozenset({"DELETE"})
 _UNCATLG_VALUES = frozenset({"UNCATLG"})
@@ -225,6 +224,7 @@ def validate_dataset_lifecycle(job: Job) -> List[ValidationError]:
                                 f"an intervening DELETE or UNCATLG",
                                 ErrorType.VALIDATION_ERROR,
                                 severity=ErrorSeverity.WARNING,
+                                line_number=evt.line_number,
                             )
                         )
                     _catalog_steps.append(pos)
@@ -241,6 +241,7 @@ def validate_dataset_lifecycle(job: Job) -> List[ValidationError]:
                             f"'{last_uncatlg_evt.step_name}'",
                             ErrorType.VALIDATION_ERROR,
                             severity=ErrorSeverity.WARNING,
+                            line_number=evt.line_number,
                         )
                     )
 
@@ -262,6 +263,7 @@ def validate_dataset_lifecycle(job: Job) -> List[ValidationError]:
                                 f"exists in the catalog",
                                 ErrorType.VALIDATION_ERROR,
                                 severity=ErrorSeverity.WARNING,
+                                line_number=evt.line_number,
                             )
                         )
 

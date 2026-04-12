@@ -9,7 +9,6 @@ Tests for the six new parser features:
 6. Cross-step dataset lifecycle tracking
 """
 
-import pytest
 from jclparser import parse_jcl
 from jclparser.condition_parser import parse_condition, ReturnCodeCondition, AbendCondition, RunCondition
 from jclparser.include_loader import DictMemberLoader, resolve_includes, _extract_include_member

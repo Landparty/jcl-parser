@@ -114,10 +114,14 @@ class JCLLIBMemberLoader(IncludeMemberLoader):
         libraries: list[str] | None = None,
     ) -> str | None:
         """Search libraries in order and return the first matching member."""
+        base_resolved = self._base.resolve()
         candidates = self._candidate_paths(member_name, libraries)
         for path in candidates:
             try:
-                return path.read_text(encoding="utf-8", errors="replace")
+                resolved = path.resolve()
+                if not resolved.is_relative_to(base_resolved):
+                    continue
+                return resolved.read_text(encoding="utf-8", errors="replace")
             except (OSError, PermissionError):
                 continue
         return None
