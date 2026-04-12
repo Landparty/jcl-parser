@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, IO
-from .model import Job, Step, DDStatement, Statement, ConditionalBlock, Procedure
+from .model import Job, Step, DDStatement, Statement, ConditionalBlock, Procedure, OutputStatement
 from .errors import (
     JCLSyntaxError,
     JCLValidationError,
@@ -68,6 +68,7 @@ def parse_jcl(
     config: ParserConfig | None = None,
     proc_base_path: str | Path | None = None,
     enable_external_procs: bool = True,
+    include_loader=None,
 ) -> Job:
     """
     Parse JCL script from various input sources into structured Job object.
@@ -79,6 +80,11 @@ def parse_jcl(
         proc_base_path: Base directory for external PROC libraries
                        (defaults to JCL_PROCLIB_PATH env var or current directory)
         enable_external_procs: Enable loading PROCs from file system via JCLLIB ORDER
+        include_loader: Optional :class:`~jclparser.include_loader.IncludeMemberLoader`
+            used to resolve ``INCLUDE MEMBER=name`` statements before parsing.
+            When ``None`` (the default) a :class:`~jclparser.include_loader.JCLLIBMemberLoader`
+            pointing at *proc_base_path* is created automatically, but only if
+            INCLUDE statements are actually found in the source.
 
     Returns:
         Job object representing parsed JCL structure
@@ -93,6 +99,20 @@ def parse_jcl(
         content = read_source(source)
     except FileNotFoundError:
         raise
+
+    # Expand INCLUDE MEMBER= statements before the main parse loop so that
+    # inlined content participates in continuation-line merging and everything
+    # else that follows.
+    if _has_include_statement(content):
+        from .include_loader import resolve_includes, JCLLIBMemberLoader
+
+        if include_loader is None:
+            include_loader = JCLLIBMemberLoader(base_path=proc_base_path)
+        # We don't know the JCLLIB order yet (it's parsed below), so pass None
+        # here.  A second pass with the known JCLLIB order would be needed for
+        # correct library-scoped INCLUDE resolution; that is deferred to a
+        # future enhancement.  For now, the loader searches its base path.
+        content = resolve_includes(content, loader=include_loader)
 
     # Parse the content
     raw_lines = content.splitlines()
@@ -253,8 +273,13 @@ def parse_jcl(
                 current_dd = _create_dd_from_statement(stmt)
 
                 if current_step is None:
-                    # Store as orphaned DD to be attached to next step
-                    orphaned_dds.append(current_dd)
+                    # JOBLIB is a special job-level DD: keep it separate so
+                    # job.joblib and job.get_library_search_order() can expose it.
+                    if stmt.name == "JOBLIB" and job is not None:
+                        job.joblib_dds.append(current_dd)
+                    else:
+                        # Store as orphaned DD to be attached to next step
+                        orphaned_dds.append(current_dd)
                 elif stmt.name and "." in stmt.name:
                     # This is a DD override for a procedure step
                     parts = stmt.name.split(".", 1)  # Split on first dot only
@@ -388,9 +413,9 @@ def parse_jcl(
                     job.jes_statements.append(jes_content)
 
             elif stmt.type == "OUTPUT":
-                # OUTPUT statement - JES output descriptor
+                # OUTPUT statement - JES output descriptor; promote to typed model
                 if job:
-                    job.output_statements.append(stmt)
+                    job.output_statements.append(OutputStatement.from_statement(stmt))
 
             elif stmt.type == "NULL":
                 # NULL statement (//) - just ignore, used as delimiter
@@ -980,6 +1005,16 @@ def _parse_list_parameter(list_content: str) -> list[str]:
         items.pop()
 
     return items
+
+
+def _has_include_statement(content: str) -> bool:
+    """Return True if *content* contains at least one INCLUDE statement.
+
+    Fast pre-check so the overhead of the include-resolution pass is avoided
+    for the vast majority of JCL that contains no INCLUDEs.
+    """
+    upper = content.upper()
+    return " INCLUDE " in upper or "\tINCLUDE " in upper
 
 
 def _create_job_from_statement(stmt: Statement) -> Job:

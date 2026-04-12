@@ -100,8 +100,12 @@ def validate_job_structure(job: Job) -> List[ValidationError]:
     for step in flat_steps:
         errors.extend(validate_step_structure(step))
 
-    # Validate data dependencies
+    # Validate data dependencies (temp dataset creation/use order)
     errors.extend(validate_data_dependencies(job))
+
+    # Validate cross-step permanent dataset lifecycle (duplicate alloc, use-after-uncatalog, etc.)
+    from .dataset_lifecycle import validate_dataset_lifecycle
+    errors.extend(validate_dataset_lifecycle(job))
 
     return errors
 

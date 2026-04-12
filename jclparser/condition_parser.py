@@ -15,7 +15,8 @@ Grammar (simplified)::
     atom       := step_ref 'RC' op integer
                |  step_ref 'ABEND'
                |  step_ref 'RUN'
-    step_ref   := IDENTIFIER '.'   (optional — omitted means "last step")
+    step_ref   := IDENTIFIER '.'                  (optional — omitted means "last step")
+               |  IDENTIFIER '.' IDENTIFIER '.'   (qualified after PROC explosion)
     op         := EQ | NE | LT | GT | LE | GE | = | ¬= | ^= | ~= | != | <> | < | > | <= | >=
 
 Usage::
@@ -350,14 +351,22 @@ class _Parser:
             return node
 
         # Atom: [STEPNAME.]RC op value | [STEPNAME.]ABEND | [STEPNAME.]RUN
+        # Three-level form: PROCSTEP.INNERSTEP.RC  (qualified step reference
+        # produced after PROC explosion; "PROCSTEP.INNERSTEP" is used as the
+        # step-name key in step_results).
         token = self._consume()
         step_name: str | None = None
         attr: str
 
         if "." in token:
-            dot = token.index(".")
-            step_name = token[:dot].upper()
-            attr = token[dot + 1 :].upper()
+            parts = token.split(".", 2)  # at most 3 parts
+            if len(parts) == 3:
+                # Three-level: OUTERST.INNERST.ATTR
+                step_name = f"{parts[0]}.{parts[1]}".upper()
+                attr = parts[2].upper()
+            else:
+                step_name = parts[0].upper()
+                attr = parts[1].upper()
         else:
             attr = token.upper()
 
