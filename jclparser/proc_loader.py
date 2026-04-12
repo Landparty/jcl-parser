@@ -251,8 +251,11 @@ class JCLLIBProcedureLoader(ProcedureLoader):
             # This is a simplified approach - real z/OS might differ
             if job.steps:
                 return Procedure(
-                    name=proc_name, parameters={}, steps=job.steps,
-                    line_number=0, is_external=True,
+                    name=proc_name,
+                    parameters={},
+                    steps=job.steps,
+                    line_number=0,
+                    is_external=True,
                 )
 
         except (JCLSyntaxError, JCLValidationError, OSError, ValueError):

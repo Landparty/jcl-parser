@@ -330,9 +330,7 @@ class TestParseProcedureFileEdgeCases:
             lib = base / "LIB"
             lib.mkdir()
             proc_file = lib / "ISJOB.jcl"
-            proc_file.write_text(
-                "//ISJOB JOB CLASS=A\n//STEP1 EXEC PGM=IEFBR14\n"
-            )
+            proc_file.write_text("//ISJOB JOB CLASS=A\n//STEP1 EXEC PGM=IEFBR14\n")
 
             loader = JCLLIBProcedureLoader(base_path=base)
             proc = loader.load_procedure("ISJOB", ["LIB"])
@@ -345,9 +343,7 @@ class TestParseProcedureFileEdgeCases:
             lib = base / "LIB"
             lib.mkdir()
             proc_file = lib / "MYPROC.jcl"
-            proc_file.write_text(
-                "//OTHERPROC PROC\n//S1 EXEC PGM=IEFBR14\n//PEND\n"
-            )
+            proc_file.write_text("//OTHERPROC PROC\n//S1 EXEC PGM=IEFBR14\n//PEND\n")
 
             loader = JCLLIBProcedureLoader(base_path=base)
             proc = loader.load_procedure("MYPROC", ["LIB"])

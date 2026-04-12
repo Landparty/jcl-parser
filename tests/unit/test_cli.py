@@ -824,7 +824,9 @@ class TestCLIProcs:
 
     def test_list_available_json(self, capsys):
         proclibs = str(FIXTURES / "proclibs")
-        rc = main([SORT_JCL, "procs", "--proc-path", proclibs, "--list-available", "--json"])
+        rc = main(
+            [SORT_JCL, "procs", "--proc-path", proclibs, "--list-available", "--json"]
+        )
         assert rc == 0
         data = json.loads(capsys.readouterr().out)
         assert isinstance(data, dict)

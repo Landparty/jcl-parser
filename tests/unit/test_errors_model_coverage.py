@@ -148,17 +148,20 @@ class TestJobGetSysinStatements:
 # Tests for the fixes added in review-improvements pass
 # ---------------------------------------------------------------------------
 
+
 class TestJCLParseErrorColumnNumber:
     """JCLParseError must carry and format a column_number."""
 
     def test_column_included_in_str_when_set(self):
         from jclparser.errors import JCLSyntaxError
+
         err = JCLSyntaxError("bad param", line_number=5, column_number=12)
         assert "column 12" in str(err)
         assert "Line 5" in str(err)
 
     def test_no_column_when_zero(self):
         from jclparser.errors import JCLSyntaxError
+
         err = JCLSyntaxError("bad param", line_number=5)
         assert "column" not in str(err)
 
@@ -167,6 +170,7 @@ class TestJCLParseErrorColumnNumber:
         from jclparser.parser import _check_param_balance
         from jclparser.errors import JCLSyntaxError
         import pytest
+
         with pytest.raises(JCLSyntaxError) as exc_info:
             _check_param_balance("DSN='MY.FILE", line_number=10)
         err = exc_info.value
@@ -179,6 +183,7 @@ class TestJCLParseErrorColumnNumber:
         from jclparser.parser import _check_param_balance
         from jclparser.errors import JCLSyntaxError
         import pytest
+
         with pytest.raises(JCLSyntaxError) as exc_info:
             _check_param_balance("SPACE=(CYL,(10,5)", line_number=3)
         err = exc_info.value
@@ -190,18 +195,21 @@ class TestValidationErrorSeverity:
 
     def test_default_severity_is_error(self):
         from jclparser.errors import ValidationError, ErrorSeverity
+
         err = ValidationError("something wrong")
         assert err.severity == ErrorSeverity.ERROR
         assert not err.is_warning
 
     def test_warning_severity(self):
         from jclparser.errors import ValidationError, ErrorSeverity
+
         warn = ValidationError("advisory issue", severity=ErrorSeverity.WARNING)
         assert warn.severity == ErrorSeverity.WARNING
         assert warn.is_warning
 
     def test_warning_str_includes_label(self):
         from jclparser.errors import ValidationError, ErrorSeverity
+
         warn = ValidationError("dup dd", severity=ErrorSeverity.WARNING)
         assert "WARNING" in str(warn).upper()
 
@@ -209,6 +217,7 @@ class TestValidationErrorSeverity:
         """Duplicate DD names in a step produce a WARNING, not an ERROR."""
         from jclparser.parser import parse_jcl
         from jclparser.errors import ErrorSeverity
+
         jcl = """\
 //MYJOB   JOB CLASS=A
 //STEP1   EXEC PGM=IEFBR14
@@ -227,6 +236,7 @@ class TestUndefinedSymbolErrorContext:
 
     def test_source_text_in_message(self):
         from jclparser.errors import UndefinedSymbolError
+
         err = UndefinedSymbolError("MYPGM", source_text="PGM=&MYPGM")
         assert "&MYPGM" in err.message
         assert "PGM=&MYPGM" in err.message
@@ -236,6 +246,7 @@ class TestUndefinedSymbolErrorContext:
         from jclparser.explosion import substitute_symbols, SymbolScope
         from jclparser.errors import UndefinedSymbolError
         import pytest
+
         scope = SymbolScope()
         with pytest.raises(UndefinedSymbolError) as exc_info:
             substitute_symbols("PGM=&MISSING", scope, strict=True)
@@ -247,6 +258,7 @@ class TestExplosionMaxSteps:
 
     def test_max_steps_not_exceeded(self):
         from jclparser.parser import parse_jcl
+
         jcl = """\
 //MYJOB   JOB CLASS=A
 //MYPROC  PROC
@@ -264,6 +276,7 @@ class TestExplosionMaxSteps:
         from jclparser.parser import parse_jcl
         from jclparser.errors import JCLStructureError
         import pytest
+
         jcl = """\
 //MYJOB   JOB CLASS=A
 //MYPROC  PROC
@@ -281,6 +294,7 @@ class TestExplosionMaxSteps:
 
     def test_zero_max_steps_means_unlimited(self):
         from jclparser.parser import parse_jcl
+
         jcl = """\
 //MYJOB   JOB CLASS=A
 //MYPROC  PROC
