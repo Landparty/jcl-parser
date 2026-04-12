@@ -17,6 +17,127 @@ if TYPE_CHECKING:
 
 
 @dataclass
+class OutputStatement:
+    """
+    Represents an OUTPUT JCL statement.
+
+    OUTPUT statements define JES output descriptors that control how job
+    output is printed or routed. They are referenced by DD statements via
+    ``OUTPUT=(name,...)``.
+
+    Attributes:
+        name: OUTPUT statement name (referenced by DD OUTPUT= parameter)
+        parameters: Raw parameter dictionary (all OUTPUT parameters)
+        line_number: Source line number
+        type: Always ``"OUTPUT"`` — kept for compatibility with generic Statement access
+    """
+
+    name: str
+    parameters: dict[str, Any] = field(default_factory=dict)
+    line_number: int = 0
+    type: str = field(default="OUTPUT", init=False, repr=False)
+
+    @property
+    def dest(self) -> str | None:
+        """Output destination (DEST= parameter)."""
+        return self.parameters.get("DEST")
+
+    @property
+    def output_class(self) -> str | None:
+        """Spool output class (CLASS= parameter)."""
+        return self.parameters.get("CLASS")
+
+    @property
+    def copies(self) -> int | None:
+        """Number of copies to print (COPIES= parameter)."""
+        val = self.parameters.get("COPIES")
+        try:
+            return int(val) if val is not None else None
+        except (ValueError, TypeError):
+            return None
+
+    @property
+    def forms(self) -> str | None:
+        """Forms name (FORMS= parameter)."""
+        return self.parameters.get("FORMS")
+
+    @property
+    def writer(self) -> str | None:
+        """External writer name (WRITER= parameter)."""
+        return self.parameters.get("WRITER")
+
+    @property
+    def prty(self) -> int | None:
+        """Output priority (PRTY= parameter)."""
+        val = self.parameters.get("PRTY")
+        try:
+            return int(val) if val is not None else None
+        except (ValueError, TypeError):
+            return None
+
+    @property
+    def jesds(self) -> str | None:
+        """JES data set (JESDS= parameter: ALL, LOG, JCL, MSG)."""
+        return self.parameters.get("JESDS")
+
+    @property
+    def outlim(self) -> int | None:
+        """Output line limit (OUTLIM= parameter)."""
+        val = self.parameters.get("OUTLIM")
+        try:
+            return int(val) if val is not None else None
+        except (ValueError, TypeError):
+            return None
+
+    @property
+    def recfm(self) -> str | None:
+        """Record format for output data set (RECFM= parameter)."""
+        return self.parameters.get("RECFM")
+
+    @property
+    def lrecl(self) -> int | None:
+        """Logical record length (LRECL= parameter)."""
+        val = self.parameters.get("LRECL")
+        try:
+            return int(val) if val is not None else None
+        except (ValueError, TypeError):
+            return None
+
+    @property
+    def chars(self) -> str | list | None:
+        """Character arrangement table (CHARS= parameter)."""
+        return self.parameters.get("CHARS")
+
+    @property
+    def fcb(self) -> str | None:
+        """Forms control buffer (FCB= parameter)."""
+        return self.parameters.get("FCB")
+
+    @property
+    def flash(self) -> str | list | None:
+        """Overlay flash name (FLASH= parameter)."""
+        return self.parameters.get("FLASH")
+
+    @property
+    def index(self) -> int | None:
+        """Horizontal position index (INDEX= parameter)."""
+        val = self.parameters.get("INDEX")
+        try:
+            return int(val) if val is not None else None
+        except (ValueError, TypeError):
+            return None
+
+    @classmethod
+    def from_statement(cls, stmt: "Statement") -> "OutputStatement":
+        """Create an OutputStatement from a generic Statement object."""
+        return cls(
+            name=stmt.name,
+            parameters=stmt.parameters,
+            line_number=stmt.line_number,
+        )
+
+
+@dataclass
 class Parameter:
     """
     Represents a parsed parameter with type awareness.
@@ -350,6 +471,36 @@ class Step:
         """Return the SYSIN DD statement for this step, or None if not present."""
         return self.get_dd("SYSIN")
 
+    @property
+    def steplib(self) -> list[str]:
+        """Dataset names in the STEPLIB concatenation for this step, in order.
+
+        STEPLIB overrides the job-level JOBLIB for program loading.  Returns
+        the ordered list of DSN strings; empty list if no STEPLIB is defined
+        on this step.
+
+        Handles DD concatenation: empty-name ``//  DD DSN=...`` cards that
+        immediately follow the ``//STEPLIB DD`` card are included as part of
+        the concatenation until the next named DD is encountered.
+
+        Example::
+
+            step.steplib  # ['USER.LOADLIB', 'SYS2.LOADLIB']
+        """
+        datasets: list[str] = []
+        in_steplib = False
+
+        for dd in self.dd_statements:
+            if dd.name == "STEPLIB":
+                in_steplib = True
+            elif dd.name:
+                in_steplib = False
+
+            if in_steplib and dd.dataset_name:
+                datasets.append(dd.dataset_name)
+
+        return datasets
+
     def get_input_datasets(self) -> list[str]:
         """Get all input dataset names"""
         datasets = []
@@ -456,7 +607,8 @@ class Job:
     explosion_audit: list[Any] = field(default_factory=list)
     explosion_map: dict[str, Any] = field(default_factory=dict)
     jes_statements: list[str] = field(default_factory=list)
-    output_statements: list[Statement] = field(default_factory=list)
+    output_statements: list[OutputStatement] = field(default_factory=list)
+    joblib_dds: list[DDStatement] = field(default_factory=list)
 
     def add_step(self, step: Step | ConditionalBlock) -> None:
         """Add an execution step to this job"""
@@ -557,6 +709,124 @@ class Job:
         )
 
     # JOB Parameter Properties (KISS - simple accessors)
+
+    # ── JOB statement typed parameter accessors ──────────────────────────────
+
+    @property
+    def notify(self) -> str | None:
+        """User or group to notify on job completion (NOTIFY= parameter)."""
+        return self.parameters.get("NOTIFY")
+
+    @property
+    def typrun(self) -> str | None:
+        """Type of run (TYPRUN=SCAN|HOLD|JCLHOLD|COPY|RUN).
+
+        Common values:
+        * ``SCAN``    — syntax-check only, do not execute
+        * ``HOLD``    — hold in queue until released
+        * ``JCLHOLD`` — hold after JCL conversion
+        """
+        return self.parameters.get("TYPRUN")
+
+    @property
+    def restart(self) -> str | None:
+        """Step name at which to restart the job (RESTART= parameter).
+
+        ``*`` means restart from the beginning.
+        """
+        return self.parameters.get("RESTART")
+
+    @property
+    def msgclass(self) -> str | None:
+        """Output class for job log messages (MSGCLASS= parameter)."""
+        return self.parameters.get("MSGCLASS")
+
+    @property
+    def job_class(self) -> str | None:
+        """Job execution class (CLASS= parameter).
+
+        Named ``job_class`` to avoid shadowing the Python built-in ``class``.
+        """
+        return self.parameters.get("CLASS")
+
+    @property
+    def prty(self) -> int | None:
+        """Job dispatching priority, 0–15 (PRTY= parameter)."""
+        val = self.parameters.get("PRTY")
+        try:
+            return int(val) if val is not None else None
+        except (ValueError, TypeError):
+            return None
+
+    @property
+    def time(self) -> str | list | None:
+        """CPU time limit for the job (TIME= parameter).
+
+        May be a string (e.g. ``"1440"``) or a list (e.g. ``["2", "30"]``
+        for 2 minutes and 30 seconds), depending on how the JCL was written.
+        """
+        return self.parameters.get("TIME")
+
+    @property
+    def region(self) -> str | None:
+        """Region size for the job (REGION= parameter, e.g. ``"4M"``)."""
+        return self.parameters.get("REGION")
+
+    @property
+    def msglevel(self) -> list | str | None:
+        """Message level controlling what appears in the job log (MSGLEVEL= parameter).
+
+        Typically a two-element list ``[statements, messages]``, e.g. ``["1", "1"]``.
+        """
+        return self.parameters.get("MSGLEVEL")
+
+    @property
+    def cond(self) -> list | str | None:
+        """Job-level COND parameter used to bypass or flush remaining steps."""
+        return self.parameters.get("COND")
+
+    # ── JOBLIB helpers ────────────────────────────────────────────────────────
+
+    @property
+    def joblib(self) -> list[str]:
+        """Dataset names in the JOBLIB concatenation, in order.
+
+        JOBLIB defines the load-module library search path used by all steps
+        that do not specify their own STEPLIB.  Returns the ordered list of
+        DSN strings; empty list if no JOBLIB was defined.
+
+        Example::
+
+            job.joblib  # ['SYS2.LOADLIB', 'USER.LOADLIB']
+        """
+        return [dd.dataset_name for dd in self.joblib_dds if dd.dataset_name]
+
+    def get_library_search_order(self, step_name: str) -> list[str]:
+        """Return the effective program-library search order for a step.
+
+        STEPLIB, when present on a step, overrides JOBLIB entirely — just as
+        it does on the mainframe.  If the step has no STEPLIB, the job's
+        JOBLIB concatenation is returned.  If neither is defined, returns an
+        empty list.
+
+        Args:
+            step_name: Name of the step to query.
+
+        Returns:
+            Ordered list of dataset names that would be searched for
+            load modules when the step executes.
+
+        Example::
+
+            order = job.get_library_search_order("STEP1")
+            # ['STEP1.LOADLIB'] if STEPLIB present, else job.joblib
+        """
+        step = self.get_step(step_name)
+        if step is not None:
+            sl = step.steplib
+            if sl:
+                return sl
+        return list(self.joblib)
 
     @property
     def bytes_limit(self) -> int | list | None:

@@ -8,9 +8,18 @@ and plugin extensibility.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, IO
-from .model import Job, Step, DDStatement, Statement, ConditionalBlock, Procedure
+from .model import (
+    Job,
+    Step,
+    DDStatement,
+    Statement,
+    ConditionalBlock,
+    Procedure,
+    OutputStatement,
+)
 from .errors import (
     JCLSyntaxError,
     JCLValidationError,
@@ -28,6 +37,10 @@ from .utils import (
 )
 from .continuation_handler import ContinuationLineHandler
 from .condition_parser import parse_condition
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .include_loader import IncludeMemberLoader
 
 #: All recognised JCL statement type keywords (single canonical definition).
 _STATEMENT_TYPES: frozenset = frozenset(
@@ -68,6 +81,7 @@ def parse_jcl(
     config: ParserConfig | None = None,
     proc_base_path: str | Path | None = None,
     enable_external_procs: bool = True,
+    include_loader: "IncludeMemberLoader | None" = None,
 ) -> Job:
     """
     Parse JCL script from various input sources into structured Job object.
@@ -79,6 +93,11 @@ def parse_jcl(
         proc_base_path: Base directory for external PROC libraries
                        (defaults to JCL_PROCLIB_PATH env var or current directory)
         enable_external_procs: Enable loading PROCs from file system via JCLLIB ORDER
+        include_loader: Optional :class:`~jclparser.include_loader.IncludeMemberLoader`
+            used to resolve ``INCLUDE MEMBER=name`` statements before parsing.
+            When ``None`` (the default) a :class:`~jclparser.include_loader.JCLLIBMemberLoader`
+            pointing at *proc_base_path* is created automatically, but only if
+            INCLUDE statements are actually found in the source.
 
     Returns:
         Job object representing parsed JCL structure
@@ -93,6 +112,27 @@ def parse_jcl(
         content = read_source(source)
     except FileNotFoundError:
         raise
+
+    # Expand INCLUDE MEMBER= statements before the main parse loop so that
+    # inlined content participates in continuation-line merging and everything
+    # else that follows.
+    _expanded_includes: list[str] = []
+    if _has_include_statement(content):
+        from .include_loader import resolve_includes, JCLLIBMemberLoader
+
+        if include_loader is None:
+            include_loader = JCLLIBMemberLoader(base_path=proc_base_path)
+        # Pre-scan the raw content for JCLLIB ORDER so the loader can search
+        # the correct libraries.  This is a best-effort single-line scan;
+        # ORDER values spread across continuation lines are not picked up here
+        # (those are rare in practice).
+        jcllib_libs = _extract_jcllib_order(content) or None
+        content = resolve_includes(
+            content,
+            loader=include_loader,
+            libraries=jcllib_libs,
+            _collected=_expanded_includes,
+        )
 
     # Parse the content
     raw_lines = content.splitlines()
@@ -174,6 +214,7 @@ def parse_jcl(
     current_procedure = None  # Track when we're inside a PROC/PEND block
     current_delimiter = "/*"
     orphaned_dds = []  # Track DDs that appear before first EXEC
+    in_joblib_concat = False  # True while accumulating JOBLIB concatenation lines
 
     for line, line_num in merged_lines:
         try:
@@ -230,6 +271,7 @@ def parse_jcl(
                     )
 
                 current_step = _create_step_from_statement(stmt)
+                in_joblib_concat = False  # JOBLIB concatenation ends at first EXEC
 
                 # Attach any orphaned DDs to this first step
                 if orphaned_dds:
@@ -253,8 +295,18 @@ def parse_jcl(
                 current_dd = _create_dd_from_statement(stmt)
 
                 if current_step is None:
-                    # Store as orphaned DD to be attached to next step
-                    orphaned_dds.append(current_dd)
+                    # JOBLIB is a special job-level DD: keep it separate so
+                    # job.joblib and job.get_library_search_order() can expose it.
+                    if stmt.name == "JOBLIB" and job is not None:
+                        job.joblib_dds.append(current_dd)
+                        in_joblib_concat = True
+                    elif not stmt.name and in_joblib_concat and job is not None:
+                        # Empty-name DD concatenating onto the JOBLIB group
+                        job.joblib_dds.append(current_dd)
+                    else:
+                        in_joblib_concat = False
+                        # Store as orphaned DD to be attached to next step
+                        orphaned_dds.append(current_dd)
                 elif stmt.name and "." in stmt.name:
                     # This is a DD override for a procedure step
                     parts = stmt.name.split(".", 1)  # Split on first dot only
@@ -388,9 +440,9 @@ def parse_jcl(
                     job.jes_statements.append(jes_content)
 
             elif stmt.type == "OUTPUT":
-                # OUTPUT statement - JES output descriptor
+                # OUTPUT statement - JES output descriptor; promote to typed model
                 if job:
-                    job.output_statements.append(stmt)
+                    job.output_statements.append(OutputStatement.from_statement(stmt))
 
             elif stmt.type == "NULL":
                 # NULL statement (//) - just ignore, used as delimiter
@@ -494,6 +546,13 @@ def parse_jcl(
                         "DD statement found before any EXEC step. "
                         "Each DD must belong to a step."
                     )
+
+    # Record any INCLUDE members that were expanded during pre-processing.
+    # Members resolved before the main parse loop never reach the INCLUDE
+    # handler in the loop, so we add them here to keep job.includes complete.
+    for _member in _expanded_includes:
+        if _member not in job.includes:
+            job.includes.append(_member)
 
     # Validate the parsed job if in strict mode
     if strict_mode:
@@ -824,8 +883,8 @@ def _check_param_balance(param_string: str, line_number: int) -> None:
     """
     in_quotes = False
     paren_depth = 0
-    quote_open_col: int = 0      # 1-based column of the unclosed opening quote
-    paren_open_cols: list = []   # stack of 1-based columns for open parens
+    quote_open_col: int = 0  # 1-based column of the unclosed opening quote
+    paren_open_cols: list = []  # stack of 1-based columns for open parens
     i = 0
     while i < len(param_string):
         c = param_string[i]
@@ -980,6 +1039,83 @@ def _parse_list_parameter(list_content: str) -> list[str]:
         items.pop()
 
     return items
+
+
+# Matches any of:
+#   // INCLUDE ...      (no label, spaces before INCLUDE)
+#   //INCLUDE ...       (no label, no space — INCLUDE starts right after //)
+#   //LABEL INCLUDE ... (label present, INCLUDE is the operation token)
+# The word boundary \b ensures we don't match partial tokens like INCLUDES.
+_RE_HAS_INCLUDE = re.compile(
+    r"^\s*//(?:[^\s*/][^\s]*\s+|\s+)?INCLUDE\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _extract_jcllib_order(content: str) -> list[str]:
+    """Quick pre-scan that extracts JCLLIB ORDER library names from raw JCL.
+
+    Returns an ordered list of library names found in any ``JCLLIB ORDER=``
+    statement in *content*.  Recognises the same syntactic forms as the main
+    parser (no label, ``//JCLLIB``, and ``//LABEL JCLLIB``).
+
+    This is a best-effort single-line scan — ORDER values split across JCL
+    continuation lines are not resolved here.  The result is used to pass a
+    library list to :func:`~jclparser.include_loader.resolve_includes` before
+    the full parse begins.
+    """
+    libraries: list[str] = []
+    for line in content.splitlines():
+        line = line.lstrip()
+        if not line.startswith("//") or line.startswith("//*"):
+            continue
+        # Detect JCLLIB operation token (same token-match approach as INCLUDE)
+        statement = line[2:]
+        stripped = statement.lstrip()
+        parts = stripped.split(None, 1)
+        if not parts:
+            continue
+        first_upper = parts[0].upper()
+        if first_upper == "JCLLIB":
+            params_part = parts[1] if len(parts) > 1 else ""
+        else:
+            # Try label + JCLLIB
+            if len(parts) < 2:
+                continue
+            rest_parts = parts[1].split(None, 1)
+            if not rest_parts or rest_parts[0].upper() != "JCLLIB":
+                continue
+            params_part = rest_parts[1] if len(rest_parts) > 1 else ""
+
+        # Extract ORDER= value
+        upper_params = params_part.upper()
+        order_idx = upper_params.find("ORDER=")
+        if order_idx == -1:
+            continue
+        rest = params_part[order_idx + 6 :].strip()
+        # Strip surrounding parentheses if present
+        if rest.startswith("("):
+            end = rest.find(")")
+            rest = rest[1:end] if end != -1 else rest[1:]
+        for lib in rest.split(","):
+            lib = lib.strip()
+            if lib:
+                libraries.append(lib)
+    return libraries
+
+
+def _has_include_statement(content: str) -> bool:
+    """Return True if *content* contains at least one INCLUDE statement.
+
+    Fast pre-check so the overhead of the include-resolution pass is avoided
+    for the vast majority of JCL that contains no INCLUDEs.  Handles all
+    syntactic forms accepted by :func:`parse_statement`:
+
+    * ``// INCLUDE MEMBER=name``   — no label, space(s) before INCLUDE
+    * ``//INCLUDE MEMBER=name``    — no label, no leading space
+    * ``//LABEL INCLUDE MEMBER=name`` — explicit label
+    """
+    return bool(_RE_HAS_INCLUDE.search(content))
 
 
 def _create_job_from_statement(stmt: Statement) -> Job:

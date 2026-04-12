@@ -12,7 +12,7 @@ __description__ = "Parse IBM JCL scripts into Python objects"
 
 # Import main API functions
 from .parser import parse_jcl, validate_jcl, parse_statement
-from .model import Job, Step, DDStatement, Parameter, Statement
+from .model import Job, Step, DDStatement, Parameter, Statement, OutputStatement
 from .errors import (
     JCLSyntaxError,
     JCLValidationError,
@@ -79,6 +79,17 @@ from .condition_parser import (
     AndCondition,
     OrCondition,
 )
+from .include_loader import (
+    IncludeMemberLoader,
+    DictMemberLoader,
+    JCLLIBMemberLoader,
+    resolve_includes,
+)
+from .dataset_lifecycle import (
+    DatasetEvent,
+    analyze_dataset_lifecycle,
+    validate_dataset_lifecycle,
+)
 
 # Initialize global plugin registry
 _registry = get_plugin_registry()
@@ -95,6 +106,7 @@ __all__ = [
     "DDStatement",
     "Parameter",
     "Statement",
+    "OutputStatement",
     "JCLSyntaxError",
     "JCLValidationError",
     "JCLStructureError",
@@ -145,6 +157,15 @@ __all__ = [
     "ValidationPlugin",
     "PluginRegistry",
     "get_plugin_registry",
+    # ── Tier 2: Include resolution ────────────────────────────────────────────
+    "IncludeMemberLoader",
+    "DictMemberLoader",
+    "JCLLIBMemberLoader",
+    "resolve_includes",
+    # ── Tier 2: Dataset lifecycle analysis ───────────────────────────────────
+    "DatasetEvent",
+    "analyze_dataset_lifecycle",
+    "validate_dataset_lifecycle",
 ]
 
 
