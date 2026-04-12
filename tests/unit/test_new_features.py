@@ -210,7 +210,18 @@ class TestJOBLIBSTEPLIB:
             "//S1      EXEC PGM=MYPROG\n"
         )
         job = parse_jcl(jcl)
-        assert "SYS2.LOADLIB" in job.joblib
+        assert job.joblib == ["SYS2.LOADLIB", "USER.LOADLIB"]
+
+    def test_joblib_three_way_concatenation(self):
+        jcl = (
+            "//MYJOB  JOB (ACCT),'USER'\n"
+            "//JOBLIB  DD DSN=LIB1,DISP=SHR\n"
+            "//         DD DSN=LIB2,DISP=SHR\n"
+            "//         DD DSN=LIB3,DISP=SHR\n"
+            "//S1      EXEC PGM=MYPROG\n"
+        )
+        job = parse_jcl(jcl)
+        assert job.joblib == ["LIB1", "LIB2", "LIB3"]
 
     def test_joblib_empty_when_absent(self):
         jcl = "//MYJOB  JOB (ACCT),'USER'\n//S1 EXEC PGM=IEFBR14\n"
@@ -226,6 +237,30 @@ class TestJOBLIBSTEPLIB:
         job = parse_jcl(jcl)
         step = job.get_step("S1")
         assert step.steplib == ["USER.LOADLIB"]
+
+    def test_steplib_concatenation(self):
+        jcl = (
+            "//MYJOB  JOB (ACCT),'USER'\n"
+            "//S1     EXEC PGM=MYPROG\n"
+            "//STEPLIB  DD DSN=USER.LOADLIB,DISP=SHR\n"
+            "//           DD DSN=SYS2.LOADLIB,DISP=SHR\n"
+        )
+        job = parse_jcl(jcl)
+        step = job.get_step("S1")
+        assert step.steplib == ["USER.LOADLIB", "SYS2.LOADLIB"]
+
+    def test_steplib_concatenation_search_order(self):
+        """STEPLIB concat all appear in get_library_search_order, not JOBLIB."""
+        jcl = (
+            "//MYJOB  JOB (ACCT),'USER'\n"
+            "//JOBLIB  DD DSN=JOBLIB.DS,DISP=SHR\n"
+            "//S1     EXEC PGM=MYPROG\n"
+            "//STEPLIB  DD DSN=STEPLIB1,DISP=SHR\n"
+            "//           DD DSN=STEPLIB2,DISP=SHR\n"
+        )
+        job = parse_jcl(jcl)
+        order = job.get_library_search_order("S1")
+        assert order == ["STEPLIB1", "STEPLIB2"]
 
     def test_steplib_empty_when_absent(self):
         jcl = (
@@ -393,6 +428,17 @@ class TestExtractIncludeMember:
     def test_empty_line_returns_none(self):
         assert _extract_include_member("") is None
 
+    # Regression tests for the no-space form (//INCLUDE MEMBER=...)
+    def test_no_space_after_slashes(self):
+        """//INCLUDE MEMBER=... — INCLUDE is the operation, not a label."""
+        assert _extract_include_member("//INCLUDE MEMBER=MYMBR") == "MYMBR"
+
+    def test_comment_line_returns_none(self):
+        assert _extract_include_member("//* INCLUDE MEMBER=XXX") is None
+
+    def test_dsn_containing_include_returns_none(self):
+        assert _extract_include_member("//DD1 DD DSN=MY.INCLUDE.LIB,DISP=SHR") is None
+
 
 class TestResolveIncludes:
     """Tests for the resolve_includes pre-processing function."""
@@ -460,6 +506,17 @@ class TestIncludeInParser:
         job = parse_jcl(jcl, include_loader=loader)
         # The INCLUDE statement itself is parsed but the member content is inlined
         # so no unresolved INCLUDE step appears — check that COMSTEP was inlined
+        assert job.get_step("COMSTEP") is not None
+
+    def test_no_space_include_form_resolved(self):
+        """//INCLUDE MEMBER=... (no leading space) is expanded correctly."""
+        loader = DictMemberLoader({"COMMON": "//COMSTEP EXEC PGM=IEFBR14\n"})
+        jcl = (
+            "//MYJOB  JOB (ACCT),'USER'\n"
+            "//S1     EXEC PGM=IEFBR14\n"
+            "//INCLUDE MEMBER=COMMON\n"
+        )
+        job = parse_jcl(jcl, include_loader=loader)
         assert job.get_step("COMSTEP") is not None
 
     def test_unresolvable_include_does_not_crash(self):

@@ -207,36 +207,62 @@ def _extract_include_member(line: str) -> str | None:
     """
     Return the member name from a JCL INCLUDE statement, or ``None``.
 
-    Recognises these forms (case-insensitive)::
+    Recognises all syntactic forms accepted by the JCL parser
+    (case-insensitive)::
 
-        //          INCLUDE MEMBER=MYMEMBER
-        //LABEL     INCLUDE MEMBER=MYMEMBER
-        //LABEL     INCLUDE MEMBER=(MYMEMBER)
+        //          INCLUDE MEMBER=MYMEMBER    — no label, leading spaces
+        //INCLUDE   MEMBER=MYMEMBER            — no label, no space after //
+        //LABEL     INCLUDE MEMBER=MYMEMBER    — explicit label
+        //LABEL     INCLUDE MEMBER=(MYMEMBER)  — parenthesised member name
+
+    Detection is token-based: the INCLUDE keyword is identified as the
+    operation field rather than by substring search, so lines where
+    "INCLUDE" appears only in a dataset name or comment are not matched.
 
     Args:
-        line: A single (already stripped) JCL source line.
+        line: A single JCL source line (stripped or unstripped).
 
     Returns:
         Upper-cased member name, or ``None`` if not an INCLUDE statement.
     """
-    if not line.startswith("//"):
-        return None
-    upper = line.upper()
-    if " INCLUDE " not in upper and "\tINCLUDE " not in upper:
+    if not line.startswith("//") or line.startswith("//*"):
         return None
 
-    # Find MEMBER= keyword
-    member_idx = upper.find("MEMBER=")
+    # Content after the mandatory "//" prefix
+    statement = line[2:]
+    stripped = statement.lstrip()
+    if not stripped:
+        return None
+
+    # Split into at most two tokens: [first_token, remainder]
+    parts = stripped.split(None, 1)
+    first_upper = parts[0].upper()
+
+    if first_upper == "INCLUDE":
+        # No label: // INCLUDE ...  OR  //INCLUDE ...
+        params_part = parts[1] if len(parts) > 1 else ""
+    else:
+        # Potentially: //LABEL INCLUDE ...
+        if len(parts) < 2:
+            return None
+        rest_parts = parts[1].split(None, 1)
+        if not rest_parts or rest_parts[0].upper() != "INCLUDE":
+            return None
+        params_part = rest_parts[1] if len(rest_parts) > 1 else ""
+
+    # Parse MEMBER= from params_part
+    upper_params = params_part.upper()
+    member_idx = upper_params.find("MEMBER=")
     if member_idx == -1:
         return None
 
-    rest = line[member_idx + 7:].strip()
+    name_part = params_part[member_idx + 7:].strip()
     # Strip optional surrounding parentheses
-    if rest.startswith("("):
-        rest = rest[1:]
-    # Read up to next whitespace, comma, or closing paren
-    name = []
-    for ch in rest:
+    if name_part.startswith("("):
+        name_part = name_part[1:]
+    # Read identifier characters up to whitespace, comma, or closing paren
+    name: list[str] = []
+    for ch in name_part:
         if ch in " \t,)":
             break
         name.append(ch)

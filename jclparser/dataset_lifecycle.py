@@ -10,14 +10,14 @@ Detected issues
 ---------------
 * **Duplicate creation** — a dataset is allocated ``DISP=(NEW,CATLG)`` in two
   or more steps without an intervening delete/uncatalog.
-* **Forward reference** — step N opens a dataset ``DISP=OLD`` or ``DISP=SHR``
-  that is first *created* in a later step M (M > N).  This is a warning rather
-  than an error because the dataset may already exist in the catalog.
+* **Forward reference** — step N opens a dataset ``DISP=OLD`` that is first
+  *created* in a later step M (M > N).  Reported as a warning because the
+  dataset may already exist in the catalog before the job runs.
 * **Uncatalog before use** — a dataset is explicitly uncataloged in step N and
   then referenced in step M (M > N).
-* **Temporary dataset used before creation** — extended from the existing check
-  in :mod:`jclparser.validators` to also cover ``&&temp`` datasets whose
-  creation step appears later in the flat step list.
+
+Note: temporary datasets (``&&name``) are intentionally skipped here — they
+are handled by :func:`~jclparser.validators.validate_data_dependencies`.
 
 Usage::
 

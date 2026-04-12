@@ -479,15 +479,27 @@ class Step:
         the ordered list of DSN strings; empty list if no STEPLIB is defined
         on this step.
 
+        Handles DD concatenation: empty-name ``//  DD DSN=...`` cards that
+        immediately follow the ``//STEPLIB DD`` card are included as part of
+        the concatenation until the next named DD is encountered.
+
         Example::
 
             step.steplib  # ['USER.LOADLIB', 'SYS2.LOADLIB']
         """
-        return [
-            dd.dataset_name
-            for dd in self.dd_statements
-            if dd.name == "STEPLIB" and dd.dataset_name
-        ]
+        datasets: list[str] = []
+        in_steplib = False
+
+        for dd in self.dd_statements:
+            if dd.name == "STEPLIB":
+                in_steplib = True
+            elif dd.name:
+                in_steplib = False
+
+            if in_steplib and dd.dataset_name:
+                datasets.append(dd.dataset_name)
+
+        return datasets
 
     def get_input_datasets(self) -> list[str]:
         """Get all input dataset names"""

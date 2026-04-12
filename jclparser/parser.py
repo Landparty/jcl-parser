@@ -8,6 +8,7 @@ and plugin extensibility.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, IO
 from .model import Job, Step, DDStatement, Statement, ConditionalBlock, Procedure, OutputStatement
@@ -28,6 +29,9 @@ from .utils import (
 )
 from .continuation_handler import ContinuationLineHandler
 from .condition_parser import parse_condition
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .include_loader import IncludeMemberLoader
 
 #: All recognised JCL statement type keywords (single canonical definition).
 _STATEMENT_TYPES: frozenset = frozenset(
@@ -68,7 +72,7 @@ def parse_jcl(
     config: ParserConfig | None = None,
     proc_base_path: str | Path | None = None,
     enable_external_procs: bool = True,
-    include_loader=None,
+    include_loader: "IncludeMemberLoader | None" = None,
 ) -> Job:
     """
     Parse JCL script from various input sources into structured Job object.
@@ -194,6 +198,7 @@ def parse_jcl(
     current_procedure = None  # Track when we're inside a PROC/PEND block
     current_delimiter = "/*"
     orphaned_dds = []  # Track DDs that appear before first EXEC
+    in_joblib_concat = False  # True while accumulating JOBLIB concatenation lines
 
     for line, line_num in merged_lines:
         try:
@@ -250,6 +255,7 @@ def parse_jcl(
                     )
 
                 current_step = _create_step_from_statement(stmt)
+                in_joblib_concat = False  # JOBLIB concatenation ends at first EXEC
 
                 # Attach any orphaned DDs to this first step
                 if orphaned_dds:
@@ -277,7 +283,12 @@ def parse_jcl(
                     # job.joblib and job.get_library_search_order() can expose it.
                     if stmt.name == "JOBLIB" and job is not None:
                         job.joblib_dds.append(current_dd)
+                        in_joblib_concat = True
+                    elif not stmt.name and in_joblib_concat and job is not None:
+                        # Empty-name DD concatenating onto the JOBLIB group
+                        job.joblib_dds.append(current_dd)
                     else:
+                        in_joblib_concat = False
                         # Store as orphaned DD to be attached to next step
                         orphaned_dds.append(current_dd)
                 elif stmt.name and "." in stmt.name:
@@ -1007,14 +1018,29 @@ def _parse_list_parameter(list_content: str) -> list[str]:
     return items
 
 
+# Matches any of:
+#   // INCLUDE ...      (no label, spaces before INCLUDE)
+#   //INCLUDE ...       (no label, no space — INCLUDE starts right after //)
+#   //LABEL INCLUDE ... (label present, INCLUDE is the operation token)
+# The word boundary \b ensures we don't match partial tokens like INCLUDES.
+_RE_HAS_INCLUDE = re.compile(
+    r"^//(?:[^\s*/][^\s]*\s+|\s+)?INCLUDE\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
 def _has_include_statement(content: str) -> bool:
     """Return True if *content* contains at least one INCLUDE statement.
 
     Fast pre-check so the overhead of the include-resolution pass is avoided
-    for the vast majority of JCL that contains no INCLUDEs.
+    for the vast majority of JCL that contains no INCLUDEs.  Handles all
+    syntactic forms accepted by :func:`parse_statement`:
+
+    * ``// INCLUDE MEMBER=name``   — no label, space(s) before INCLUDE
+    * ``//INCLUDE MEMBER=name``    — no label, no leading space
+    * ``//LABEL INCLUDE MEMBER=name`` — explicit label
     """
-    upper = content.upper()
-    return " INCLUDE " in upper or "\tINCLUDE " in upper
+    return bool(_RE_HAS_INCLUDE.search(content))
 
 
 def _create_job_from_statement(stmt: Statement) -> Job:
