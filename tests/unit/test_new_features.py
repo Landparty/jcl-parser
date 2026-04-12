@@ -687,3 +687,146 @@ class TestDatasetLifecycleValidation:
         job = parse_jcl(jcl)
         errs = job.validate()
         assert any("DUP.DS" in e.message for e in errs)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Additional edge cases
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestJOBLIBEdgeCases:
+    """Edge cases for JOBLIB / orphaned-DD interaction."""
+
+    def test_named_dd_after_joblib_goes_to_orphaned(self):
+        """A non-JOBLIB named DD before first EXEC is treated as orphaned (attached to first step)."""
+        jcl = (
+            "//MYJOB  JOB (ACCT),'USER'\n"
+            "//JOBLIB  DD DSN=SYS2.LOADLIB,DISP=SHR\n"
+            "//SORTLIB  DD DSN=SORT.LOADLIB,DISP=SHR\n"
+            "//S1      EXEC PGM=MYPROG\n"
+        )
+        job = parse_jcl(jcl)
+        # JOBLIB stays at job level
+        assert job.joblib == ["SYS2.LOADLIB"]
+        # SORTLIB is orphaned → ends up on first step
+        step = job.get_step("S1")
+        assert step.get_dd("SORTLIB") is not None
+
+    def test_joblib_concatenation_stops_at_named_dd(self):
+        """A named DD interrupts JOBLIB concatenation; subsequent DDs are orphaned."""
+        jcl = (
+            "//MYJOB  JOB (ACCT),'USER'\n"
+            "//JOBLIB  DD DSN=LIB1,DISP=SHR\n"
+            "//         DD DSN=LIB2,DISP=SHR\n"
+            "//SORTLIB  DD DSN=SORT.LIB,DISP=SHR\n"
+            "//S1      EXEC PGM=MYPROG\n"
+        )
+        job = parse_jcl(jcl)
+        assert job.joblib == ["LIB1", "LIB2"]
+        step = job.get_step("S1")
+        assert step.get_dd("SORTLIB") is not None
+
+
+class TestIncludeWithJCLLIB:
+    """INCLUDE resolution uses JCLLIB ORDER libraries when present."""
+
+    def test_include_resolved_with_jcllib_library(self):
+        """resolve_includes receives library names from JCLLIB ORDER pre-scan."""
+        # Simulate a loader that expects a specific library name
+        from jclparser.include_loader import IncludeMemberLoader
+
+        calls: list[tuple] = []
+
+        class SpyLoader(IncludeMemberLoader):
+            def load_member(self, member_name, libraries=None):
+                calls.append((member_name, libraries))
+                return "//COMSTEP EXEC PGM=IEFBR14\n"
+
+        jcl = (
+            "//MYJOB  JOB (ACCT),'USER'\n"
+            "//        JCLLIB ORDER=(SYS1.JCLLIB,USER.JCLLIB)\n"
+            "//S1     EXEC PGM=IEFBR14\n"
+            "// INCLUDE MEMBER=COMMON\n"
+        )
+        parse_jcl(jcl, include_loader=SpyLoader())
+        assert len(calls) == 1
+        member, libs = calls[0]
+        assert member == "COMMON"
+        assert libs == ["SYS1.JCLLIB", "USER.JCLLIB"]
+
+    def test_extract_jcllib_order_no_label(self):
+        from jclparser.parser import _extract_jcllib_order
+        content = "//MYJOB JOB\n// JCLLIB ORDER=(LIB1,LIB2)\n"
+        assert _extract_jcllib_order(content) == ["LIB1", "LIB2"]
+
+    def test_extract_jcllib_order_with_label(self):
+        from jclparser.parser import _extract_jcllib_order
+        content = "//MYJOB JOB\n//LBL JCLLIB ORDER=(A.B,C.D)\n"
+        assert _extract_jcllib_order(content) == ["A.B", "C.D"]
+
+    def test_extract_jcllib_order_single_lib_no_parens(self):
+        from jclparser.parser import _extract_jcllib_order
+        content = "//MYJOB JOB\n// JCLLIB ORDER=SYS1.JCLLIB\n"
+        assert _extract_jcllib_order(content) == ["SYS1.JCLLIB"]
+
+    def test_extract_jcllib_order_no_jcllib_returns_empty(self):
+        from jclparser.parser import _extract_jcllib_order
+        content = "//MYJOB JOB\n//S1 EXEC PGM=IEFBR14\n"
+        assert _extract_jcllib_order(content) == []
+
+    def test_extract_jcllib_order_comment_line_ignored(self):
+        from jclparser.parser import _extract_jcllib_order
+        content = "//* JCLLIB ORDER=(IGNORE.ME)\n// JCLLIB ORDER=REAL.LIB\n"
+        assert _extract_jcllib_order(content) == ["REAL.LIB"]
+
+
+class TestForwardReferenceEdgeCases:
+    """Forward-reference detection covers both DISP=OLD and DISP=SHR."""
+
+    def _job(self, steps_jcl: str):
+        return parse_jcl(f"//MYJOB  JOB (ACCT),'USER'\n{steps_jcl}")
+
+    def test_forward_ref_via_shr_flagged(self):
+        """DISP=SHR before the dataset is cataloged should also be warned."""
+        jcl = (
+            "//S1  EXEC PGM=IEFBR14\n"
+            "//DD1   DD DSN=FWD.DATA,DISP=SHR\n"
+            "//S2  EXEC PGM=IEFBR14\n"
+            "//DD2   DD DSN=FWD.DATA,DISP=(NEW,CATLG,DELETE)\n"
+        )
+        errors = validate_dataset_lifecycle(self._job(jcl))
+        assert any("FWD.DATA" in e.message for e in errors)
+
+    def test_forward_ref_message_mentions_disp_shr(self):
+        jcl = (
+            "//S1  EXEC PGM=IEFBR14\n"
+            "//DD1   DD DSN=SHR.DATA,DISP=SHR\n"
+            "//S2  EXEC PGM=IEFBR14\n"
+            "//DD2   DD DSN=SHR.DATA,DISP=(NEW,CATLG,DELETE)\n"
+        )
+        errors = validate_dataset_lifecycle(self._job(jcl))
+        disp_errors = [e for e in errors if "SHR.DATA" in e.message]
+        assert any("DISP=SHR" in e.message for e in disp_errors)
+
+    def test_shr_after_catlg_is_clean(self):
+        """Normal pattern: allocate then open SHR — no error."""
+        jcl = (
+            "//S1  EXEC PGM=IEFBR14\n"
+            "//DD1   DD DSN=MY.DATA,DISP=(NEW,CATLG,DELETE)\n"
+            "//S2  EXEC PGM=IEFBR14\n"
+            "//DD2   DD DSN=MY.DATA,DISP=SHR\n"
+        )
+        errors = validate_dataset_lifecycle(self._job(jcl))
+        assert errors == []
+
+    def test_only_shr_no_alloc_no_forward_ref_warning(self):
+        """A dataset only ever opened SHR (never allocated in this job) is fine."""
+        jcl = (
+            "//S1  EXEC PGM=IEFBR14\n"
+            "//DD1   DD DSN=EXISTING.DS,DISP=SHR\n"
+            "//S2  EXEC PGM=IEFBR14\n"
+            "//DD2   DD DSN=EXISTING.DS,DISP=SHR\n"
+        )
+        errors = validate_dataset_lifecycle(self._job(jcl))
+        # No ALLOCATE event anywhere → has_later_alloc is False → no warning
+        assert errors == []

@@ -112,11 +112,12 @@ def parse_jcl(
 
         if include_loader is None:
             include_loader = JCLLIBMemberLoader(base_path=proc_base_path)
-        # We don't know the JCLLIB order yet (it's parsed below), so pass None
-        # here.  A second pass with the known JCLLIB order would be needed for
-        # correct library-scoped INCLUDE resolution; that is deferred to a
-        # future enhancement.  For now, the loader searches its base path.
-        content = resolve_includes(content, loader=include_loader)
+        # Pre-scan the raw content for JCLLIB ORDER so the loader can search
+        # the correct libraries.  This is a best-effort single-line scan;
+        # ORDER values spread across continuation lines are not picked up here
+        # (those are rare in practice).
+        jcllib_libs = _extract_jcllib_order(content) or None
+        content = resolve_includes(content, loader=include_loader, libraries=jcllib_libs)
 
     # Parse the content
     raw_lines = content.splitlines()
@@ -1027,6 +1028,58 @@ _RE_HAS_INCLUDE = re.compile(
     r"^//(?:[^\s*/][^\s]*\s+|\s+)?INCLUDE\b",
     re.IGNORECASE | re.MULTILINE,
 )
+
+
+def _extract_jcllib_order(content: str) -> list[str]:
+    """Quick pre-scan that extracts JCLLIB ORDER library names from raw JCL.
+
+    Returns an ordered list of library names found in any ``JCLLIB ORDER=``
+    statement in *content*.  Recognises the same syntactic forms as the main
+    parser (no label, ``//JCLLIB``, and ``//LABEL JCLLIB``).
+
+    This is a best-effort single-line scan — ORDER values split across JCL
+    continuation lines are not resolved here.  The result is used to pass a
+    library list to :func:`~jclparser.include_loader.resolve_includes` before
+    the full parse begins.
+    """
+    libraries: list[str] = []
+    for line in content.splitlines():
+        if not line.startswith("//") or line.startswith("//*"):
+            continue
+        upper = line.upper()
+        # Detect JCLLIB operation token (same token-match approach as INCLUDE)
+        statement = line[2:]
+        stripped = statement.lstrip()
+        parts = stripped.split(None, 1)
+        if not parts:
+            continue
+        first_upper = parts[0].upper()
+        if first_upper == "JCLLIB":
+            params_part = parts[1] if len(parts) > 1 else ""
+        else:
+            # Try label + JCLLIB
+            if len(parts) < 2:
+                continue
+            rest_parts = parts[1].split(None, 1)
+            if not rest_parts or rest_parts[0].upper() != "JCLLIB":
+                continue
+            params_part = rest_parts[1] if len(rest_parts) > 1 else ""
+
+        # Extract ORDER= value
+        upper_params = params_part.upper()
+        order_idx = upper_params.find("ORDER=")
+        if order_idx == -1:
+            continue
+        rest = params_part[order_idx + 6:].strip()
+        # Strip surrounding parentheses if present
+        if rest.startswith("("):
+            end = rest.find(")")
+            rest = rest[1:end] if end != -1 else rest[1:]
+        for lib in rest.split(","):
+            lib = lib.strip()
+            if lib:
+                libraries.append(lib)
+    return libraries
 
 
 def _has_include_statement(content: str) -> bool:

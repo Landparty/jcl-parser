@@ -244,18 +244,19 @@ def validate_dataset_lifecycle(job: Job) -> List[ValidationError]:
                         )
                     )
 
-                # Forward-reference check: dataset first seen as OPEN_EXCLUSIVE
-                # and its only creation event (if any) comes later — heuristic warning.
-                if evt.action == "OPEN_EXCLUSIVE" and _first_alloc_pos is None:
-                    # This open is the first event; any ALLOCATE would come later
+                # Forward-reference check: dataset opened (OLD or SHR) before
+                # it is allocated anywhere in the job — heuristic warning because
+                # the dataset may already exist in the catalog from a prior run.
+                if evt.action in ("OPEN_EXCLUSIVE", "OPEN_SHARED") and _first_alloc_pos is None:
                     has_later_alloc = any(
                         e.action == "ALLOCATE"
                         for e in events[pos + 1:]
                     )
                     if has_later_alloc:
+                        disp_label = "DISP=OLD" if evt.action == "OPEN_EXCLUSIVE" else "DISP=SHR"
                         errors.append(
                             ValidationError(
-                                f"Dataset '{dsn}' opened DISP=OLD in step "
+                                f"Dataset '{dsn}' opened {disp_label} in step "
                                 f"'{evt.step_name}' (DD {evt.dd_name}) before it "
                                 f"is allocated in a later step — verify the dataset "
                                 f"exists in the catalog",
