@@ -26,6 +26,8 @@ import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from .utils import _read_file_with_fallback
+
 
 class IncludeMemberLoader(ABC):
     """
@@ -121,7 +123,8 @@ class JCLLIBMemberLoader(IncludeMemberLoader):
                 resolved = path.resolve()
                 if not resolved.is_relative_to(base_resolved):
                     continue
-                return resolved.read_text(encoding="utf-8", errors="replace")
+                if resolved.is_file():
+                    return _read_file_with_fallback(resolved)
             except (OSError, PermissionError):
                 continue
         return None

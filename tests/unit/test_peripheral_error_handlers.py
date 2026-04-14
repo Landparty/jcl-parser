@@ -152,7 +152,7 @@ class TestFileTypeEdgeCases:
 
     def test_non_seekable_file_object(self):
         """File-like objects that don't support seek() are handled gracefully."""
-        from jclparser.jcl_file_type import _read_source
+        from jclparser.utils import read_source
 
         class NonSeekableFile:
             def read(self):
@@ -162,20 +162,28 @@ class TestFileTypeEdgeCases:
                 raise OSError("not seekable")
 
         source = NonSeekableFile()
-        content = _read_source(source)
+        content = read_source(source)
         assert "TESTJOB" in content
 
-    def test_string_that_looks_like_path_but_invalid(self):
-        """String with embedded null byte triggers ValueError in path handling."""
-        from jclparser.jcl_file_type import _read_source
+    def test_string_that_looks_like_path_but_missing(self):
+        """A .jcl-extension string that is not a real file raises FileNotFoundError.
 
-        # A string shorter than 500 chars with no newlines could be a path.
-        # An embedded null byte is a platform-safe way to trigger ValueError
-        # during path handling so the OSError/ValueError fallback is exercised.
-        test_input = "/invalid\0path.jcl"
-        result = _read_source(test_input)
-        # Should fall through to treating it as content
-        assert result == test_input
+        ``read_source`` is strict: a string ending in ``.jcl`` is treated as a
+        path, and if it does not exist a ``FileNotFoundError`` is raised.
+        Callers such as ``is_jcl_file`` catch ``OSError`` (the parent of
+        ``FileNotFoundError``) and return ``False``, so consumers always have a
+        safe entry point.
+        """
+        import pytest
+        from jclparser.utils import read_source
+        from jclparser.jcl_file_type import is_jcl_file
+
+        nonexistent = "/nonexistent_jcl_file_xyz_12345.jcl"
+        with pytest.raises(FileNotFoundError):
+            read_source(nonexistent)
+
+        # But the public convenience wrapper silences the error
+        assert is_jcl_file(nonexistent) is False
 
 
 # ---------------------------------------------------------------------------

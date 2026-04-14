@@ -129,7 +129,14 @@ def read_source(source: str | Path | Any) -> str:
             return _read_file_with_fallback(path)
         return source
     # File-like object
+    if not hasattr(source, "read"):
+        raise TypeError(
+            f"Invalid source type: {type(source)}. Expected str, Path, or file-like object."
+        )
     content = source.read()
     if hasattr(source, "seek"):
-        source.seek(0)
+        try:
+            source.seek(0)
+        except (OSError, IOError):
+            pass  # Non-seekable streams are fine; seek is best-effort only
     return content

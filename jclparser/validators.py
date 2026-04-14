@@ -15,6 +15,9 @@ from .parameter_validators import DatasetNameValidator, DISPValidator
 _RE_JCL_ID_VALID = re.compile(r"^[A-Za-z@#$][A-Za-z0-9@#$]*$")
 _RE_PARAM_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 
+# Shared description used in all JCL name validation error messages
+_JCL_NAME_FORMAT = "must be 1-8 characters, alphanumeric + @#$"
+
 
 def validate_jcl_identifier(name: str) -> bool:
     """
@@ -67,7 +70,7 @@ def validate_job_structure(job: Job) -> List[ValidationError]:
     if not validate_jcl_identifier(job.name):
         errors.append(
             ValidationError(
-                f"Invalid job name '{job.name}': must be 1-8 characters, alphanumeric + @#$",
+                f"Invalid job name '{job.name}': {_JCL_NAME_FORMAT}",
                 ErrorType.VALIDATION_ERROR,
             )
         )
@@ -127,7 +130,7 @@ def validate_step_structure(step: Step) -> List[ValidationError]:
     if step.name and not validate_jcl_identifier(step.name):
         errors.append(
             ValidationError(
-                f"Invalid step name '{step.name}': must be 1-8 characters, alphanumeric + @#$",
+                f"Invalid step name '{step.name}': {_JCL_NAME_FORMAT}",
                 ErrorType.VALIDATION_ERROR,
             )
         )
@@ -191,7 +194,7 @@ def validate_dd_statement(dd: DDStatement) -> List[ValidationError]:
     if dd.name and not validate_jcl_identifier(dd.name):
         errors.append(
             ValidationError(
-                f"Invalid DD name '{dd.name}': must be 1-8 characters, alphanumeric + @#$",
+                f"Invalid DD name '{dd.name}': {_JCL_NAME_FORMAT}",
                 ErrorType.VALIDATION_ERROR,
             )
         )
