@@ -97,6 +97,13 @@ def _read_file_with_fallback(path: Path) -> str:
         return fh.read().decode("utf-8", errors="ignore")
 
 
+def _require_file(path: Path) -> str:
+    """Raise ``FileNotFoundError`` if *path* does not exist, otherwise return its content."""
+    if not path.exists():
+        raise FileNotFoundError(f"JCL file not found: {path}")
+    return _read_file_with_fallback(path)
+
+
 def read_source(source: str | Path | Any) -> str:
     """
     Resolve a JCL source (string content, file path, or file-like object) into a
@@ -115,18 +122,13 @@ def read_source(source: str | Path | Any) -> str:
         FileNotFoundError: If *source* is a path to a file that does not exist.
     """
     if isinstance(source, Path):
-        if not source.exists():
-            raise FileNotFoundError(f"JCL file not found: {source}")
-        return _read_file_with_fallback(source)
+        return _require_file(source)
     if isinstance(source, str):
         # Treat as a file path when it looks like one
         if source.endswith(".jcl") or (
             ("/" in source or "\\" in source) and not source.strip().startswith("//")
         ):
-            path = Path(source)
-            if not path.exists():
-                raise FileNotFoundError(f"JCL file not found: {path}")
-            return _read_file_with_fallback(path)
+            return _require_file(Path(source))
         return source
     # File-like object
     if not hasattr(source, "read"):

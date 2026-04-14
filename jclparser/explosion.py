@@ -27,6 +27,26 @@ from .system_symbols import SystemSymbolProvider, get_default_provider
 _SYMBOL_SUB_PATTERN = re.compile(r"&&|&([A-Z0-9@#$]+)\.?")
 
 
+def _clone_conditional(
+    block: ConditionalBlock,
+    process_steps_fn,
+) -> ConditionalBlock:
+    """Clone *block*, recursively processing each branch with *process_steps_fn*.
+
+    *process_steps_fn* must accept a list of ``Step | ConditionalBlock`` and
+    return a new list.  This centralises the repeated ConditionalBlock-cloning
+    boilerplate that appears in every step-processing loop in this module.
+    """
+    new_cond = ConditionalBlock(
+        condition=block.condition,
+        line_number=block.line_number,
+        condition_ast=block.condition_ast,
+    )
+    new_cond.then_steps = process_steps_fn(block.then_steps)
+    new_cond.else_steps = process_steps_fn(block.else_steps)
+    return new_cond
+
+
 @dataclass
 class SymbolScope:
     """
@@ -244,14 +264,7 @@ def expand_proc_invocation(
         result = []
         for proc_step in steps_list:
             if isinstance(proc_step, ConditionalBlock):
-                new_cond = ConditionalBlock(
-                    condition=proc_step.condition,
-                    line_number=proc_step.line_number,
-                    condition_ast=proc_step.condition_ast,
-                )
-                new_cond.then_steps = _process_proc_steps(proc_step.then_steps)
-                new_cond.else_steps = _process_proc_steps(proc_step.else_steps)
-                result.append(new_cond)
+                result.append(_clone_conditional(proc_step, _process_proc_steps))
             else:
                 # Clone the step
                 new_step = deepcopy(proc_step)
@@ -469,14 +482,7 @@ def explode_job(
         result = []
         for step in steps_list:
             if isinstance(step, ConditionalBlock):
-                new_cond = ConditionalBlock(
-                    condition=step.condition,
-                    line_number=step.line_number,
-                    condition_ast=step.condition_ast,
-                )
-                new_cond.then_steps = _process_steps(step.then_steps)
-                new_cond.else_steps = _process_steps(step.else_steps)
-                result.append(new_cond)
+                result.append(_clone_conditional(step, _process_steps))
             elif step.is_procedure:
                 # Expand procedure
                 expanded = _explode_step(
@@ -645,14 +651,7 @@ def _explode_step(
         result = []
         for s in steps_list:
             if isinstance(s, ConditionalBlock):
-                new_cond = ConditionalBlock(
-                    condition=s.condition,
-                    line_number=s.line_number,
-                    condition_ast=s.condition_ast,
-                )
-                new_cond.then_steps = _explode_nested(s.then_steps)
-                new_cond.else_steps = _explode_nested(s.else_steps)
-                result.append(new_cond)
+                result.append(_clone_conditional(s, _explode_nested))
             elif s.is_procedure:
                 # Nested procedure - recurse
                 nested = _explode_step(

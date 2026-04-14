@@ -16,6 +16,16 @@ if TYPE_CHECKING:
     from .sql_detector import SQLDetectionResult
 
 
+def _to_int_or_none(val) -> int | None:
+    """Coerce *val* to int, returning None for empty or unconvertible values."""
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return None
+
+
 @dataclass
 class OutputStatement:
     """
@@ -50,11 +60,7 @@ class OutputStatement:
     @property
     def copies(self) -> int | None:
         """Number of copies to print (COPIES= parameter)."""
-        val = self.parameters.get("COPIES")
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+        return _to_int_or_none(self.parameters.get("COPIES"))
 
     @property
     def forms(self) -> str | None:
@@ -69,11 +75,7 @@ class OutputStatement:
     @property
     def prty(self) -> int | None:
         """Output priority (PRTY= parameter)."""
-        val = self.parameters.get("PRTY")
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+        return _to_int_or_none(self.parameters.get("PRTY"))
 
     @property
     def jesds(self) -> str | None:
@@ -83,11 +85,7 @@ class OutputStatement:
     @property
     def outlim(self) -> int | None:
         """Output line limit (OUTLIM= parameter)."""
-        val = self.parameters.get("OUTLIM")
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+        return _to_int_or_none(self.parameters.get("OUTLIM"))
 
     @property
     def recfm(self) -> str | None:
@@ -97,11 +95,7 @@ class OutputStatement:
     @property
     def lrecl(self) -> int | None:
         """Logical record length (LRECL= parameter)."""
-        val = self.parameters.get("LRECL")
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+        return _to_int_or_none(self.parameters.get("LRECL"))
 
     @property
     def chars(self) -> str | list | None:
@@ -121,11 +115,7 @@ class OutputStatement:
     @property
     def index(self) -> int | None:
         """Horizontal position index (INDEX= parameter)."""
-        val = self.parameters.get("INDEX")
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+        return _to_int_or_none(self.parameters.get("INDEX"))
 
     @classmethod
     def from_statement(cls, stmt: "Statement") -> "OutputStatement":
@@ -749,11 +739,7 @@ class Job:
     @property
     def prty(self) -> int | None:
         """Job dispatching priority, 0–15 (PRTY= parameter)."""
-        val = self.parameters.get("PRTY")
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+        return _to_int_or_none(self.parameters.get("PRTY"))
 
     @property
     def time(self) -> str | list | None:
