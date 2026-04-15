@@ -239,6 +239,14 @@ class DDStatement:
     inline_data: str | None = None
     comments: list[str] = field(default_factory=list)
     line_number: int = 0
+    #: Resolved :class:`OutputStatement` objects referenced by this DD via
+    #: ``OUTPUT=*.name``.  Populated by ``parse_jcl`` after the full job has
+    #: been parsed.  ``OUTPUT=*.NAME`` values that do not match any OUTPUT
+    #: statement in the job are recorded on :attr:`Job.unresolved_output_refs`
+    #: instead of here.
+    output_refs: list[OutputStatement] = field(
+        default_factory=list, repr=False, compare=False
+    )
 
     # Cached parsed parameters (not included in __init__)
     _dcb_parsed: DCBParameter | None = field(
@@ -601,8 +609,27 @@ class Job:
     explosion_audit: list[Any] = field(default_factory=list)
     explosion_map: dict[str, Any] = field(default_factory=dict)
     jes_statements: list[str] = field(default_factory=list)
+    #: Typed JES2/JES3 control statements (``/*JOBPARM``, ``/*ROUTE``, etc.).
+    #: Populated in parallel with :attr:`jes_statements` (which retains the
+    #: raw string form) so both old and new consumers work.  Unknown JES
+    #: commands are *not* added here — they only appear in
+    #: :attr:`jes_statements`.
+    jes_typed_statements: list[Any] = field(default_factory=list)
     output_statements: list[OutputStatement] = field(default_factory=list)
     joblib_dds: list[DDStatement] = field(default_factory=list)
+    #: Optional SQL detection results, keyed by step name.  Populated when
+    #: ``parse_jcl`` is called with ``ParserConfig(detect_sql=True)``; otherwise
+    #: left empty.  Each entry is a
+    #: :class:`~jclparser.sql_detector.SQLDetectionResult`.
+    sql_detections: dict[str, Any] = field(default_factory=dict)
+    #: Optional dictionary of OUTPUT statement names referenced by
+    #: ``OUTPUT=*.name`` DD parameters but *not* defined anywhere in the job.
+    #: Populated after OUTPUT back-reference resolution during parsing.
+    unresolved_output_refs: list[tuple[str, str, int]] = field(default_factory=list)
+    #: Symbols listed in ``EXPORT SYMLIST=(...)`` statements at job scope.
+    #: Propagated into invoked PROC scopes during explosion.  A literal ``"*"``
+    #: exports every SET symbol.
+    exported_symbols: set[str] = field(default_factory=set)
 
     def add_step(self, step: Step | ConditionalBlock) -> None:
         """Add an execution step to this job"""

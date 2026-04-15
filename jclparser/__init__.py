@@ -90,6 +90,39 @@ from .dataset_lifecycle import (
     analyze_dataset_lifecycle,
     validate_dataset_lifecycle,
 )
+from .jes_statements import (
+    JESControlStatement,
+    JobParmStatement,
+    RouteStatement,
+    XmitStatement,
+    SignonStatement,
+    MessageStatement,
+    NetacctStatement,
+    NotifyStatement,
+    PriorityStatement,
+    Jes3RouteXeqStatement,
+    parse_jes_control,
+)
+from .metrics import JobMetrics, compute_metrics
+from .rc_analysis import (
+    FeasibilityReport,
+    compute_feasible_paths,
+    DEFAULT_RC_DOMAIN,
+)
+from .program_profiles import (
+    ProgramProfile,
+    ProgramAnalysis,
+    register_profile,
+    analyze_step,
+    analyze_job,
+)
+from .lint import (
+    LintRule,
+    LintConfig,
+    lint_job,
+    to_sarif as lint_to_sarif,
+    register_rule as register_lint_rule,
+)
 
 # Initialize global plugin registry
 _registry = get_plugin_registry()
@@ -166,6 +199,34 @@ __all__ = [
     "DatasetEvent",
     "analyze_dataset_lifecycle",
     "validate_dataset_lifecycle",
+    # ── Tier 2: Typed JES2/JES3 control statements ──────────────────────────
+    "JESControlStatement",
+    "JobParmStatement",
+    "RouteStatement",
+    "XmitStatement",
+    "SignonStatement",
+    "MessageStatement",
+    "NetacctStatement",
+    "NotifyStatement",
+    "PriorityStatement",
+    "Jes3RouteXeqStatement",
+    "parse_jes_control",
+    # ── Tier 2: Metrics, RC feasibility, program profiles, lint ─────────────
+    "JobMetrics",
+    "compute_metrics",
+    "FeasibilityReport",
+    "compute_feasible_paths",
+    "DEFAULT_RC_DOMAIN",
+    "ProgramProfile",
+    "ProgramAnalysis",
+    "register_profile",
+    "analyze_step",
+    "analyze_job",
+    "LintRule",
+    "LintConfig",
+    "lint_job",
+    "lint_to_sarif",
+    "register_lint_rule",
 ]
 
 

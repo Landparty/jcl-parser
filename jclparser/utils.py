@@ -132,7 +132,11 @@ def read_source(source: str | Path | Any) -> str:
         # For plain strings without path markers (no extension, no separators),
         # check whether the string names an existing file.  JCL content always
         # starts with "//" or contains newlines, so this fallback is safe.
-        if "\n" not in source and "\r" not in source and not source.strip().startswith("//"):
+        if (
+            "\n" not in source
+            and "\r" not in source
+            and not source.strip().startswith("//")
+        ):
             try:
                 path = Path(source)
                 if path.is_file():

@@ -535,7 +535,24 @@ def explode_job(
         includes=job.includes,
         comments=job.comments,
         line_number=job.line_number,
+        exported_symbols=set(job.exported_symbols),
     )
+
+    # Preserve post-parse analysis metadata so consumers of the exploded job
+    # see the same derived state as on the original parsed job.  We copy
+    # rather than share so downstream mutation of one doesn't surprise the
+    # other.
+    for _attr in (
+        "unresolved_output_refs",
+        "sql_detections",
+        "jes_typed_statements",
+        "jes_statements",
+        "output_statements",
+        "joblib_dds",
+    ):
+        src_val = getattr(job, _attr, None)
+        if src_val is not None:
+            setattr(exploded_job, _attr, deepcopy(src_val))
 
     # Attach audit metadata
     if audit:
