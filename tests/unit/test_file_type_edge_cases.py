@@ -20,7 +20,10 @@ from jclparser.jcl_file_type import (
     FileType,
     _extract_statement_type,
 )
-from jclparser.utils import read_source as _read_source, _read_file_with_fallback as _read_file
+from jclparser.utils import (
+    read_source as _read_source,
+    _read_file_with_fallback as _read_file,
+)
 
 
 class TestExceptionHandling:

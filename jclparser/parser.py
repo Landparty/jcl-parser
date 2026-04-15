@@ -595,11 +595,16 @@ def parse_jcl(
     # Resolve OUTPUT=*.name back-references on every DD.
     _resolve_output_refs(job)
 
-    # Validate the parsed job if in strict mode
+    # Validate the parsed job if in strict mode.  Only ERROR-severity findings
+    # are fatal — WARNING/INFO findings (e.g. unresolved OUTPUT back-references,
+    # forward dataset references) are advisory and must not break strict parsing.
     if strict_mode:
         validation_errors = job.validate()
-        if validation_errors:
-            error_msg = "; ".join([err.message for err in validation_errors])
+        fatal = [
+            err for err in validation_errors if err.severity == ErrorSeverity.ERROR
+        ]
+        if fatal:
+            error_msg = "; ".join([err.message for err in fatal])
             raise JCLValidationError(f"Job validation failed: {error_msg}")
 
     # Optional: auto-run SQL detection when requested via ParserConfig
@@ -1233,14 +1238,18 @@ def _create_dd_from_statement(stmt: Statement) -> DDStatement:
 def _extract_output_ref_names(value: Any) -> list[str]:
     """Return OUTPUT reference names from a DD ``OUTPUT=`` parameter value.
 
-    JCL allows several forms::
+    Supports only the ``*.`` prefix forms — the standard way JCL references
+    an OUTPUT statement from a DD::
 
-        OUTPUT=*.NAME            -> ["NAME"]
-        OUTPUT=(*.NAME)          -> ["NAME"]
-        OUTPUT=(*.N1,*.N2)       -> ["N1", "N2"]
-        OUTPUT=(STEP.PROCSTEP.N) -> ["N"]   (qualified — take final token)
+        OUTPUT=*.NAME                -> ["NAME"]
+        OUTPUT=(*.NAME)              -> ["NAME"]
+        OUTPUT=(*.N1,*.N2)           -> ["N1", "N2"]
+        OUTPUT=*.STEP.NAME           -> ["NAME"]   (qualified — take tail)
 
-    Non-reference forms (e.g. a bare nodename) yield an empty list.
+    Values that do not start with ``*.`` (e.g. a bare nodename, a qualified
+    ``STEP.PROCSTEP.N`` form without the leading ``*.``, or ``None``) yield
+    an empty list.  Callers rely on this to distinguish output-statement
+    references from other uses of the OUTPUT= parameter.
     """
     names: list[str] = []
     items: list[str]

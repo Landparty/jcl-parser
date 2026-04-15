@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..errors import ValidationError
+from ..errors import ValidationError, ErrorType, ErrorSeverity
 from .base import LintRule
 from .config import LintConfig
 from .rules import BUILTIN_RULES
@@ -12,6 +12,11 @@ from .rules import BUILTIN_RULES
 if TYPE_CHECKING:
     from ..model import Job
 
+
+#: Pseudo-code used for the synthetic ValidationError emitted when a rule
+#: raises.  Severity is overridable via :attr:`LintConfig.severities` so
+#: consumers can downgrade rule crashes to INFO or suppress them outright.
+_RULE_CRASH_CODE = "JCL-LINT-000"
 
 _RULES: list[LintRule] = list(BUILTIN_RULES)
 
@@ -52,10 +57,18 @@ def lint_job(job: "Job", config: LintConfig | None = None) -> list[ValidationErr
         try:
             findings.extend(rule.check(job, cfg))
         except Exception as exc:  # noqa: BLE001 — a broken rule must not stop the run
+            # Synthetic finding for a rule that crashed.  Use SEMANTIC_ERROR
+            # to match normal lint findings, and default to WARNING severity
+            # (overridable via LintConfig.severities[_RULE_CRASH_CODE]).
+            severity = cfg.severities.get(_RULE_CRASH_CODE, ErrorSeverity.WARNING)
             findings.append(
                 ValidationError(
-                    message=f"Lint rule {rule.code} raised {type(exc).__name__}: {exc}",
-                    error_code=rule.code,
+                    message=(
+                        f"Lint rule {rule.code} raised {type(exc).__name__}: {exc}"
+                    ),
+                    error_type=ErrorType.SEMANTIC_ERROR,
+                    severity=severity,
+                    error_code=_RULE_CRASH_CODE,
                 )
             )
     return findings

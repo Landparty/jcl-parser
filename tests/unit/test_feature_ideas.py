@@ -532,3 +532,180 @@ def test_smoke_parse_everything():
     codes = {f.error_code for f in findings}
     assert "JCL-LINT-004" not in codes
     assert "JCL-LINT-005" not in codes
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for PR #18 review comments
+# ---------------------------------------------------------------------------
+
+
+class TestReviewFixes:
+    """Covers the six Copilot review findings on PR #18."""
+
+    def test_strict_mode_ignores_output_ref_warning(self):
+        """Review #4: WARNING-severity findings must not fail strict_mode."""
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEFBR14\n"
+            "//REPORT   DD SYSOUT=A,OUTPUT=*.NOPE\n"
+        )
+        # Would raise if strict_mode treated the WARNING as fatal.
+        job = jp.parse_jcl(src, strict_mode=True)
+        # Warning is still emitted by the validator — just not fatal.
+        errors = job.validate()
+        assert any(e.error_code is None and "NOPE" in e.message for e in errors)
+
+    def test_strict_mode_still_raises_on_real_errors(self):
+        import pytest
+
+        from jclparser.errors import JCLValidationError
+
+        # Duplicate step names are an ERROR-severity structural issue.
+        # STEP1 appears twice -> must still raise in strict_mode.
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEFBR14\n"
+            "//STEP1    EXEC PGM=IEFBR14\n"
+        )
+        with pytest.raises(JCLValidationError):
+            jp.parse_jcl(src, strict_mode=True)
+
+    def test_explode_preserves_unresolved_output_refs(self):
+        """Review #2: analysis fields must survive explosion."""
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEFBR14\n"
+            "//REPORT   DD SYSOUT=A,OUTPUT=*.NOPE\n"
+        )
+        job = jp.parse_jcl(src)
+        assert job.unresolved_output_refs
+        exploded = job.explode()
+        assert exploded.unresolved_output_refs == job.unresolved_output_refs
+
+    def test_explode_preserves_jes_typed_statements(self):
+        src = "//MYJOB    JOB  (ACCT)\n/*JOBPARM CLASS=A\n//STEP1    EXEC PGM=IEFBR14\n"
+        job = jp.parse_jcl(src)
+        assert job.jes_typed_statements
+        exploded = job.explode()
+        assert len(exploded.jes_typed_statements) == len(job.jes_typed_statements)
+        # Must be a copy, not a shared reference.
+        assert exploded.jes_typed_statements is not job.jes_typed_statements
+
+    def test_explode_preserves_sql_detections(self):
+        from jclparser.plugins import ParserConfig
+
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=DSNTEP2\n"
+            "//SYSIN    DD *\n"
+            "SELECT * FROM T;\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src, config=ParserConfig(detect_sql=True))
+        assert "STEP1" in job.sql_detections
+        exploded = job.explode()
+        assert "STEP1" in exploded.sql_detections
+
+    def test_lint_rule_crash_produces_tagged_finding(self):
+        """Review #1: a crashing rule should yield a SEMANTIC_ERROR WARNING,
+        not a generic ErrorType.VALIDATION_ERROR at severity ERROR."""
+        from jclparser.errors import ErrorType, ErrorSeverity
+        from jclparser.lint.base import LintRule
+        from jclparser.lint import lint_job as _lint_job
+        from jclparser.lint.runner import register_rule, unregister_rule
+
+        class BoomRule(LintRule):
+            code = "JCL-TEST-BOOM"
+            description = "Always crashes"
+            default_severity = ErrorSeverity.WARNING
+
+            def check(self, job, config):
+                raise RuntimeError("kaboom")
+
+        rule = BoomRule()
+        register_rule(rule)
+        try:
+            src = (
+                "//MYJOB    JOB  (ACCT),TIME=60,REGION=4M\n"
+                "//STEP1    EXEC PGM=IEFBR14\n"
+            )
+            job = jp.parse_jcl(src)
+            findings = _lint_job(job)
+            crash = [f for f in findings if "kaboom" in f.message]
+            assert crash
+            assert crash[0].error_code == "JCL-LINT-000"
+            assert crash[0].error_type == ErrorType.SEMANTIC_ERROR
+            assert crash[0].severity == ErrorSeverity.WARNING
+        finally:
+            unregister_rule(rule.code)
+            # Also clean up JCL-LINT-000 if it somehow lingered
+            unregister_rule("JCL-LINT-000")
+
+    def test_lint_rule_crash_severity_overridable(self):
+        from jclparser.errors import ErrorSeverity
+        from jclparser.lint import LintConfig, lint_job as _lint_job
+        from jclparser.lint.base import LintRule
+        from jclparser.lint.runner import register_rule, unregister_rule
+
+        class Boom2Rule(LintRule):
+            code = "JCL-TEST-BOOM2"
+            description = "crashes"
+            default_severity = ErrorSeverity.WARNING
+
+            def check(self, job, config):
+                raise ValueError("bang")
+
+        rule = Boom2Rule()
+        register_rule(rule)
+        try:
+            src = "//MYJOB    JOB  (ACCT)\n//STEP1    EXEC PGM=IEFBR14\n"
+            job = jp.parse_jcl(src)
+            cfg = LintConfig(severities={"JCL-LINT-000": ErrorSeverity.INFO})
+            findings = _lint_job(job, cfg)
+            crash = [f for f in findings if "bang" in f.message]
+            assert crash and crash[0].severity == ErrorSeverity.INFO
+        finally:
+            unregister_rule(rule.code)
+
+    def test_rc_analysis_does_not_flag_unknown_only_condition(self):
+        """Review #6: when every evaluation is None (unknown) the branch must
+        not be marked unreachable.  We build a condition that references
+        a step absent from the job — the AST's evaluate() returns None for
+        every combination, which previously misled the pass."""
+        from jclparser.condition_parser import parse_condition
+        from jclparser.model import ConditionalBlock, Job, Step
+        from jclparser.rc_analysis import compute_feasible_paths
+
+        ast = parse_condition("GHOST.RC EQ 0")
+        assert ast is not None  # sanity — the condition parses
+
+        cond = ConditionalBlock(
+            condition="GHOST.RC EQ 0",
+            condition_ast=ast,
+            line_number=5,
+        )
+        cond.then_steps.append(Step(name="INSIDE", program="IEFBR14"))
+
+        job = Job(name="MYJOB", steps=[cond])
+        report = compute_feasible_paths(job)
+        assert "INSIDE" not in report.unreachable_steps
+
+    def test_rc_analysis_still_flags_unsatisfiable(self):
+        """Sanity: the conservative fix must not mask genuinely dead code."""
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=PROG1\n"
+            "//         IF (STEP1.RC GT 100) THEN\n"
+            "//DEAD     EXEC PGM=PROG2\n"
+            "//         ENDIF\n"
+        )
+        job = jp.parse_jcl(src)
+        report = compute_feasible_paths(job)
+        assert "DEAD" in report.unreachable_steps
+
+    def test_output_ref_docstring_matches_impl_on_qualified_non_star_form(self):
+        """Review #3: a qualified STEP.PROCSTEP.N form *without* the leading
+        ``*.`` must yield an empty list (not a spurious name) — docstring
+        behaviour is now the contract."""
+        assert _extract_output_ref_names("STEP.PROCSTEP.N") == []
+        assert _extract_output_ref_names("*.STEP.PROCSTEP.N") == ["N"]
