@@ -535,6 +535,7 @@ def explode_job(
         includes=job.includes,
         comments=job.comments,
         line_number=job.line_number,
+        exported_symbols=set(job.exported_symbols),
     )
 
     # Attach audit metadata

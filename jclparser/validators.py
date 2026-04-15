@@ -111,6 +111,32 @@ def validate_job_structure(job: Job) -> List[ValidationError]:
 
     errors.extend(validate_dataset_lifecycle(job))
 
+    # Validate OUTPUT=*.name back-references (populated by parse_jcl).
+    errors.extend(validate_output_references(job))
+
+    return errors
+
+
+def validate_output_references(job: Job) -> List[ValidationError]:
+    """Warn on ``OUTPUT=*.name`` DD references that do not resolve.
+
+    Consumes ``Job.unresolved_output_refs`` which is populated during parsing
+    by ``jclparser.parser._resolve_output_refs``.  Issues a WARNING (not an
+    ERROR) for each unresolved reference so a malformed name does not cause
+    strict-mode parsing to fail outright — the dataset may be intentionally
+    resolved by a downstream tool or environment.
+    """
+    errors: List[ValidationError] = []
+    for step_name, ref, line_number in getattr(job, "unresolved_output_refs", []):
+        step_label = f" in step '{step_name}'" if step_name else ""
+        errors.append(
+            ValidationError(
+                f"OUTPUT=*.{ref}{step_label} references an undefined OUTPUT statement",
+                ErrorType.SEMANTIC_ERROR,
+                line_number=line_number,
+                severity=ErrorSeverity.WARNING,
+            )
+        )
     return errors
 
 

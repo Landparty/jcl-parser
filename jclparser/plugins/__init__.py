@@ -32,6 +32,10 @@ class ParserConfig:
     dialect: str = "standard"
     enabled_plugins: List[str] = field(default_factory=list)
     validation_level: ValidationLevel = ValidationLevel.BASIC
+    #: When True, ``parse_jcl`` runs :func:`~jclparser.sql_detector.detect_sql_in_job`
+    #: after the parse completes and stashes the results on ``Job.sql_detections``
+    #: keyed by step name.  Disabled by default to keep parse time predictable.
+    detect_sql: bool = False
 
     def enable_plugin(self, plugin_name: str) -> None:
         """Enable specific plugin"""

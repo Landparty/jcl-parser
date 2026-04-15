@@ -53,6 +53,7 @@ _STATEMENT_TYPES: frozenset = frozenset(
         "JCLLIB",
         "INCLUDE",
         "SET",
+        "EXPORT",
         "IF",
         "THEN",
         "ELSE",
@@ -248,8 +249,15 @@ def parse_jcl(
                     inline_data_lines.append(line)
                     continue
 
-            # Skip comments and empty lines
+            # Skip comments and empty lines (but recognise JES3 //*ROUTE XEQ
+            # control statements before dropping the comment).
             if not line.strip() or line.strip().startswith("//*"):
+                if line.strip().startswith("//*") and job is not None:
+                    from .jes_statements import parse_jes3_route_xeq
+
+                    jes3 = parse_jes3_route_xeq(line, line_num)
+                    if jes3 is not None:
+                        job.jes_typed_statements.append(jes3)
                 continue
 
             # Skip lines marked as inline data (line_num is 1-indexed, markers use 0-indexed)
@@ -382,6 +390,22 @@ def parse_jcl(
                                 sym, val = param_val.split("=", 1)
                                 job.add_set(sym.strip(), val.strip())
 
+            elif stmt.type == "EXPORT":
+                # EXPORT SYMLIST=(A,B,...)  or  EXPORT SYMLIST=*
+                if job:
+                    symlist = stmt.parameters.get("SYMLIST")
+                    names: list[str] = []
+                    if isinstance(symlist, list):
+                        names = [str(n).strip().upper() for n in symlist if n]
+                    elif isinstance(symlist, str):
+                        names = [
+                            n.strip().upper()
+                            for n in symlist.strip("()").split(",")
+                            if n.strip()
+                        ]
+                    for n in names:
+                        job.exported_symbols.add(n)
+
             elif stmt.type == "JCLLIB":
                 # JCLLIB ORDER=(lib1,lib2,...)
                 if job and "ORDER" in stmt.parameters:
@@ -443,10 +467,15 @@ def parse_jcl(
                     conditional_stack.pop()
             elif stmt.type == "JES":
                 if job:
-                    jes_content = (
-                        f"/*{stmt.name} {stmt.parameters.get('_raw', '')}".strip()
-                    )
+                    raw_params = stmt.parameters.get("_raw", "")
+                    jes_content = f"/*{stmt.name} {raw_params}".strip()
                     job.jes_statements.append(jes_content)
+                    # Also try to promote to a typed JES control statement.
+                    from .jes_statements import parse_jes_control
+
+                    typed = parse_jes_control(stmt.name, raw_params, stmt.line_number)
+                    if typed is not None:
+                        job.jes_typed_statements.append(typed)
 
             elif stmt.type == "OUTPUT":
                 # OUTPUT statement - JES output descriptor; promote to typed model
@@ -563,12 +592,23 @@ def parse_jcl(
         if _member not in job.includes:
             job.includes.append(_member)
 
+    # Resolve OUTPUT=*.name back-references on every DD.
+    _resolve_output_refs(job)
+
     # Validate the parsed job if in strict mode
     if strict_mode:
         validation_errors = job.validate()
         if validation_errors:
             error_msg = "; ".join([err.message for err in validation_errors])
             raise JCLValidationError(f"Job validation failed: {error_msg}")
+
+    # Optional: auto-run SQL detection when requested via ParserConfig
+    if config is not None and getattr(config, "detect_sql", False):
+        from .sql_detector import detect_sql_in_job
+
+        for result in detect_sql_in_job(job):
+            if result.step_name:
+                job.sql_detections[result.step_name] = result
 
     return job
 
@@ -1188,3 +1228,74 @@ def _create_dd_from_statement(stmt: Statement) -> DDStatement:
         parameters=stmt.parameters,
         line_number=stmt.line_number,
     )
+
+
+def _extract_output_ref_names(value: Any) -> list[str]:
+    """Return OUTPUT reference names from a DD ``OUTPUT=`` parameter value.
+
+    JCL allows several forms::
+
+        OUTPUT=*.NAME            -> ["NAME"]
+        OUTPUT=(*.NAME)          -> ["NAME"]
+        OUTPUT=(*.N1,*.N2)       -> ["N1", "N2"]
+        OUTPUT=(STEP.PROCSTEP.N) -> ["N"]   (qualified — take final token)
+
+    Non-reference forms (e.g. a bare nodename) yield an empty list.
+    """
+    names: list[str] = []
+    items: list[str]
+    if isinstance(value, list):
+        items = [str(v) for v in value]
+    elif isinstance(value, str):
+        items = [value]
+    else:
+        return names
+
+    for item in items:
+        token = item.strip().strip("()")
+        if not token.startswith("*."):
+            # Qualified form step.procstep.name uses ".name" — last segment after *
+            if ".*" in token:
+                # Not a back-reference either
+                continue
+            continue
+        ref = token[2:].strip()
+        if not ref:
+            continue
+        # If qualified like STEP.PROCSTEP.NAME, take the final segment.
+        if "." in ref:
+            ref = ref.split(".")[-1]
+        names.append(ref.upper())
+    return names
+
+
+def _resolve_output_refs(job: Job) -> None:
+    """Populate ``DDStatement.output_refs`` for every DD that uses ``OUTPUT=*.X``.
+
+    Unresolved references (no matching :class:`OutputStatement`) are recorded
+    on ``job.unresolved_output_refs`` as ``(step_name, ref_name, line_number)``
+    tuples so :func:`jclparser.validators.validate_job_structure` can emit
+    warnings without re-scanning the parameter string.
+    """
+    if not job:
+        return
+    # Index OUTPUT statements by uppercased name (last wins if duplicated).
+    output_by_name: dict[str, Any] = {
+        out.name.upper(): out for out in job.output_statements if out.name
+    }
+
+    from .model import iter_execution_steps
+
+    for step in iter_execution_steps(job.steps):
+        for dd in step.dd_statements:
+            value = dd.parameters.get("OUTPUT")
+            if value is None:
+                continue
+            for ref in _extract_output_ref_names(value):
+                target = output_by_name.get(ref)
+                if target is not None:
+                    dd.output_refs.append(target)
+                else:
+                    job.unresolved_output_refs.append(
+                        (step.name or "", ref, dd.line_number)
+                    )

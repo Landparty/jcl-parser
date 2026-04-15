@@ -151,11 +151,16 @@ class ValidationError:
         error_type: ErrorType = ErrorType.VALIDATION_ERROR,
         line_number: Optional[int] = None,
         severity: ErrorSeverity = ErrorSeverity.ERROR,
+        error_code: Optional[str] = None,
     ):
         self.message = message
         self.error_type = error_type
         self.line_number = line_number
         self.severity = severity
+        #: Optional stable identifier for the rule that produced this error
+        #: (e.g. ``"JCL-LINT-001"``).  None for core validator errors that
+        #: predate the lint framework.
+        self.error_code = error_code
 
     @property
     def is_warning(self) -> bool:
@@ -169,6 +174,7 @@ class ValidationError:
             if self.severity != ErrorSeverity.ERROR
             else ""
         )
+        code = f"[{self.error_code}] " if self.error_code else ""
         if self.line_number:
-            return f"Line {self.line_number}: {prefix}{self.message}"
-        return f"{prefix}{self.message}"
+            return f"Line {self.line_number}: {prefix}{code}{self.message}"
+        return f"{prefix}{code}{self.message}"
