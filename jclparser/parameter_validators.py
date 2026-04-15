@@ -25,6 +25,25 @@ class ValidationResult:
         if self.warnings is None:
             self.warnings = []
 
+    @classmethod
+    def valid(cls, warnings: List[str] | None = None) -> "ValidationResult":
+        """Return a passing result, with optional warnings."""
+        return cls(is_valid=True, errors=[], warnings=warnings or [])
+
+    @classmethod
+    def invalid(
+        cls, errors: List[str], warnings: List[str] | None = None
+    ) -> "ValidationResult":
+        """Return a failing result with the supplied error messages."""
+        return cls(is_valid=False, errors=errors, warnings=warnings or [])
+
+    @classmethod
+    def from_errors(
+        cls, errors: List[str], warnings: List[str] | None = None
+    ) -> "ValidationResult":
+        """Return valid when *errors* is empty, invalid otherwise."""
+        return cls(is_valid=len(errors) == 0, errors=errors, warnings=warnings or [])
+
 
 class DISPValidator:
     """
@@ -60,7 +79,7 @@ class DISPValidator:
         warnings = []
 
         if not disp_value:
-            return ValidationResult(is_valid=True, errors=[], warnings=[])
+            return ValidationResult.valid()
 
         # Remove outer parentheses if present
         disp_value = disp_value.strip()
@@ -72,7 +91,7 @@ class DISPValidator:
 
         if len(parts) == 0:
             errors.append("DISP parameter is empty")
-            return ValidationResult(is_valid=False, errors=errors, warnings=warnings)
+            return ValidationResult.invalid(errors, warnings)
 
         # Validate status (first parameter)
         if parts[0] and parts[0] not in cls.VALID_STATUS:
@@ -106,9 +125,7 @@ class DISPValidator:
                 f"DISP has {len(parts)} parameters, expected 1-3. Extra parameters will be ignored."
             )
 
-        return ValidationResult(
-            is_valid=len(errors) == 0, errors=errors, warnings=warnings
-        )
+        return ValidationResult.from_errors(errors, warnings)
 
 
 class DatasetNameValidator:
@@ -151,7 +168,7 @@ class DatasetNameValidator:
 
         if not dsn:
             errors.append("Dataset name is empty")
-            return ValidationResult(is_valid=False, errors=errors, warnings=warnings)
+            return ValidationResult.invalid(errors)
 
         original_dsn = dsn
         dsn = dsn.strip().upper()
@@ -161,9 +178,7 @@ class DatasetNameValidator:
         if is_temporary:
             if not allow_temporary:
                 errors.append(f"Temporary datasets (&&) not allowed: {original_dsn}")
-                return ValidationResult(
-                    is_valid=False, errors=errors, warnings=warnings
-                )
+                return ValidationResult.invalid(errors)
             dsn = dsn[2:]  # Remove &&
 
         # Check for GDG
@@ -175,15 +190,11 @@ class DatasetNameValidator:
             if cls.GDG_PATTERN.match(gdg_suffix):
                 if not allow_gdg:
                     errors.append(f"GDG datasets not allowed: {original_dsn}")
-                    return ValidationResult(
-                        is_valid=False, errors=errors, warnings=warnings
-                    )
+                    return ValidationResult.invalid(errors)
                 dsn = base_name
             else:
                 errors.append(f"Invalid GDG generation: {gdg_suffix}")
-                return ValidationResult(
-                    is_valid=False, errors=errors, warnings=warnings
-                )
+                return ValidationResult.invalid(errors)
 
         # Check total length (excluding && and GDG)
         if len(dsn) > 44:
@@ -191,7 +202,7 @@ class DatasetNameValidator:
 
         if len(dsn) == 0:
             errors.append("Dataset name has no qualifiers")
-            return ValidationResult(is_valid=False, errors=errors, warnings=warnings)
+            return ValidationResult.invalid(errors)
 
         # Split into qualifiers
         qualifiers = dsn.split(".")
@@ -231,9 +242,7 @@ class DatasetNameValidator:
                 f"Dataset has {len(qualifiers)} qualifiers. This is unusual (typical: 2-5)."
             )
 
-        return ValidationResult(
-            is_valid=len(errors) == 0, errors=errors, warnings=warnings
-        )
+        return ValidationResult.from_errors(errors, warnings)
 
 
 class ParameterValidator:
@@ -261,7 +270,7 @@ class ParameterValidator:
 
         if not unit:
             errors.append("UNIT parameter is empty")
-            return ValidationResult(is_valid=False, errors=errors, warnings=warnings)
+            return ValidationResult.invalid(errors)
 
         unit = unit.strip().upper()
 
@@ -289,7 +298,7 @@ class ParameterValidator:
                 f"Uncommon UNIT value: {unit}. Verify this is correct for your system."
             )
 
-        return ValidationResult(is_valid=True, errors=errors, warnings=warnings)
+        return ValidationResult.valid(warnings)
 
     @staticmethod
     def validate_volume(volume: str) -> ValidationResult:
@@ -302,7 +311,7 @@ class ParameterValidator:
         warnings = []
 
         if not volume:
-            return ValidationResult(is_valid=True, errors=[], warnings=[])
+            return ValidationResult.valid()
 
         volume = volume.strip().upper()
 
@@ -321,6 +330,4 @@ class ParameterValidator:
                 f"Volume serial contains invalid characters: {', '.join(sorted(invalid_chars))}"
             )
 
-        return ValidationResult(
-            is_valid=len(errors) == 0, errors=errors, warnings=warnings
-        )
+        return ValidationResult.from_errors(errors, warnings)

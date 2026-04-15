@@ -75,6 +75,20 @@ _PARAMETER_PARSER = None
 _OPERATOR_PREFIXES: frozenset = frozenset("¬^~!<>")
 
 
+def _exec_has_program_spec(parameters: dict) -> bool:
+    """Return True if *parameters* specifies a program, procedure, or positional arg.
+
+    An EXEC statement is valid when it names a program (``PGM=``), an explicit
+    procedure (``PROC=``), or uses a bare positional token (no keyword, treated
+    as a proc name by the parser).
+    """
+    return (
+        "PGM" in parameters
+        or "PROC" in parameters
+        or any(is_positional_key(k) for k in parameters)
+    )
+
+
 def parse_jcl(
     source: str | Path | IO,
     strict_mode: bool = False,
@@ -260,12 +274,7 @@ def parse_jcl(
                     )
 
                 # Basic syntax check for EXEC - must have program, procedure, or positional parameter
-                has_pgm = "PGM" in stmt.parameters
-                has_proc = "PROC" in stmt.parameters
-                has_positional = any(
-                    is_positional_key(k) for k in stmt.parameters.keys()
-                )
-                if not has_pgm and not has_proc and not has_positional:
+                if not _exec_has_program_spec(stmt.parameters):
                     raise JCLSyntaxError(
                         "EXEC statement missing program or procedure", line_num
                     )
@@ -679,11 +688,13 @@ def validate_jcl(source: str | Path | IO, level: str = "basic") -> list[ParseErr
                             )
                         )
 
-                    # Check for missing program or procedure
+                    # Check for missing program or procedure.
+                    # This fallback path is only reached when parse_jcl raised
+                    # (e.g., undefined PROC), so we intentionally do NOT accept
+                    # bare "PROC=name" here — the reference is known to be
+                    # unresolvable, and we want at least one error in the output.
                     has_pgm = "PGM" in stmt.parameters
-                    has_positional = any(
-                        is_positional_key(k) for k in stmt.parameters.keys()
-                    )
+                    has_positional = any(is_positional_key(k) for k in stmt.parameters)
                     if not has_pgm and not has_positional:
                         errors.append(
                             ParseError(

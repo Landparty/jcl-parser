@@ -16,6 +16,16 @@ if TYPE_CHECKING:
     from .sql_detector import SQLDetectionResult
 
 
+def _to_int_or_none(val) -> int | None:
+    """Coerce *val* to int, returning None for empty or unconvertible values."""
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return None
+
+
 @dataclass
 class OutputStatement:
     """
@@ -50,11 +60,7 @@ class OutputStatement:
     @property
     def copies(self) -> int | None:
         """Number of copies to print (COPIES= parameter)."""
-        val = self.parameters.get("COPIES")
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+        return _to_int_or_none(self.parameters.get("COPIES"))
 
     @property
     def forms(self) -> str | None:
@@ -69,11 +75,7 @@ class OutputStatement:
     @property
     def prty(self) -> int | None:
         """Output priority (PRTY= parameter)."""
-        val = self.parameters.get("PRTY")
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+        return _to_int_or_none(self.parameters.get("PRTY"))
 
     @property
     def jesds(self) -> str | None:
@@ -83,11 +85,7 @@ class OutputStatement:
     @property
     def outlim(self) -> int | None:
         """Output line limit (OUTLIM= parameter)."""
-        val = self.parameters.get("OUTLIM")
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+        return _to_int_or_none(self.parameters.get("OUTLIM"))
 
     @property
     def recfm(self) -> str | None:
@@ -97,11 +95,7 @@ class OutputStatement:
     @property
     def lrecl(self) -> int | None:
         """Logical record length (LRECL= parameter)."""
-        val = self.parameters.get("LRECL")
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+        return _to_int_or_none(self.parameters.get("LRECL"))
 
     @property
     def chars(self) -> str | list | None:
@@ -121,11 +115,7 @@ class OutputStatement:
     @property
     def index(self) -> int | None:
         """Horizontal position index (INDEX= parameter)."""
-        val = self.parameters.get("INDEX")
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+        return _to_int_or_none(self.parameters.get("INDEX"))
 
     @classmethod
     def from_statement(cls, stmt: "Statement") -> "OutputStatement":
@@ -275,6 +265,29 @@ class DDStatement:
         elif name == "disposition" and "_disp_tokens_cache" in d:
             object.__setattr__(self, "_disp_tokens_cache", None)
 
+    def _lazy_parse_param(self, key: str, cache_attr: str, parse_method: str):
+        """Return the cached parsed form of a structured DD parameter.
+
+        Reads ``self.parameters[key]`` and only parses supported textual forms:
+        a string value or a list of values joined with commas.  Unsupported
+        runtime types are ignored and return ``None`` rather than raising from
+        ``ParameterParser.<parse_method>``.  The result is stored on *cache_attr*
+        so subsequent calls skip parsing entirely.
+        """
+        cached = getattr(self, cache_attr)
+        if cached is None and key in self.parameters:
+            raw = self.parameters[key]
+            if isinstance(raw, list):
+                param_str = ",".join(str(v) for v in raw)
+            elif isinstance(raw, str):
+                param_str = raw
+            else:
+                return None
+            parser = ParameterParser()
+            cached = getattr(parser, parse_method)(param_str, self.line_number)
+            object.__setattr__(self, cache_attr, cached)
+        return cached
+
     @property
     def dcb(self) -> DCBParameter | None:
         """
@@ -288,17 +301,7 @@ class DDStatement:
             >>> dd.dcb.lrecl  # 80
             >>> dd.dcb.blksize  # 27920
         """
-        if self._dcb_parsed is None and "DCB" in self.parameters:
-            parser = ParameterParser()
-            dcb_value = self.parameters["DCB"]
-            if isinstance(dcb_value, str):
-                self._dcb_parsed = parser.parse_dcb(dcb_value, self.line_number)
-            elif isinstance(dcb_value, list):
-                # Handle list format
-                dcb_str = ",".join(str(v) for v in dcb_value)
-                self._dcb_parsed = parser.parse_dcb(dcb_str, self.line_number)
-
-        return self._dcb_parsed
+        return self._lazy_parse_param("DCB", "_dcb_parsed", "parse_dcb")
 
     @property
     def space(self) -> SPACEParameter | None:
@@ -314,16 +317,7 @@ class DDStatement:
             >>> dd.space.secondary  # 5
             >>> dd.space.rlse  # True
         """
-        if self._space_parsed is None and "SPACE" in self.parameters:
-            parser = ParameterParser()
-            space_value = self.parameters["SPACE"]
-            if isinstance(space_value, str):
-                self._space_parsed = parser.parse_space(space_value, self.line_number)
-            elif isinstance(space_value, list):
-                space_str = ",".join(str(v) for v in space_value)
-                self._space_parsed = parser.parse_space(space_str, self.line_number)
-
-        return self._space_parsed
+        return self._lazy_parse_param("SPACE", "_space_parsed", "parse_space")
 
     @property
     def dataclas(self) -> str | None:
@@ -752,11 +746,7 @@ class Job:
     @property
     def prty(self) -> int | None:
         """Job dispatching priority, 0–15 (PRTY= parameter)."""
-        val = self.parameters.get("PRTY")
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+        return _to_int_or_none(self.parameters.get("PRTY"))
 
     @property
     def time(self) -> str | list | None:

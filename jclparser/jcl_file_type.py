@@ -14,6 +14,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Union, IO, Optional
 
+from .utils import read_source
+
 # Module-level constants (avoids per-call set/list construction)
 _PREAMBLE_STATEMENTS = frozenset(
     {"SET", "JCLLIB", "IF", "THEN", "ELSE", "ENDIF", "INCLUDE"}
@@ -83,7 +85,7 @@ def detect_file_type(source: Union[str, Path, IO]) -> FileType:
         raise ValueError("Source cannot be None")
 
     # Get content as string
-    content = _read_source(source)
+    content = read_source(source)
 
     # Find first non-comment, non-blank statement
     first_statement_type = _find_first_statement_type(content)
@@ -169,81 +171,6 @@ def is_proc_file(source: Union[str, Path, IO]) -> bool:
 # ============================================================================
 # Internal Helper Functions
 # ============================================================================
-
-
-def _read_source(source: Union[str, Path, IO]) -> str:
-    """
-    Read content from various source types.
-
-    Args:
-        source: String content, file path, or file-like object
-
-    Returns:
-        Content as string
-
-    Raises:
-        FileNotFoundError: If path doesn't exist
-        TypeError: If source type is invalid
-    """
-    # String content
-    if isinstance(source, str):
-        # Empty string is valid content
-        if not source:
-            return ""
-
-        # Check if it's a file path (no newlines and looks like a path)
-        if "\n" not in source and "\r" not in source and len(source) < 500:
-            # Might be a file path - check if it exists
-            try:
-                path = Path(source)
-                if path.exists() and path.is_file():
-                    return _read_file(path)
-            except (OSError, ValueError):
-                # Not a valid path, treat as content
-                pass
-
-        # It's actual JCL content
-        return source
-
-    # Path object
-    elif isinstance(source, Path):
-        return _read_file(source)
-
-    # File-like object
-    elif hasattr(source, "read"):
-        content = source.read()
-        # Reset file pointer if possible
-        if hasattr(source, "seek"):
-            try:
-                source.seek(0)
-            except (OSError, IOError):
-                pass  # Not seekable, that's okay
-        return content
-
-    else:
-        raise TypeError(
-            f"Invalid source type: {type(source)}. Expected str, Path, or file-like object."
-        )
-
-
-def _read_file(path: Path) -> str:
-    """
-    Read content from a file path.
-
-    Args:
-        path: Path to file
-
-    Returns:
-        File content as string
-
-    Raises:
-        FileNotFoundError: If file doesn't exist
-    """
-    if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
-    from .utils import _read_file_with_fallback
-
-    return _read_file_with_fallback(path)
 
 
 def _find_first_statement_type(content: str) -> Optional[str]:

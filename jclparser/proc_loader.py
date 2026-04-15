@@ -14,6 +14,7 @@ import os
 
 from .model import Procedure
 from .errors import JCLSyntaxError, JCLValidationError
+from .utils import _read_file_with_fallback
 
 
 class ProcedureLoader(ABC):
@@ -218,9 +219,8 @@ class JCLLIBProcedureLoader(ProcedureLoader):
         from .jcl_file_type import detect_file_type_from_content, FileType
 
         try:
-            # Read the file content once
-            with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read()
+            # Read the file content once using the shared encoding-fallback reader
+            content = _read_file_with_fallback(file_path)
 
             # Detect the file type from already-read content (avoids second read)
             file_type = detect_file_type_from_content(content)
