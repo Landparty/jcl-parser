@@ -268,14 +268,21 @@ class DDStatement:
     def _lazy_parse_param(self, key: str, cache_attr: str, parse_method: str):
         """Return the cached parsed form of a structured DD parameter.
 
-        Reads ``self.parameters[key]``, coerces list values to a comma-joined
-        string, and delegates to ``ParameterParser.<parse_method>``.  The result
-        is stored on *cache_attr* so subsequent calls skip parsing entirely.
+        Reads ``self.parameters[key]`` and only parses supported textual forms:
+        a string value or a list of values joined with commas.  Unsupported
+        runtime types are ignored and return ``None`` rather than raising from
+        ``ParameterParser.<parse_method>``.  The result is stored on *cache_attr*
+        so subsequent calls skip parsing entirely.
         """
         cached = getattr(self, cache_attr)
         if cached is None and key in self.parameters:
             raw = self.parameters[key]
-            param_str = ",".join(str(v) for v in raw) if isinstance(raw, list) else raw
+            if isinstance(raw, list):
+                param_str = ",".join(str(v) for v in raw)
+            elif isinstance(raw, str):
+                param_str = raw
+            else:
+                return None
             parser = ParameterParser()
             cached = getattr(parser, parse_method)(param_str, self.line_number)
             object.__setattr__(self, cache_attr, cached)

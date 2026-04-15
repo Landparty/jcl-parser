@@ -124,11 +124,21 @@ def read_source(source: str | Path | Any) -> str:
     if isinstance(source, Path):
         return _require_file(source)
     if isinstance(source, str):
-        # Treat as a file path when it looks like one
+        # Treat as a file path when it looks like one by extension or separator.
         if source.endswith(".jcl") or (
             ("/" in source or "\\" in source) and not source.strip().startswith("//")
         ):
             return _require_file(Path(source))
+        # For plain strings without path markers (no extension, no separators),
+        # check whether the string names an existing file.  JCL content always
+        # starts with "//" or contains newlines, so this fallback is safe.
+        if "\n" not in source and "\r" not in source and not source.strip().startswith("//"):
+            try:
+                path = Path(source)
+                if path.is_file():
+                    return _read_file_with_fallback(path)
+            except (OSError, ValueError):
+                pass
         return source
     # File-like object
     if not hasattr(source, "read"):

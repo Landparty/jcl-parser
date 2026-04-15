@@ -165,8 +165,11 @@ class TestFileTypeEdgeCases:
         content = read_source(source)
         assert "TESTJOB" in content
 
-    def test_string_that_looks_like_path_but_missing(self):
+    def test_string_that_looks_like_path_but_missing(self, tmp_path):
         """A .jcl-extension string that is not a real file raises FileNotFoundError.
+
+        Uses a path inside a temporary directory to guarantee the target never
+        exists, avoiding flakiness from coincidental filesystem matches.
 
         ``read_source`` is strict: a string ending in ``.jcl`` is treated as a
         path, and if it does not exist a ``FileNotFoundError`` is raised.
@@ -178,7 +181,7 @@ class TestFileTypeEdgeCases:
         from jclparser.utils import read_source
         from jclparser.jcl_file_type import is_jcl_file
 
-        nonexistent = "/nonexistent_jcl_file_xyz_12345.jcl"
+        nonexistent = str(tmp_path / "guaranteed_nonexistent.jcl")
         with pytest.raises(FileNotFoundError):
             read_source(nonexistent)
 
