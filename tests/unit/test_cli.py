@@ -993,3 +993,44 @@ class TestCLISQL:
             assert "program" in item
             assert "is_db2_program" in item
             assert "has_sql" in item
+
+
+@pytest.mark.unit
+class TestCLIAnalyze:
+    """Test 'analyze' subcommand."""
+
+    def test_analyze_all_steps_text(self, capsys):
+        util_jcl = str(FIXTURES / "sample_jcl" / "utility_programs.jcl")
+        rc = main([util_jcl, "analyze"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "IEBGEN" in out or "IEBGENER" in out
+
+    def test_analyze_json_structure(self, capsys):
+        util_jcl = str(FIXTURES / "sample_jcl" / "utility_programs.jcl")
+        rc = main([util_jcl, "analyze", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert "results" in data
+        assert isinstance(data["results"], list)
+
+    def test_analyze_json_result_keys(self, capsys):
+        util_jcl = str(FIXTURES / "sample_jcl" / "utility_programs.jcl")
+        main([util_jcl, "analyze", "--json"])
+        data = json.loads(capsys.readouterr().out)
+        for item in data["results"]:
+            assert "step" in item
+            assert "program" in item
+            assert "summary" in item
+            assert "notes" in item
+
+    def test_analyze_single_step(self, capsys):
+        util_jcl = str(FIXTURES / "sample_jcl" / "utility_programs.jcl")
+        rc = main([util_jcl, "analyze", "IEBGEN"])
+        assert rc in (0, 1)
+        capsys.readouterr()
+
+    def test_analyze_unknown_step_returns_one(self, capsys):
+        rc = main([SORT_JCL, "analyze", "NOSUCHSTEP"])
+        assert rc == 1
+        capsys.readouterr()

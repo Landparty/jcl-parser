@@ -167,6 +167,10 @@ def main(argv: list[str] | None = None) -> int:
     if query.lower() == "sql":
         return _cmd_sql(job, json_out)
 
+    if query.lower() == "analyze":
+        step_filter = tokens[1].upper() if len(tokens) > 1 else None
+        return _cmd_analyze(job, json_out, step_filter=step_filter)
+
     if query.lower() == "steps":
         if json_out:
             steps = [_step_or_cond_to_dict(s) for s in job.steps]
@@ -445,6 +449,50 @@ def _print_sql_results(hits: list) -> None:
         print(f"  {r.step_name or '(unnamed)':<12} PGM={r.program or '(none)'}{db2_tag}{cat_tag}")
         for kw, cat, dd in r.sql_statements:
             print(f"    {kw:<20} [{cat}] in DD={dd}")
+
+
+def _cmd_analyze(
+    job: "Job", json_output: bool = False, step_filter: str | None = None
+) -> int:
+    if step_filter:
+        step = job.get_step(step_filter)
+        if step is None:
+            print(f"Step not found: {step_filter}", file=sys.stderr)
+            return 1
+        result = analyze_step(step)
+        results = [result] if result is not None else []
+    else:
+        results = analyze_job(job)
+
+    if json_output:
+        items = [
+            {
+                "step": r.step_name,
+                "program": r.program,
+                "summary": r.summary,
+                "notes": r.notes,
+                "raw_control": r.raw_control,
+            }
+            for r in results
+        ]
+        print(json.dumps({"results": items}, indent=2))
+    else:
+        _print_analyze_results(results)
+    return 0
+
+
+def _print_analyze_results(results: list) -> None:
+    if not results:
+        print("(no program profile matches)")
+        return
+    for r in results:
+        step_label = r.step_name or "(unnamed)"
+        print(f"  {step_label:<12} PGM={r.program}")
+        if r.summary:
+            print(f"    {r.summary}")
+        for note in r.notes:
+            print(f"    note: {note}")
+        print()
 
 
 def _print_summary(job: Job) -> None:
