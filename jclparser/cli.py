@@ -4,8 +4,7 @@ Command-line interface for jclparser.
 Usage:
     jcl-parser FILE                              Show job summary
     jcl-parser FILE steps                        List all steps
-    jcl-parser FILE procs                        List procedure definitions
-    jcl-parser FILE procs PROCNAME               Show a specific procedure
+    jcl-parser FILE procs [PROCNAME]             List/detail procedures
     jcl-parser FILE procs --explode              Show procedure expansion audit
     jcl-parser FILE procs --list-available       List PROCs in --proc-path libraries
     jcl-parser FILE STEP                         Show step details
@@ -13,6 +12,14 @@ Usage:
     jcl-parser FILE DDNAME                       Show all DDs with that name
     jcl-parser FILE --json                       Full parse result as JSON
     jcl-parser FILE --validate                   Validate the JCL
+    jcl-parser FILE detect                       Detect file type (JCL/PROC/UNKNOWN)
+    jcl-parser FILE metrics                      Structural metrics for the job
+    jcl-parser FILE lint                         Run lint rules against the job
+    jcl-parser --lint-list                       List all available lint rule codes
+    jcl-parser FILE datasets                     Dataset lifecycle analysis
+    jcl-parser FILE sql                          SQL/DB2 detection
+    jcl-parser FILE analyze [STEPNAME]           Program profile analysis
+    jcl-parser FILE paths                        RC feasibility path analysis
 """
 
 from __future__ import annotations
