@@ -931,3 +931,33 @@ class TestCLILint:
         for line in out.strip().splitlines():
             if line.strip():
                 assert line.startswith("["), f"unexpected line: {line!r}"
+
+
+@pytest.mark.unit
+class TestCLIDatasets:
+    """Test 'datasets' subcommand."""
+
+    def test_datasets_text(self, capsys):
+        rc = main([SORT_JCL, "datasets"])
+        assert rc in (0, 1)
+        out = capsys.readouterr().out
+        assert len(out.strip()) > 0
+
+    def test_datasets_json_structure(self, capsys):
+        rc = main([SORT_JCL, "datasets", "--json"])
+        assert rc in (0, 1)
+        data = json.loads(capsys.readouterr().out)
+        assert "lifecycle" in data
+        assert "violations" in data
+        assert isinstance(data["lifecycle"], dict)
+        assert isinstance(data["violations"], list)
+
+    def test_datasets_lifecycle_has_events(self, capsys):
+        main([SORT_JCL, "datasets", "--json"])
+        data = json.loads(capsys.readouterr().out)
+        assert len(data["lifecycle"]) >= 1
+
+    def test_datasets_exit_code(self, capsys):
+        rc = main([SORT_JCL, "datasets"])
+        capsys.readouterr()
+        assert rc in (0, 1)

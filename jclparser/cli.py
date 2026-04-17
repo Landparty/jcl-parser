@@ -161,6 +161,9 @@ def main(argv: list[str] | None = None) -> int:
     if query.lower() == "lint":
         return _cmd_lint(job, json_out)
 
+    if query.lower() == "datasets":
+        return _cmd_datasets(job, json_out)
+
     if query.lower() == "steps":
         if json_out:
             steps = [_step_or_cond_to_dict(s) for s in job.steps]
@@ -349,6 +352,59 @@ def _print_lint_findings(findings: list) -> None:
         line = e.line_number
         loc = f" line {line:>4}" if line else "       "
         print(f"[{code}]{loc}: {e.message}")
+
+
+def _cmd_datasets(job: "Job", json_output: bool = False) -> int:
+    lifecycle = analyze_dataset_lifecycle(job)
+    violations = validate_dataset_lifecycle(job)
+    if json_output:
+        lifecycle_dict = {
+            dsn: [
+                {
+                    "step": ev.step_name,
+                    "dd": ev.dd_name,
+                    "action": ev.action,
+                    "disp_status": ev.disp_status,
+                    "disp_normal": ev.disp_normal,
+                    "line": ev.line_number,
+                }
+                for ev in events
+            ]
+            for dsn, events in lifecycle.items()
+        }
+        viol_list = [
+            {
+                "severity": e.severity.name if e.severity else "WARNING",
+                "message": e.message,
+                "line": e.line_number,
+            }
+            for e in violations
+        ]
+        print(json.dumps({"lifecycle": lifecycle_dict, "violations": viol_list}, indent=2))
+    else:
+        _print_datasets(lifecycle, violations)
+    return 1 if violations else 0
+
+
+def _print_datasets(lifecycle: dict, violations: list) -> None:
+    if not lifecycle:
+        print("(no datasets found)")
+        return
+    for dsn, events in sorted(lifecycle.items()):
+        print(dsn)
+        for ev in events:
+            disp = f"  status={ev.disp_status}" if ev.disp_status else ""
+            norm = f", normal={ev.disp_normal}" if ev.disp_normal else ""
+            print(
+                f"  {ev.action:<12} {ev.step_name:<10} line {ev.line_number:>4}"
+                f"  (dd={ev.dd_name}{disp}{norm})"
+            )
+        print()
+    if violations:
+        print(f"Violations ({len(violations)}):")
+        for e in violations:
+            sev = e.severity.name if e.severity else "WARNING"
+            print(f"  [{sev}] {e.message}")
 
 
 def _print_summary(job: Job) -> None:
