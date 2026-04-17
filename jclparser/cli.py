@@ -145,6 +145,9 @@ def main(argv: list[str] | None = None) -> int:
             _print_summary(job)
         return 0
 
+    if query.lower() == "metrics":
+        return _cmd_metrics(job, json_out)
+
     if query.lower() == "steps":
         if json_out:
             steps = [_step_or_cond_to_dict(s) for s in job.steps]
@@ -275,6 +278,23 @@ def _cmd_detect(path: Path, json_output: bool = False) -> int:
     else:
         print(name)
     return 0
+
+
+def _cmd_metrics(job: "Job", json_output: bool = False) -> int:
+    m = compute_metrics(job)
+    if json_output:
+        print(json.dumps(m.to_dict(), indent=2))
+    else:
+        _print_metrics(m)
+    return 0
+
+
+def _print_metrics(m) -> None:
+    fields = m.to_dict()
+    fields.pop("metrics", None)  # remove backwards-compat shadow dict
+    width = max(len(k) for k in fields)
+    for k, v in fields.items():
+        print(f"  {k:<{width}}  {v}")
 
 
 def _print_summary(job: Job) -> None:

@@ -863,3 +863,31 @@ class TestCLIDetect:
         assert rc == 0
         out = capsys.readouterr().out
         assert out.strip() in {"JCL", "PROC", "UNKNOWN"}
+
+
+@pytest.mark.unit
+class TestCLIMetrics:
+    """Test 'metrics' subcommand."""
+
+    def test_metrics_text(self, capsys):
+        rc = main([SORT_JCL, "metrics"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "step_count" in out
+        assert "dd_count" in out
+        assert "cyclomatic_score" in out
+
+    def test_metrics_json(self, capsys):
+        rc = main([SORT_JCL, "metrics", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert "step_count" in data
+        assert "exec_step_count" in data
+        assert "dd_count" in data
+        assert "cyclomatic_score" in data
+        assert data["step_count"] >= 1
+
+    def test_metrics_returns_zero(self, capsys):
+        rc = main([SORT_JCL, "metrics"])
+        capsys.readouterr()
+        assert rc == 0
