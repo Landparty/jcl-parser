@@ -171,6 +171,9 @@ def main(argv: list[str] | None = None) -> int:
         step_filter = tokens[1].upper() if len(tokens) > 1 else None
         return _cmd_analyze(job, json_out, step_filter=step_filter)
 
+    if query.lower() == "paths":
+        return _cmd_paths(job, json_out)
+
     if query.lower() == "steps":
         if json_out:
             steps = [_step_or_cond_to_dict(s) for s in job.steps]
@@ -493,6 +496,52 @@ def _print_analyze_results(results: list) -> None:
         for note in r.notes:
             print(f"    note: {note}")
         print()
+
+
+def _cmd_paths(job: "Job", json_output: bool = False) -> int:
+    report = compute_feasible_paths(job)
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "unreachable_steps": report.unreachable_steps,
+                    "always_skipped": report.always_skipped,
+                    "contradictory_conditions": [
+                        list(pair) for pair in report.contradictory_conditions
+                    ],
+                    "duplicate_if_branches": [
+                        {"line": line, "condition": cond}
+                        for line, cond in report.duplicate_if_branches
+                    ],
+                },
+                indent=2,
+            )
+        )
+    else:
+        _print_paths(report)
+    return 0
+
+
+def _print_paths(report) -> None:
+    if report.is_empty():
+        print("(no feasibility issues found)")
+        return
+    if report.unreachable_steps:
+        print("Unreachable steps:")
+        for s in report.unreachable_steps:
+            print(f"  {s}")
+    if report.always_skipped:
+        print("Always skipped:")
+        for s in report.always_skipped:
+            print(f"  {s}")
+    if report.contradictory_conditions:
+        print("Contradictory conditions:")
+        for a, b in report.contradictory_conditions:
+            print(f"  {a}  vs  {b}")
+    if report.duplicate_if_branches:
+        print("Duplicate IF branches:")
+        for line, cond in report.duplicate_if_branches:
+            print(f"  line {line}: {cond}")
 
 
 def _print_summary(job: Job) -> None:

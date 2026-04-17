@@ -1034,3 +1034,33 @@ class TestCLIAnalyze:
         rc = main([SORT_JCL, "analyze", "NOSUCHSTEP"])
         assert rc == 1
         capsys.readouterr()
+
+
+@pytest.mark.unit
+class TestCLIPaths:
+    """Test 'paths' subcommand."""
+
+    def test_paths_no_conditionals(self, capsys):
+        rc = main([SORT_JCL, "paths"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "no" in out.lower() or out.strip() == ""
+
+    def test_paths_with_conditionals(self, capsys):
+        rc = main([CONDITIONAL_JCL, "paths"])
+        assert rc == 0
+        capsys.readouterr()
+
+    def test_paths_json_structure(self, capsys):
+        rc = main([CONDITIONAL_JCL, "paths", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert "unreachable_steps" in data
+        assert "always_skipped" in data
+        assert "contradictory_conditions" in data
+        assert "duplicate_if_branches" in data
+
+    def test_paths_always_exits_zero(self, capsys):
+        rc = main([SORT_JCL, "paths"])
+        capsys.readouterr()
+        assert rc == 0
