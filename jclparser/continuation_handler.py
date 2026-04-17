@@ -4,7 +4,7 @@ Enhanced continuation line handling for JCL parsing.
 Handles complex multi-line statements with proper context awareness.
 """
 
-from typing import List, Optional, Tuple
+from typing import ClassVar, List, Optional, Set, Tuple
 from dataclasses import dataclass
 import re
 
@@ -33,14 +33,14 @@ class ContinuationLineHandler:
 
     # Standard JCL continuation: // followed by 2-14 spaces (columns 4-16)
     # Must be followed by content or end of line
-    CONTINUATION_PATTERN = re.compile(r"^//\s{2,14}(\S|$)")
+    CONTINUATION_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^//\s{2,14}(\S|$)")
 
     # Alternative continuation: // followed by spaces and comma
-    ALT_CONTINUATION_PATTERN = re.compile(r"^//\s+,")
+    ALT_CONTINUATION_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^//\s+,")
 
     # Standard JCL statement keywords that start new statements (not continuations)
     # Only include primary JCL statement types, not parameter keywords
-    JCL_KEYWORDS = {
+    JCL_KEYWORDS: ClassVar[Set[str]] = {
         "JOB",
         "EXEC",
         "DD",

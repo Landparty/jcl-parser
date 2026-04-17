@@ -49,7 +49,7 @@ class PluginRegistry:
     Manages registration and lookup of statement and validation plugins.
     """
     
-    def __init__(self):
+    def __init__(self) -> None:
         self._statement_plugins: List[StatementPlugin] = []
         self._validation_plugins: List[ValidationPlugin] = []
         self._plugin_names: Dict[str, object] = {}

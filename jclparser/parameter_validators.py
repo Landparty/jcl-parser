@@ -5,8 +5,8 @@ Provides validation for common JCL parameter values like DISP, dataset names, et
 """
 
 import re
-from typing import List
-from dataclasses import dataclass
+from typing import ClassVar, List, Set
+from dataclasses import dataclass, field
 
 # Module-level frozensets for character validation (avoids per-call set construction)
 _VALID_QUALIFIER_CHARS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$#@-')
@@ -18,11 +18,7 @@ class ValidationResult:
     """Result of a validation check."""
     is_valid: bool
     errors: List[str]
-    warnings: List[str] = None
-    
-    def __post_init__(self):
-        if self.warnings is None:
-            self.warnings = []
+    warnings: List[str] = field(default_factory=list)
 
 
 class DISPValidator:
@@ -35,14 +31,14 @@ class DISPValidator:
     - abnormal-termination: DELETE, KEEP, CATLG, UNCATLG
     """
     
-    VALID_STATUS = {'NEW', 'OLD', 'SHR', 'MOD'}
-    VALID_NORMAL_TERM = {'DELETE', 'KEEP', 'CATLG', 'UNCATLG', 'PASS'}
-    VALID_ABNORMAL_TERM = {'DELETE', 'KEEP', 'CATLG', 'UNCATLG'}
+    VALID_STATUS: ClassVar[Set[str]] = {'NEW', 'OLD', 'SHR', 'MOD'}
+    VALID_NORMAL_TERM: ClassVar[Set[str]] = {'DELETE', 'KEEP', 'CATLG', 'UNCATLG', 'PASS'}
+    VALID_ABNORMAL_TERM: ClassVar[Set[str]] = {'DELETE', 'KEEP', 'CATLG', 'UNCATLG'}
 
     # Precomputed sorted join strings (built once at class definition time)
-    _VALID_STATUS_STR        = ', '.join(sorted(VALID_STATUS))
-    _VALID_NORMAL_TERM_STR   = ', '.join(sorted(VALID_NORMAL_TERM))
-    _VALID_ABNORMAL_TERM_STR = ', '.join(sorted(VALID_ABNORMAL_TERM))
+    _VALID_STATUS_STR: ClassVar[str]        = ', '.join(sorted({'NEW', 'OLD', 'SHR', 'MOD'}))
+    _VALID_NORMAL_TERM_STR: ClassVar[str]   = ', '.join(sorted({'DELETE', 'KEEP', 'CATLG', 'UNCATLG', 'PASS'}))
+    _VALID_ABNORMAL_TERM_STR: ClassVar[str] = ', '.join(sorted({'DELETE', 'KEEP', 'CATLG', 'UNCATLG'}))
 
     @classmethod
     def validate(cls, disp_value: str) -> ValidationResult:
@@ -56,7 +52,7 @@ class DISPValidator:
             ValidationResult with errors and warnings
         """
         errors = []
-        warnings = []
+        warnings: List[str] = []
         
         if not disp_value:
             return ValidationResult(is_valid=True, errors=[], warnings=[])
@@ -117,10 +113,10 @@ class DatasetNameValidator:
     """
     
     # Pattern for a single qualifier
-    QUALIFIER_PATTERN = re.compile(r'^[A-Z$#@][A-Z0-9$#@-]{0,7}$')
-    
+    QUALIFIER_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r'^[A-Z$#@][A-Z0-9$#@-]{0,7}$')
+
     # Pattern for GDG generation
-    GDG_PATTERN = re.compile(r'^\([+-]?\d+\)$')
+    GDG_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r'^\([+-]?\d+\)$')
     
     @classmethod
     def validate(cls, dsn: str, allow_temporary: bool = True, allow_gdg: bool = True) -> ValidationResult:
@@ -136,7 +132,7 @@ class DatasetNameValidator:
             ValidationResult with errors and warnings
         """
         errors = []
-        warnings = []
+        warnings: List[str] = []
         
         if not dsn:
             errors.append("Dataset name is empty")
@@ -232,7 +228,7 @@ class ParameterValidator:
         Common values: SYSDA, SYSALLDA, 3390, 3380, TAPE, etc.
         """
         errors = []
-        warnings = []
+        warnings: List[str] = []
         
         if not unit:
             errors.append("UNIT parameter is empty")
@@ -265,7 +261,7 @@ class ParameterValidator:
         Volume serial: 1-6 characters, alphanumeric
         """
         errors = []
-        warnings = []
+        warnings: List[str] = []
         
         if not volume:
             return ValidationResult(is_valid=True, errors=[], warnings=[])

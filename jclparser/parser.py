@@ -118,14 +118,14 @@ def parse_jcl(
     
     # Now parse the merged lines
     job = None
-    conditional_stack = []  # List of tuples: (ConditionalBlock, active_branch)
+    conditional_stack: List[Any] = []  # List of tuples: (ConditionalBlock, active_branch)
     current_step = None
     current_dd = None
-    inline_data_lines = []
+    inline_data_lines: List[str] = []
     in_inline_data = False
     current_procedure = None  # Track when we're inside a PROC/PEND block
     current_delimiter = "/*"
-    orphaned_dds = []  # Track DDs that appear before first EXEC
+    orphaned_dds: List[Any] = []  # Track DDs that appear before first EXEC
 
     
     for line, line_num in merged_lines:
@@ -192,6 +192,7 @@ def parse_jcl(
                 elif current_procedure is not None:
                     current_procedure.steps.append(current_step)
                 else:
+                    assert job is not None
                     job.add_step(current_step)
             elif stmt.type == "DD":
                 # Create the DD statement
@@ -361,20 +362,17 @@ def parse_jcl(
         from .proc_loader import create_default_loader
         proc_loader = create_default_loader(
             inline_procedures=job.procedures,
-            base_path=proc_base_path,
+            base_path=Path(proc_base_path) if isinstance(proc_base_path, str) else proc_base_path,
             include_jcllib=True
         )
-        # Store loader on job for later use (e.g., in explosion)
-        job._proc_loader = proc_loader
-        
+
         # Try to load any external PROCs that were referenced but not found inline
         # This happens when EXEC PROC is used but PROC is not defined inline
         for step in job.steps:
             if isinstance(step, Step) and step.procedure and not job.get_procedure(step.procedure):
                 # Try to load external PROC
-                # Convert list to tuple for caching (CompositeProcedureLoader requires hashable)
-                libraries_tuple = tuple(job.jcllib_order) if job.jcllib_order else None
-                proc = proc_loader.load_procedure(step.procedure, libraries_tuple)
+                libraries_list = list(job.jcllib_order) if job.jcllib_order else None
+                proc = proc_loader.load_procedure(step.procedure, libraries_list)
                 if proc:
                     job.add_procedure(proc)
                 elif strict_mode:
@@ -751,8 +749,8 @@ def _check_param_balance(param_string: str, line_number: int) -> None:
 
 def _parse_parameters(param_string: str, line_number: int = 0) -> Dict[str, Any]:
     """Parse JCL parameters from parameter string"""
-    parameters = {}
-    
+    parameters: Dict[str, Any] = {}
+
     if not param_string.strip():
         return parameters
     

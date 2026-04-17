@@ -209,8 +209,8 @@ def parse_jcl_parameter(param: str) -> Tuple[str, Any]:
         if len(sub_params) == 1:
             value = sub_params[0]
         else:
-            value = sub_params
-    
+            return key, sub_params
+
     return key, value
 
 
@@ -372,7 +372,7 @@ def extract_inline_data(lines: List[str], start_index: int) -> Tuple[Optional[st
     if start_index >= len(lines):
         return None, start_index
     
-    data_lines = []
+    data_lines: List[str] = []
     current_index = start_index + 1
     
     while current_index < len(lines):

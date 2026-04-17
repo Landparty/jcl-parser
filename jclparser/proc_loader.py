@@ -245,14 +245,11 @@ class CompositeProcedureLoader(ProcedureLoader):
         self.loaders = loaders
         self._cache: Dict[tuple, Procedure] = {}
 
-    def load_procedure(self, name: str, libraries: Optional[tuple] = None) -> Optional[Procedure]:
+    def load_procedure(self, name: str, libraries: Optional[List[str]] = None) -> Optional[Procedure]:
         """
         Load procedure using fallback chain.
-
-        Note: *libraries* must be a tuple (or None) so it can be used as a
-        dict key.  Pass a tuple when calling from external code.
         """
-        cache_key = (name.upper(), libraries if libraries is not None else ())
+        cache_key = (name.upper(), tuple(libraries) if libraries is not None else ())
         if cache_key in self._cache:
             return self._cache[cache_key]
 
@@ -268,8 +265,8 @@ class CompositeProcedureLoader(ProcedureLoader):
 
     def has_procedure(self, name: str, libraries: Optional[List[str]] = None) -> bool:
         """Check if any loader can provide the procedure"""
-        lib_tuple = tuple(libraries) if libraries else None
-        return self.load_procedure(name, lib_tuple) is not None
+        lib_list = list(libraries) if libraries else None
+        return self.load_procedure(name, lib_list) is not None
 
 
 def create_default_loader(

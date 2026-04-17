@@ -260,8 +260,8 @@ class ParameterParser:
         if space_string.startswith('(') and space_string.endswith(')'):
             space_string = space_string[1:-1]
         
-        subparams = {}
-        
+        subparams: Dict[str, Any] = {}
+
         # Split by comma
         parts = self._split_parameters(space_string)
         
