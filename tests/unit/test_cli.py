@@ -839,3 +839,27 @@ class TestCLIProcs:
         assert rc == 1
         err = capsys.readouterr().err
         assert "--proc-path" in err
+
+
+@pytest.mark.unit
+class TestCLIDetect:
+    """Test 'detect' subcommand."""
+
+    def test_detect_jcl(self, capsys):
+        rc = main([SORT_JCL, "detect"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "JCL" in out
+
+    def test_detect_json(self, capsys):
+        rc = main([SORT_JCL, "detect", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["file_type"] == "JCL"
+        assert "path" in data
+
+    def test_detect_proc(self, capsys):
+        rc = main([str(FIXTURES / "sample_jcl" / "standalone_proc.jcl"), "detect"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert out.strip() in {"JCL", "PROC", "UNKNOWN"}

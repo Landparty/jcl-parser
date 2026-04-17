@@ -24,6 +24,13 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .jcl_file_type import detect_file_type, FileType
+from .metrics import compute_metrics
+from .lint import lint_job, all_rules
+from .dataset_lifecycle import analyze_dataset_lifecycle, validate_dataset_lifecycle
+from .sql_detector import detect_sql_in_job
+from .program_profiles import analyze_job, analyze_step
+from .rc_analysis import compute_feasible_paths
 from .errors import (
     JCLSyntaxError,
     JCLValidationError,
@@ -96,6 +103,11 @@ def main(argv: list[str] | None = None) -> int:
     # --- validate mode ---
     if args.validate:
         return _cmd_validate(path, json_output=args.json_output)
+
+    # --- detect mode (no parse needed) ---
+    tokens_early = args.query
+    if tokens_early and tokens_early[0].lower() == "detect":
+        return _cmd_detect(path, args.json_output)
 
     # --- parse ---
     try:
@@ -252,6 +264,16 @@ def _cmd_list_available(
     )
     if used_count:
         print("(* = referenced by this job)")
+    return 0
+
+
+def _cmd_detect(path: Path, json_output: bool = False) -> int:
+    file_type = detect_file_type(path)
+    name = file_type.name  # "JCL", "PROC", or "UNKNOWN"
+    if json_output:
+        print(json.dumps({"file_type": name, "path": str(path)}, indent=2))
+    else:
+        print(name)
     return 0
 
 
