@@ -891,3 +891,43 @@ class TestCLIMetrics:
         rc = main([SORT_JCL, "metrics"])
         capsys.readouterr()
         assert rc == 0
+
+
+@pytest.mark.unit
+class TestCLILint:
+    """Test 'lint' subcommand."""
+
+    def test_lint_exits_zero_or_one(self, capsys):
+        rc = main([SORT_JCL, "lint"])
+        assert rc in (0, 1)
+        capsys.readouterr()
+
+    def test_lint_json_structure(self, capsys):
+        rc = main([SORT_JCL, "lint", "--json"])
+        assert rc in (0, 1)
+        data = json.loads(capsys.readouterr().out)
+        assert "findings" in data
+        assert "count" in data
+        assert isinstance(data["findings"], list)
+
+    def test_lint_finding_keys(self, capsys):
+        main([COMPLEX_JCL, "lint", "--json"])
+        data = json.loads(capsys.readouterr().out)
+        for finding in data["findings"]:
+            assert "code" in finding
+            assert "severity" in finding
+            assert "message" in finding
+
+    def test_lint_list_flag(self, capsys):
+        rc = main(["--lint-list"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # rule codes contain "JCL"
+        assert "JCL" in out
+
+    def test_lint_text_each_line_starts_with_bracket(self, capsys):
+        main([COMPLEX_JCL, "lint"])
+        out = capsys.readouterr().out
+        for line in out.strip().splitlines():
+            if line.strip():
+                assert line.startswith("["), f"unexpected line: {line!r}"

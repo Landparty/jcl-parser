@@ -54,6 +54,11 @@ from .proc_loader import JCLLIBProcedureLoader
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns exit code."""
+    # --lint-list doesn't require FILE — handle before argparse
+    _argv = argv if argv is not None else sys.argv[1:]
+    if "--lint-list" in _argv:
+        return _cmd_lint_list()
+
     parser = argparse.ArgumentParser(
         prog="jcl-parser",
         description="Parse and inspect IBM JCL files.",
@@ -91,6 +96,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
+    )
+    parser.add_argument(
+        "--lint-list",
+        action="store_true",
+        help="List all available lint rule codes and descriptions, then exit",
     )
 
     args = parser.parse_args(argv)
@@ -147,6 +157,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if query.lower() == "metrics":
         return _cmd_metrics(job, json_out)
+
+    if query.lower() == "lint":
+        return _cmd_lint(job, json_out)
 
     if query.lower() == "steps":
         if json_out:
@@ -295,6 +308,47 @@ def _print_metrics(m) -> None:
     width = max(len(k) for k in fields)
     for k, v in fields.items():
         print(f"  {k:<{width}}  {v}")
+
+
+def _cmd_lint_list() -> int:
+    rules = all_rules()
+    if not rules:
+        print("(no lint rules registered)")
+        return 0
+    width = max(len(r.code) for r in rules)
+    for rule in rules:
+        print(f"  {rule.code:<{width}}  {rule.description}")
+    return 0
+
+
+def _cmd_lint(job: "Job", json_output: bool = False) -> int:
+    findings = lint_job(job)
+    if json_output:
+        items = [
+            {
+                "code": getattr(e, "error_code", None) or "",
+                "severity": e.severity.name if e.severity else "WARNING",
+                "line": e.line_number,
+                "message": e.message,
+            }
+            for e in findings
+        ]
+        print(json.dumps({"findings": items, "count": len(items)}, indent=2))
+    else:
+        _print_lint_findings(findings)
+    return 1 if findings else 0
+
+
+def _print_lint_findings(findings: list) -> None:
+    if not findings:
+        print("OK - no lint findings.")
+        return
+    for e in findings:
+        code = getattr(e, "error_code", None) or "LINT"
+        sev = e.severity.name if e.severity else "WARNING"
+        line = e.line_number
+        loc = f" line {line:>4}" if line else "       "
+        print(f"[{code}]{loc}: {e.message}")
 
 
 def _print_summary(job: Job) -> None:
