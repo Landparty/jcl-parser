@@ -164,6 +164,9 @@ def main(argv: list[str] | None = None) -> int:
     if query.lower() == "datasets":
         return _cmd_datasets(job, json_out)
 
+    if query.lower() == "sql":
+        return _cmd_sql(job, json_out)
+
     if query.lower() == "steps":
         if json_out:
             steps = [_step_or_cond_to_dict(s) for s in job.steps]
@@ -405,6 +408,43 @@ def _print_datasets(lifecycle: dict, violations: list) -> None:
         for e in violations:
             sev = e.severity.name if e.severity else "WARNING"
             print(f"  [{sev}] {e.message}")
+
+
+def _cmd_sql(job: "Job", json_output: bool = False) -> int:
+    results = detect_sql_in_job(job)
+    hits = [r for r in results if r.has_sql]
+    if json_output:
+        items = [
+            {
+                "step": r.step_name,
+                "program": r.program,
+                "is_db2_program": r.is_db2_program,
+                "has_sql": r.has_sql,
+                "sql_categories": sorted(r.sql_categories),
+                "sql_statements": [
+                    {"keyword": kw, "category": cat, "dd": dd}
+                    for kw, cat, dd in r.sql_statements
+                ],
+            }
+            for r in hits
+        ]
+        print(json.dumps({"results": items, "count": len(items)}, indent=2))
+    else:
+        _print_sql_results(hits)
+    return 1 if hits else 0
+
+
+def _print_sql_results(hits: list) -> None:
+    if not hits:
+        print("(no SQL detected)")
+        return
+    for r in hits:
+        db2_tag = " [DB2 program]" if r.is_db2_program else ""
+        cats = ", ".join(sorted(r.sql_categories)) if r.sql_categories else ""
+        cat_tag = f"  categories={cats}" if cats else ""
+        print(f"  {r.step_name or '(unnamed)':<12} PGM={r.program or '(none)'}{db2_tag}{cat_tag}")
+        for kw, cat, dd in r.sql_statements:
+            print(f"    {kw:<20} [{cat}] in DD={dd}")
 
 
 def _print_summary(job: Job) -> None:

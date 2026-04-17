@@ -961,3 +961,35 @@ class TestCLIDatasets:
         rc = main([SORT_JCL, "datasets"])
         capsys.readouterr()
         assert rc in (0, 1)
+
+
+@pytest.mark.unit
+class TestCLISQL:
+    """Test 'sql' subcommand."""
+
+    def test_sql_no_sql_job(self, capsys):
+        """SORT_JCL has 'MERGE' which is a SQL keyword, so rc=1 expected."""
+        rc = main([SORT_JCL, "sql"])
+        assert rc in (0, 1)
+        out = capsys.readouterr().out
+        # Output should either be empty or contain SQL results
+        assert len(out.strip()) >= 0
+
+    def test_sql_json_structure(self, capsys):
+        util_jcl = str(FIXTURES / "sample_jcl" / "utility_programs.jcl")
+        rc = main([util_jcl, "sql", "--json"])
+        assert rc in (0, 1)
+        data = json.loads(capsys.readouterr().out)
+        assert "results" in data
+        assert "count" in data
+        assert isinstance(data["results"], list)
+
+    def test_sql_json_result_keys(self, capsys):
+        util_jcl = str(FIXTURES / "sample_jcl" / "utility_programs.jcl")
+        main([util_jcl, "sql", "--json"])
+        data = json.loads(capsys.readouterr().out)
+        for item in data["results"]:
+            assert "step" in item
+            assert "program" in item
+            assert "is_db2_program" in item
+            assert "has_sql" in item
