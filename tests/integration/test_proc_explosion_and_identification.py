@@ -121,7 +121,7 @@ class TestScenario1_InlineProcExplosion:
         assert [s.name for s in exploded.steps] == [
             "CALL1.STEP1",
             "CALL2.STEP1",
-            "CALL3.STEP1"
+            "CALL3.STEP1",
         ]
         assert all(s.is_exploded for s in exploded.steps)
 
@@ -209,9 +209,9 @@ class TestScenario1_InlineProcExplosion:
 //         PEND
 //CALL     EXEC P1
 //"""
-        
+
         job = parse_jcl(jcl_content)
-        
+
         # Explosion should raise CircularProcedureError (which is detected before depth limit)
         # because P1 -> P2 -> P1 is circular
         with pytest.raises(CircularProcedureError):
@@ -262,19 +262,19 @@ class TestScenario2_BackendProcIdentification:
 //"""
 
         job = parse_jcl(jcl_content)
-        
+
         # Verify PROC was parsed inline
         assert len(job.procedures) == 1
         assert job.procedures[0].name == "BACKUP"
-        
+
         # Create inline loader
         inline_loader = InlineProcedureLoader(job.procedures)
-        
+
         # Verify loader can retrieve the procedure
         loaded_proc = inline_loader.load_procedure("BACKUP")
         assert loaded_proc is not None
         assert loaded_proc.name == "BACKUP"
-        
+
         # Explode with inline loader
         exploded = job.explode(loader=inline_loader)
 
@@ -311,12 +311,12 @@ class TestScenario2_BackendProcIdentification:
             loader = JCLLIBProcedureLoader(base_path=Path(tmpdir))
 
             # Should load VALIDPROC
-            valid_proc = loader.load_procedure('VALIDPROC', ['PROCLIB'])
+            valid_proc = loader.load_procedure("VALIDPROC", ["PROCLIB"])
             assert valid_proc is not None
-            assert valid_proc.name == 'VALIDPROC'
+            assert valid_proc.name == "VALIDPROC"
 
             # Should NOT load JOBFILE (it's a JCL job, not a PROC)
-            job_proc = loader.load_procedure('JOBFILE', ['PROCLIB'])
+            job_proc = loader.load_procedure("JOBFILE", ["PROCLIB"])
             # This should be None because JOBFILE has a JOB statement (it's a JCL job, not a PROC)
             assert job_proc is None
 
@@ -345,12 +345,12 @@ class TestScenario2_BackendProcIdentification:
             loader = JCLLIBProcedureLoader(base_path=Path(tmpdir))
 
             # LIB1 first in order - should get PROG1
-            proc = loader.load_procedure('SAMENAME', ['LIB1', 'LIB2'])
+            proc = loader.load_procedure("SAMENAME", ["LIB1", "LIB2"])
             assert proc is not None
             assert proc.steps[0].program == "PROG1"
 
             # LIB2 first in order - should get PROG2
-            proc = loader.load_procedure('SAMENAME', ['LIB2', 'LIB1'])
+            proc = loader.load_procedure("SAMENAME", ["LIB2", "LIB1"])
             assert proc is not None
             assert proc.steps[0].program == "PROG2"
 
@@ -424,9 +424,7 @@ class TestScenario2_BackendProcIdentification:
 
             # Composite loader should prefer inline PROC
             loader = create_default_loader(
-                job.procedures,
-                base_path=Path(tmpdir),
-                include_jcllib=True
+                job.procedures, base_path=Path(tmpdir), include_jcllib=True
             )
 
             exploded = job.explode(loader=loader)
@@ -523,12 +521,12 @@ class TestBackendIntegration:
 class TestProcedureEntryPointDetection:
     """
     Tests for identifying and flagging PROCs as entry points.
-    
+
     An entry point is a PROC that directly executes a COBOL program or
     other application program (not another PROC). These are important for
     impact analysis and call chain tracking.
     """
-    
+
     def test_proc_with_cobol_exec_is_entry_point(self):
         """Test that a PROC with EXEC COBOL is flagged as entry point"""
         jcl_content = """//MYJOB    JOB (ACCT),'COBOL ENTRY POINT'
@@ -540,32 +538,29 @@ class TestProcedureEntryPointDetection:
 //         PEND
 //CALL1    EXEC COBPROC
 //"""
-        
+
         job = parse_jcl(jcl_content)
-        
+
         # Verify PROC was parsed
         assert len(job.procedures) == 1
         proc = job.procedures[0]
         assert proc.name == "COBPROC"
-        
+
         # Check that the procedure contains a COBOL program execution
         # An entry point procedure should contain a step with a program (not another PROC)
         assert len(proc.steps) > 0
-        
+
         # Verify the procedure contains a direct program execution
         has_program_exec = any(step.program is not None for step in proc.steps)
         assert has_program_exec, "PROC should contain direct program execution"
-        
+
         # Mark as entry point function
         def is_entry_point(procedure: Procedure) -> bool:
             """Check if procedure is an entry point (executes program, not another PROC)"""
-            return any(
-                step.program is not None 
-                for step in procedure.steps
-            )
-        
+            return any(step.program is not None for step in procedure.steps)
+
         assert is_entry_point(proc), "COBOL PROC should be flagged as entry point"
-    
+
     def test_non_entry_point_proc_with_nested_exec(self):
         """Test that a PROC calling another PROC is NOT an entry point"""
         jcl_content = """//MYJOB    JOB (ACCT),'NESTED PROC'
@@ -577,22 +572,21 @@ class TestProcedureEntryPointDetection:
 //         PEND
 //CALL     EXEC OUTER
 //"""
-        
+
         job = parse_jcl(jcl_content)
-        
+
         # Find the OUTER procedure (it calls INNER, not a program)
         outer_proc = next(p for p in job.procedures if p.name == "OUTER")
-        
+
         def is_entry_point(procedure: Procedure) -> bool:
             """Check if procedure is an entry point (executes program, not another PROC)"""
-            return any(
-                step.program is not None 
-                for step in procedure.steps
-            )
-        
+            return any(step.program is not None for step in procedure.steps)
+
         # OUTER should NOT be an entry point (it calls INNER, not a program)
-        assert not is_entry_point(outer_proc), "PROC with nested EXEC should NOT be entry point"
-    
+        assert not is_entry_point(outer_proc), (
+            "PROC with nested EXEC should NOT be entry point"
+        )
+
     def test_multiple_procs_entry_point_detection(self):
         """Test entry point detection across multiple procedures"""
         jcl_content = """//MYJOB    JOB (ACCT),'MULTI PROC ENTRY'
@@ -610,24 +604,23 @@ class TestProcedureEntryPointDetection:
 //CALL2    EXEC UTILPROC
 //CALL3    EXEC WRAPPROC
 //"""
-        
+
         job = parse_jcl(jcl_content)
-        
+
         def is_entry_point(procedure: Procedure) -> bool:
             """Check if procedure is an entry point"""
-            return any(
-                step.program is not None 
-                for step in procedure.steps
-            )
-        
+            return any(step.program is not None for step in procedure.steps)
+
         # Build a mapping of PROC name to entry point status
         entry_points = {p.name: is_entry_point(p) for p in job.procedures}
-        
+
         # Verify entry point detection
         assert entry_points["PROGPROC"] is True, "PROGPROC should be entry point"
         assert entry_points["UTILPROC"] is True, "UTILPROC should be entry point"
-        assert entry_points["WRAPPROC"] is False, "WRAPPROC should NOT be entry point (calls other PROCs)"
-    
+        assert entry_points["WRAPPROC"] is False, (
+            "WRAPPROC should NOT be entry point (calls other PROCs)"
+        )
+
     def test_entry_point_proc_with_cobol_and_utilities(self):
         """Test entry point detection with COBOL program + utility steps"""
         jcl_content = """//MYJOB    JOB (ACCT),'COMPLEX COBOL'
@@ -640,25 +633,24 @@ class TestProcedureEntryPointDetection:
 //         PEND
 //CALL     EXEC COBPROC,DATAFILE=MYDATA
 //"""
-        
+
         job = parse_jcl(jcl_content)
         proc = job.procedures[0]
-        
+
         def is_entry_point(procedure: Procedure) -> bool:
             """Check if procedure is an entry point"""
-            return any(
-                step.program is not None 
-                for step in procedure.steps
-            )
-        
+            return any(step.program is not None for step in procedure.steps)
+
         # COBPROC has multiple steps, including SETUP and MAIN programs
-        assert is_entry_point(proc), "PROC with multiple program steps should be entry point"
-        
+        assert is_entry_point(proc), (
+            "PROC with multiple program steps should be entry point"
+        )
+
         # Verify it has both SETUP and MAIN programs
         programs = [step.program for step in proc.steps if step.program is not None]
         assert "SETUP" in programs
         assert "COBOLMAIN" in programs
-    
+
     def test_entry_point_with_exploded_job(self):
         """Test that entry point detection works with exploded procedures"""
         jcl_content = """//MYJOB    JOB (ACCT),'EXPLODED ENTRY'
@@ -669,31 +661,28 @@ class TestProcedureEntryPointDetection:
 //CALL1    EXEC COBPROC
 //CALL2    EXEC COBPROC
 //"""
-        
+
         job = parse_jcl(jcl_content)
         proc = job.procedures[0]
-        
+
         def is_entry_point(procedure: Procedure) -> bool:
             """Check if procedure is an entry point"""
-            return any(
-                step.program is not None 
-                for step in procedure.steps
-            )
-        
+            return any(step.program is not None for step in procedure.steps)
+
         # Original procedure should be entry point
         assert is_entry_point(proc), "COBOL PROC should be entry point before explosion"
-        
+
         # Explode the job
         inline_loader = InlineProcedureLoader(job.procedures)
         exploded = job.explode(loader=inline_loader)
-        
+
         # After explosion, verify we have 2 exploded steps
         assert len(exploded.steps) == 2
         # All steps should have program set
         assert all(step.program == "MYCOBOL" for step in exploded.steps)
         # All should be marked as exploded
         assert all(step.is_exploded for step in exploded.steps)
-    
+
     def test_entry_point_classification_utility(self):
         """Test utility function to classify entry points in a job"""
         jcl_content = """//MYJOB    JOB (ACCT),'CLASSIFY ENTRY'
@@ -713,27 +702,30 @@ class TestProcedureEntryPointDetection:
 //         PEND
 //CALL     EXEC WRAPPER
 //"""
-        
+
         job = parse_jcl(jcl_content)
-        
+
         def classify_entry_points(procedures: List[Procedure]) -> Dict[str, bool]:
             """Classify each procedure as entry point or not"""
+
             def is_entry_point(proc: Procedure) -> bool:
                 return any(step.program is not None for step in proc.steps)
-            
+
             return {p.name: is_entry_point(p) for p in procedures}
-        
+
         entry_point_map = classify_entry_points(job.procedures)
-        
+
         # Verify classification
         expected = {
-            "BATCH": True,      # Direct program exec
-            "ONLINE": True,     # Direct program exec
-            "CLEANUP": True,    # Direct program exec
-            "WRAPPER": False,   # Calls other PROCs
+            "BATCH": True,  # Direct program exec
+            "ONLINE": True,  # Direct program exec
+            "CLEANUP": True,  # Direct program exec
+            "WRAPPER": False,  # Calls other PROCs
         }
-        
-        assert entry_point_map == expected, "Entry point classification should match expected mapping"
+
+        assert entry_point_map == expected, (
+            "Entry point classification should match expected mapping"
+        )
 
 
 if __name__ == "__main__":

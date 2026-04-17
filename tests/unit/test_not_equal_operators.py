@@ -12,6 +12,7 @@ Non-standard but encountered in the wild:
 
 COND parameters on EXEC only use the keyword form: NE
 """
+
 import pytest
 from jclparser.parser import parse_jcl
 from jclparser.model import ConditionalBlock
@@ -20,14 +21,17 @@ from jclparser.model import ConditionalBlock
 class TestNotEqualInIfConditions:
     """Test not-equal operators in IF/THEN/ELSE conditions."""
 
-    @pytest.mark.parametrize("operator,label", [
-        ("NE", "NE keyword"),
-        ("\u00ac=", "¬= NOT SIGN"),
-        ("^=", "^= caret"),
-        ("~=", "~= tilde"),
-        ("!=", "!= exclamation"),
-        ("<>", "<> angle brackets"),
-    ])
+    @pytest.mark.parametrize(
+        "operator,label",
+        [
+            ("NE", "NE keyword"),
+            ("\u00ac=", "¬= NOT SIGN"),
+            ("^=", "^= caret"),
+            ("~=", "~= tilde"),
+            ("!=", "!= exclamation"),
+            ("<>", "<> angle brackets"),
+        ],
+    )
     def test_not_equal_in_parenthesized_if(self, operator, label):
         """Parenthesized IF conditions preserve not-equal operators."""
         jcl = f"""//MYJOB JOB (1234),'TEST'
@@ -43,14 +47,17 @@ class TestNotEqualInIfConditions:
             f"{label}: operator '{operator}' not found in condition '{cond.condition}'"
         )
 
-    @pytest.mark.parametrize("operator,label", [
-        ("NE", "NE keyword"),
-        ("\u00ac=", "¬= NOT SIGN"),
-        ("^=", "^= caret"),
-        ("~=", "~= tilde"),
-        ("!=", "!= exclamation"),
-        ("<>", "<> angle brackets"),
-    ])
+    @pytest.mark.parametrize(
+        "operator,label",
+        [
+            ("NE", "NE keyword"),
+            ("\u00ac=", "¬= NOT SIGN"),
+            ("^=", "^= caret"),
+            ("~=", "~= tilde"),
+            ("!=", "!= exclamation"),
+            ("<>", "<> angle brackets"),
+        ],
+    )
     def test_not_equal_in_unparenthesized_if(self, operator, label):
         """Unparenthesized IF conditions preserve not-equal operators."""
         jcl = f"""//MYJOB JOB (1234),'TEST'
@@ -134,7 +141,7 @@ class TestNotEqualInCondParameter:
 //STEP1 EXEC PGM=IEFBR14,COND=(0,NE)
 """
         job = parse_jcl(jcl)
-        assert job.steps[0].parameters['COND'] == ['0', 'NE']
+        assert job.steps[0].parameters["COND"] == ["0", "NE"]
 
     def test_cond_ne_with_stepref(self):
         """COND=(0,NE,STEP1) on EXEC."""
@@ -143,7 +150,7 @@ class TestNotEqualInCondParameter:
 //STEP2 EXEC PGM=IEFBR14,COND=(0,NE,STEP1)
 """
         job = parse_jcl(jcl)
-        assert job.steps[1].parameters['COND'] == ['0', 'NE', 'STEP1']
+        assert job.steps[1].parameters["COND"] == ["0", "NE", "STEP1"]
 
     def test_cond_ne_multiple_conditions(self):
         """COND with multiple conditions including NE."""
@@ -152,10 +159,10 @@ class TestNotEqualInCondParameter:
 //STEP2 EXEC PGM=IEFBR14,COND=((0,NE,STEP1),(4,LT))
 """
         job = parse_jcl(jcl)
-        cond = job.steps[1].parameters['COND']
+        cond = job.steps[1].parameters["COND"]
         # Nested COND values are stored as sub-strings within the list
-        assert any('NE' in str(c) for c in cond)
-        assert any('LT' in str(c) for c in cond)
+        assert any("NE" in str(c) for c in cond)
+        assert any("LT" in str(c) for c in cond)
 
 
 class TestNotEqualDoesNotBreakKeywordParams:
@@ -169,8 +176,8 @@ class TestNotEqualDoesNotBreakKeywordParams:
 """
         job = parse_jcl(jcl)
         dd = job.steps[0].dd_statements[0]
-        assert dd.parameters['DSN'] == 'MY.DATASET'
-        assert dd.parameters['DISP'] == 'SHR'
+        assert dd.parameters["DSN"] == "MY.DATASET"
+        assert dd.parameters["DISP"] == "SHR"
 
     def test_exec_params(self):
         """EXEC parameters with = delimiter still work."""
@@ -179,9 +186,9 @@ class TestNotEqualDoesNotBreakKeywordParams:
 """
         job = parse_jcl(jcl)
         step = job.steps[0]
-        assert step.program == 'IEFBR14'
-        assert step.parameters.get('REGION') == '4M'
-        assert step.parameters.get('TIME') == '1440'
+        assert step.program == "IEFBR14"
+        assert step.parameters.get("REGION") == "4M"
+        assert step.parameters.get("TIME") == "1440"
 
     def test_job_params(self):
         """JOB parameters with = delimiter still work."""
@@ -189,5 +196,5 @@ class TestNotEqualDoesNotBreakKeywordParams:
 //STEP1 EXEC PGM=IEFBR14
 """
         job = parse_jcl(jcl)
-        assert job.parameters.get('CLASS') == 'A'
-        assert job.parameters.get('MSGCLASS') == 'X'
+        assert job.parameters.get("CLASS") == "A"
+        assert job.parameters.get("MSGCLASS") == "X"

@@ -19,6 +19,7 @@ from jclparser.validators import validate_jcl_identifier
 # detect_file_type_from_content() tests
 # ---------------------------------------------------------------------------
 
+
 class TestDetectFileTypeFromContent:
     """detect_file_type_from_content() mirrors detect_file_type() for string content."""
 
@@ -42,7 +43,9 @@ class TestDetectFileTypeFromContent:
         assert detect_file_type_from_content(content) == FileType.UNKNOWN
 
     def test_preamble_before_job_still_jcl(self):
-        content = "//         SET VAR=VAL\n//MYJOB JOB CLASS=A\n//STEP1 EXEC PGM=IEFBR14\n"
+        content = (
+            "//         SET VAR=VAL\n//MYJOB JOB CLASS=A\n//STEP1 EXEC PGM=IEFBR14\n"
+        )
         assert detect_file_type_from_content(content) == FileType.JCL
 
     def test_matches_detect_file_type_for_jcl(self):
@@ -62,6 +65,7 @@ class TestDetectFileTypeFromContent:
 # ---------------------------------------------------------------------------
 # Symbol substitution: &VAR.SUFFIX and &VAR..SUFFIX
 # ---------------------------------------------------------------------------
+
 
 class TestSymbolSubstitutionPeriodConcatenation:
     """Tests for trailing-period concatenation in substitute_symbols()."""
@@ -121,6 +125,7 @@ class TestSymbolSubstitutionPeriodConcatenation:
 # ---------------------------------------------------------------------------
 # validate_jcl_identifier edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestValidateJclIdentifierEdgeCases:
     """Ensure edge cases of validate_jcl_identifier work correctly."""

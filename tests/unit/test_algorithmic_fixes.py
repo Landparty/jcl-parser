@@ -3,6 +3,7 @@ Characterization tests for the three algorithmic fixes.
 These exercise the specific scenarios each fix targets and act as
 regression guards ensuring refactored code produces identical output.
 """
+
 import pytest
 from jclparser import parse_jcl
 from jclparser.continuation_handler import ContinuationLineHandler, ContinuationContext

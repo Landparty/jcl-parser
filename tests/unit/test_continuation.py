@@ -350,7 +350,9 @@ class TestNormalizeLongLines:
         """Lines between 73 and 79 chars (modern-editor JCL) must not be truncated."""
         # 74-char line: content runs into what would be the seq-number area on a
         # mainframe record, but here every character is genuine JCL content.
-        line = "//DD1     DD DSN=OUTPUT.DATASET.NAME,DCB=(RECFM=FB,LRECL=80,BLKSIZE=23440)"
+        line = (
+            "//DD1     DD DSN=OUTPUT.DATASET.NAME,DCB=(RECFM=FB,LRECL=80,BLKSIZE=23440)"
+        )
         assert 72 < len(line) < 80, f"Expected 73-79 chars, got {len(line)}"
         result = normalize_jcl_line(line)
         assert result == line.rstrip()
@@ -373,14 +375,12 @@ class TestNormalizeLongLines:
         """
         # This DD line is between 73-79 chars — fits in one modern-editor line with
         # all parens closed, but was truncated at char 72 before the fix.
-        dd_line = "//DD1     DD DSN=OUTPUT.DATASET.NAME,DCB=(RECFM=FB,LRECL=80,BLKSIZE=23440)"
+        dd_line = (
+            "//DD1     DD DSN=OUTPUT.DATASET.NAME,DCB=(RECFM=FB,LRECL=80,BLKSIZE=23440)"
+        )
         assert 72 < len(dd_line) < 80, f"Expected 73-79 chars, got {len(dd_line)}"
 
-        jcl = (
-            "//JOBNAME JOB ACCT,NAME\n"
-            "//STEP1   EXEC PGM=PROG\n"
-            + dd_line + "\n"
-        )
+        jcl = "//JOBNAME JOB ACCT,NAME\n//STEP1   EXEC PGM=PROG\n" + dd_line + "\n"
         job = parse_jcl(jcl)
         dd = job.steps[0].dd_statements[0]
         params = dd.parameters
@@ -445,6 +445,7 @@ class TestNormalizeLongLines:
             //         DSN=AWS.M2.CARDDEMO.STATEMNT.PS
             """)
         import pytest as _pytest
+
         with _pytest.raises(JCLSyntaxError, match="[Uu]nmatched parenthes"):
             parse_jcl(jcl)
 

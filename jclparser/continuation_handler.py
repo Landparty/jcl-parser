@@ -84,7 +84,10 @@ class ContinuationLineHandler:
         return ""
 
     def is_continuation_line(
-        self, line: str, previous_line: str = "", ctx: Optional[ContinuationContext] = None
+        self,
+        line: str,
+        previous_line: str = "",
+        ctx: Optional[ContinuationContext] = None,
     ) -> bool:
         """
         Determine if a line is a continuation of the previous line.
@@ -172,7 +175,9 @@ class ContinuationLineHandler:
                 # Check if next line is a continuation, passing cached context
                 # to avoid re-scanning the full (growing) merged_line.
                 if self.is_continuation_line(next_line, merged_line, ctx=cached_ctx):
-                    raw_after_slashes = (next_line[2:] if next_line.startswith("//") else next_line).lstrip()
+                    raw_after_slashes = (
+                        next_line[2:] if next_line.startswith("//") else next_line
+                    ).lstrip()
                     had_leading_comma = raw_after_slashes.startswith(",")
 
                     # Extract continuation content
@@ -189,7 +194,9 @@ class ContinuationLineHandler:
 
                     # Incrementally update context: scan only the new content
                     # starting from the prior cached state (not the full merged line).
-                    cached_ctx = self._analyze_line_context(cont_content, starting_ctx=cached_ctx)
+                    cached_ctx = self._analyze_line_context(
+                        cont_content, starting_ctx=cached_ctx
+                    )
                     j += 1
                 else:
                     # Not a continuation, stop merging

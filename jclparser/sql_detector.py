@@ -5,48 +5,52 @@ Detects embedded SQL statements in JCL inline data (DD * / DD DATA) and
 identifies steps that execute known DB2 utility programs.
 """
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .model import Job, Step, DDStatement
 
 # Programs known to execute SQL or DB2 operations.
-DB2_PROGRAMS: frozenset = frozenset({
-    "DSNTEP2",   # DB2 batch SQL processor
-    "DSNTEP4",   # DB2 batch SQL processor (extended)
-    "DSNTIAD",   # DB2 interactive SQL
-    "IKJEFT01",  # TSO batch - commonly used to run DB2 commands
-    "IKJEFT1B",  # TSO batch (alias)
-    "DSNUPROC",  # DB2 utility driver
-    "DSNUTILB",  # DB2 utility (batch)
-    "DSNTEP",    # DB2 test (short name)
-})
+DB2_PROGRAMS: frozenset[str] = frozenset(
+    {
+        "DSNTEP2",  # DB2 batch SQL processor
+        "DSNTEP4",  # DB2 batch SQL processor (extended)
+        "DSNTIAD",  # DB2 interactive SQL
+        "IKJEFT01",  # TSO batch - commonly used to run DB2 commands
+        "IKJEFT1B",  # TSO batch (alias)
+        "DSNUPROC",  # DB2 utility driver
+        "DSNUTILB",  # DB2 utility (batch)
+        "DSNTEP",  # DB2 test (short name)
+    }
+)
 
 # SQL statement keywords that start a statement.  Order matters for matching:
 # longer prefixes first so "INSERT INTO" beats "INSERT".
 _SQL_STATEMENT_PATTERNS: list[tuple[str, str]] = [
     # DML
-    ("SELECT",   "DML"),
-    ("INSERT",   "DML"),
-    ("UPDATE",   "DML"),
-    ("DELETE",   "DML"),
-    ("MERGE",    "DML"),
+    ("SELECT", "DML"),
+    ("INSERT", "DML"),
+    ("UPDATE", "DML"),
+    ("DELETE", "DML"),
+    ("MERGE", "DML"),
     # DDL
-    ("CREATE",   "DDL"),
-    ("ALTER",    "DDL"),
-    ("DROP",     "DDL"),
+    ("CREATE", "DDL"),
+    ("ALTER", "DDL"),
+    ("DROP", "DDL"),
     ("TRUNCATE", "DDL"),
-    ("RENAME",   "DDL"),
-    ("COMMENT",  "DDL"),
+    ("RENAME", "DDL"),
+    ("COMMENT", "DDL"),
     # DCL
-    ("GRANT",    "DCL"),
-    ("REVOKE",   "DCL"),
+    ("GRANT", "DCL"),
+    ("REVOKE", "DCL"),
     # DB2 utility / admin
-    ("BIND",     "UTILITY"),
-    ("REBIND",   "UTILITY"),
-    ("EXPLAIN",  "UTILITY"),
+    ("BIND", "UTILITY"),
+    ("REBIND", "UTILITY"),
+    ("EXPLAIN", "UTILITY"),
     # Embedded SQL marker
     ("EXEC SQL", "EMBEDDED"),
 ]
@@ -55,9 +59,7 @@ _SQL_STATEMENT_PATTERNS: list[tuple[str, str]] = [
 # (whitespace-stripped) line.  Word-boundary after the keyword prevents
 # matching identifiers that merely *start* with a SQL keyword.
 _SQL_KW_RE = re.compile(
-    r"^\s*(?:" +
-    "|".join(re.escape(kw) for kw, _ in _SQL_STATEMENT_PATTERNS) +
-    r")\b",
+    r"^\s*(?:" + "|".join(re.escape(kw) for kw, _ in _SQL_STATEMENT_PATTERNS) + r")\b",
     re.IGNORECASE,
 )
 
@@ -78,10 +80,10 @@ class SQLDetectionResult:
         has_sql: True if any SQL was detected (program or inline).
     """
 
-    step_name: Optional[str] = None
-    program: Optional[str] = None
+    step_name: str | None = None
+    program: str | None = None
     is_db2_program: bool = False
-    sql_statements: List[tuple] = field(default_factory=list)
+    sql_statements: list[tuple[str, str, str]] = field(default_factory=list)
 
     @property
     def has_sql(self) -> bool:
@@ -89,12 +91,12 @@ class SQLDetectionResult:
         return self.is_db2_program or bool(self.sql_statements)
 
     @property
-    def sql_categories(self) -> frozenset:
+    def sql_categories(self) -> frozenset[str]:
         """Set of distinct SQL categories found (DML, DDL, DCL, UTILITY, EMBEDDED)."""
         return frozenset(cat for _, cat, _ in self.sql_statements)
 
 
-def is_db2_program(program_name: Optional[str]) -> bool:
+def is_db2_program(program_name: str | None) -> bool:
     """Return True if *program_name* is a known DB2 utility."""
     if not program_name:
         return False

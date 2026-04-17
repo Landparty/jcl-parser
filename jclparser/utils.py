@@ -1,37 +1,21 @@
 """
 Helper utilities for JCL syntax handling.
 
-Contains utility functions for parsing parameters, handling quotes,
-and other JCL-specific syntax operations.
+Contains utility functions for JCL-specific syntax operations.
 
 Function classification
 -----------------------
 Runtime-critical (used by the main parse path):
-    read_source, normalize_jcl_line, is_continuation_line,
-    quote_jcl_value, unquote_jcl_value
-
-Public utility API (used externally, not on the hot path):
-    split_jcl_parameters, parse_jcl_parameter,
-    validate_jcl_name, format_jcl_line,
-    extract_inline_data, merge_continuation_lines,
-    calculate_jcl_checksum
+    read_source, normalize_jcl_line, is_continuation_line
 """
 
-import re
-from collections import deque
+from __future__ import annotations
+
 from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional, Union
+from typing import Any
 
 #: Prefix used to store positional (keyword-less) JCL parameters in dicts.
 POSITIONAL_PARAM_PREFIX: str = "_pos_"
-
-# Precompiled regex patterns for performance
-_RE_SPECIAL_CHARS = re.compile(r"[,()=\s']")
-_RE_JCL_NAME_START = re.compile(r'^[A-Za-z@#$]')
-_RE_JCL_NAME_FULL = re.compile(r'^[A-Za-z0-9@#$]+$')
-
-# Module-level ParameterParser singleton (ParameterParser is stateless)
-_PARAMETER_PARSER: Optional['Any'] = None
 
 
 def is_positional_key(key: str) -> bool:
@@ -76,15 +60,20 @@ def normalize_jcl_line(line: str) -> str:
 def is_continuation_line(line: str) -> bool:
     """
     Check if line is a JCL continuation line.
-    
+
     Args:
         line: JCL line to check
-        
+
     Returns:
         True if line is a continuation
     """
     stripped = line.lstrip()
-    return stripped.startswith("//") and not stripped.startswith("//*") and len(stripped) > 2 and stripped[2] == " "
+    return (
+        stripped.startswith("//")
+        and not stripped.startswith("//*")
+        and len(stripped) > 2
+        and stripped[2] == " "
+    )
 
 
 def _read_file_with_fallback(path: Path) -> str:
@@ -97,18 +86,25 @@ def _read_file_with_fallback(path: Path) -> str:
     Returns:
         File content as a string.
     """
-    for encoding in ('utf-8', 'latin-1', 'cp1252'):
+    for encoding in ("utf-8", "latin-1", "cp1252"):
         try:
-            with open(path, 'r', encoding=encoding) as fh:
+            with open(path, "r", encoding=encoding) as fh:
                 return fh.read()
         except (UnicodeDecodeError, UnicodeError):
             continue
     # Last resort: binary decode with replacement
-    with open(path, 'rb') as fh:
-        return fh.read().decode('utf-8', errors='ignore')
+    with open(path, "rb") as fh:
+        return fh.read().decode("utf-8", errors="ignore")
 
 
-def read_source(source: Union[str, Path, Any]) -> str:
+def _require_file(path: Path) -> str:
+    """Raise ``FileNotFoundError`` if *path* does not exist, otherwise return its content."""
+    if not path.exists():
+        raise FileNotFoundError(f"JCL file not found: {path}")
+    return _read_file_with_fallback(path)
+
+
+def read_source(source: str | Path | Any) -> str:
     """
     Resolve a JCL source (string content, file path, or file-like object) into a
     string of JCL content.
@@ -126,23 +122,39 @@ def read_source(source: Union[str, Path, Any]) -> str:
         FileNotFoundError: If *source* is a path to a file that does not exist.
     """
     if isinstance(source, Path):
-        if not source.exists():
-            raise FileNotFoundError(f"JCL file not found: {source}")
-        return _read_file_with_fallback(source)
+        return _require_file(source)
     if isinstance(source, str):
-        # Treat as a file path when it looks like one
-        if source.endswith('.jcl') or (
-            ('/' in source or '\\' in source) and not source.strip().startswith('//')
+        # Treat as a file path when it looks like one by extension or separator.
+        if source.endswith(".jcl") or (
+            ("/" in source or "\\" in source) and not source.strip().startswith("//")
         ):
-            path = Path(source)
-            if not path.exists():
-                raise FileNotFoundError(f"JCL file not found: {path}")
-            return _read_file_with_fallback(path)
+            return _require_file(Path(source))
+        # For plain strings without path markers (no extension, no separators),
+        # check whether the string names an existing file.  JCL content always
+        # starts with "//" or contains newlines, so this fallback is safe.
+        if (
+            "\n" not in source
+            and "\r" not in source
+            and not source.strip().startswith("//")
+        ):
+            try:
+                path = Path(source)
+                if path.is_file():
+                    return _read_file_with_fallback(path)
+            except (OSError, ValueError):
+                pass
         return source
     # File-like object
+    if not hasattr(source, "read"):
+        raise TypeError(
+            f"Invalid source type: {type(source)}. Expected str, Path, or file-like object."
+        )
     content = source.read()
-    if hasattr(source, 'seek'):
-        source.seek(0)
+    if hasattr(source, "seek"):
+        try:
+            source.seek(0)
+        except (OSError, IOError):
+            pass  # Non-seekable streams are fine; seek is best-effort only
     return content
 
 

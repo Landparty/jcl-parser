@@ -7,7 +7,7 @@ from jclparser import parse_jcl
 
 class TestParserUncoveredLines:
     """Target specific uncovered parser lines"""
-    
+
     def test_parse_with_if_statement(self):
         """Test IF statement handling"""
         jcl = """
@@ -21,7 +21,7 @@ class TestParserUncoveredLines:
             # May work or not depending on IF implementation
         except Exception:
             pass  # IF may not be fully implemented
-    
+
     def test_parse_with_else_statement(self):
         """Test ELSE statement"""
         jcl = """
@@ -36,7 +36,7 @@ class TestParserUncoveredLines:
             parse_jcl(jcl, strict_mode=False)
         except Exception:
             pass
-    
+
     def test_parse_with_output_statement(self):
         """Test OUTPUT statement"""
         jcl = """
@@ -48,7 +48,7 @@ class TestParserUncoveredLines:
             parse_jcl(jcl, strict_mode=False)
         except Exception:
             pass
-    
+
     def test_parse_with_xmit_statement(self):
         """Test XMIT statement"""
         jcl = """
@@ -60,7 +60,7 @@ class TestParserUncoveredLines:
             parse_jcl(jcl, strict_mode=False)
         except Exception:
             pass
-    
+
     def test_parse_with_command_statement(self):
         """Test COMMAND statement"""
         jcl = """
@@ -72,7 +72,7 @@ class TestParserUncoveredLines:
             parse_jcl(jcl, strict_mode=False)
         except Exception:
             pass
-    
+
     def test_parse_with_cntl_endcntl(self):
         """Test CNTL/ENDCNTL"""
         jcl = """
@@ -86,7 +86,7 @@ class TestParserUncoveredLines:
             parse_jcl(jcl, strict_mode=False)
         except Exception:
             pass
-    
+
     def test_parse_multiline_job_params(self):
         """Test job with many parameters"""
         jcl = """
@@ -101,7 +101,7 @@ class TestParserUncoveredLines:
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert "CLASS" in job.parameters or "MSGCLASS" in job.parameters
-    
+
     def test_parse_exec_with_region(self):
         """Test EXEC with REGION"""
         jcl = """
@@ -110,7 +110,7 @@ class TestParserUncoveredLines:
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert "REGION" in job.steps[0].parameters or len(job.steps) == 1
-    
+
     def test_parse_exec_with_time(self):
         """Test EXEC with TIME"""
         jcl = """
@@ -119,7 +119,7 @@ class TestParserUncoveredLines:
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.steps) == 1
-    
+
     def test_parse_exec_with_cond(self):
         """Test EXEC with COND"""
         jcl = """
@@ -129,7 +129,7 @@ class TestParserUncoveredLines:
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.steps) == 2
-    
+
     def test_parse_dd_with_dcb(self):
         """Test DD with DCB parameter"""
         jcl = """
@@ -141,7 +141,7 @@ class TestParserUncoveredLines:
         job = parse_jcl(jcl, strict_mode=False)
         dd = job.steps[0].dd_statements[0]
         assert "DCB" in dd.parameters or dd.dataset_name is not None
-    
+
     def test_parse_dd_with_space_params(self):
         """Test DD with complex SPACE"""
         jcl = """
@@ -153,7 +153,7 @@ class TestParserUncoveredLines:
         job = parse_jcl(jcl, strict_mode=False)
         dd = job.steps[0].dd_statements[0]
         assert "SPACE" in dd.parameters or dd.dataset_name is not None
-    
+
     def test_parse_dd_sysout(self):
         """Test DD with SYSOUT"""
         jcl = """
@@ -164,7 +164,7 @@ class TestParserUncoveredLines:
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.steps[0].dd_statements) == 2
-    
+
     def test_parse_dd_concatenation(self):
         """Test DD concatenation"""
         jcl = """
@@ -177,7 +177,7 @@ class TestParserUncoveredLines:
         job = parse_jcl(jcl, strict_mode=False)
         # Should have 3 DD statements
         assert len(job.steps[0].dd_statements) >= 1
-    
+
     def test_parse_proc_with_symbolic_params(self):
         """Test procedure with symbolic parameters"""
         jcl = """
@@ -192,7 +192,7 @@ class TestParserUncoveredLines:
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.procedures[0].parameters) >= 3
-    
+
     def test_parse_nested_procs_same_step_name(self):
         """Test nested procedures with same step names"""
         jcl = """
@@ -207,7 +207,7 @@ class TestParserUncoveredLines:
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.procedures) == 2
-    
+
     def test_parse_very_long_dataset_name(self):
         """Test very long dataset names"""
         jcl = """
@@ -218,7 +218,7 @@ class TestParserUncoveredLines:
         job = parse_jcl(jcl, strict_mode=False)
         dd = job.steps[0].dd_statements[0]
         assert "VERY" in dd.dataset_name
-    
+
     def test_parse_generation_dataset(self):
         """Test generation data group"""
         jcl = """
@@ -230,7 +230,7 @@ class TestParserUncoveredLines:
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.steps[0].dd_statements) == 3
-    
+
     def test_parse_uss_path(self):
         """Test USS path in dataset name"""
         jcl = """
@@ -241,7 +241,7 @@ class TestParserUncoveredLines:
         job = parse_jcl(jcl, strict_mode=False)
         dd = job.steps[0].dd_statements[0]
         assert "PATH" in dd.parameters or dd.dataset_name is not None
-    
+
     def test_parse_mixed_case_keywords(self):
         """Test mixed case in keywords"""
         jcl = """
@@ -253,7 +253,7 @@ class TestParserUncoveredLines:
         # Keywords are case-insensitive
         assert job.name == "TestJob"
         assert job.steps[0].name == "Step1"
-    
+
     def test_parse_special_dd_names(self):
         """Test special DD names"""
         jcl = """
@@ -270,7 +270,7 @@ INPUT
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert len(job.steps[0].dd_statements) >= 6
-    
+
     def test_parse_empty_lines_in_jcl(self):
         """Test JCL with many empty lines"""
         jcl = """
@@ -288,13 +288,13 @@ INPUT
 //"""
         job = parse_jcl(jcl, strict_mode=False)
         assert job.name == "TESTJOB"
-    
+
     def test_parse_tabs_in_jcl(self):
         """Test JCL with tab characters"""
         jcl = "//TESTJOB\tJOB\tCLASS=A\n//STEP1\tEXEC\tPGM=PROG\n//"
         job = parse_jcl(jcl, strict_mode=False)
         assert job.name == "TESTJOB"
-    
+
     def test_parse_trailing_spaces(self):
         """Test JCL with trailing spaces"""
         jcl = "//TESTJOB JOB CLASS=A     \n//STEP1 EXEC PGM=PROG     \n//"
