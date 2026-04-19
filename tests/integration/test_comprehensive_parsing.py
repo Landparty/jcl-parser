@@ -420,10 +420,11 @@ class TestStandaloneProc:
         ft = detect_file_type(FIXTURES_DIR / "standalone_proc.jcl")
         assert ft == FileType.PROC
 
-    def test_standalone_proc_parse_raises(self):
-        """parse_jcl must raise JCLSyntaxError since there is no JOB statement."""
-        with pytest.raises(JCLSyntaxError):
-            parse_jcl(FIXTURES_DIR / "standalone_proc.jcl")
+    def test_standalone_proc_parses_as_proc(self):
+        """parse_jcl must return a Job with procedures populated for PROC-only files."""
+        job = parse_jcl(FIXTURES_DIR / "standalone_proc.jcl")
+        assert job is not None
+        assert len(job.procedures) > 0
 
 
 class TestDivideExample:
@@ -452,6 +453,163 @@ class TestDivideExample:
         assert sysut2.dataset_name == "OUTPUT.DATA"
         assert sysut2.disposition == ["NEW", "CATLG", "DELETE"]
         assert sysut2.parameters.get("UNIT") == "SYSDA"
+
+
+class TestSetSymbolResolution:
+    """SET statements where values reference earlier SET symbols."""
+
+    _JCL = """\
+//TESTJOB  JOB (ACCT),'TEST'
+//   SET CODER=AWS
+//   SET LBNM=&CODER..M2.CARDDEMO
+//   SET DB2S=DAZ1
+//STEP1    EXEC PGM=IKJEFT01
+//SYSTSIN  DD DISP=SHR,DSN=&LBNM..CNTL(DB2FREE)
+//STEP2    EXEC PGM=IKJEFT01
+//SYSTSIN  DD DISP=SHR,DSN=&LBNM..CNTL(DB2TIAD1)
+//SYSIN    DD DISP=SHR,DSN=OEM.DB2.&DB2S..SDSNLOAD
+"""
+
+    def test_chained_set_stored_resolved(self):
+        """SET LBNM=&CODER..M2.CARDDEMO must store the resolved value."""
+        job = parse_jcl(self._JCL)
+        assert job.set_statements["LBNM"] == "AWS.M2.CARDDEMO"
+
+    def test_set_used_in_dsn_after_explode(self):
+        """&LBNM..CNTL must expand to AWS.M2.CARDDEMO.CNTL after explosion."""
+        job = parse_jcl(self._JCL).explode()
+        step1 = next(s for s in job.steps if s.name == "STEP1")
+        systsin = step1.get_dd("SYSTSIN")
+        assert systsin.dataset_name == "AWS.M2.CARDDEMO.CNTL(DB2FREE)"
+
+    def test_plain_set_also_substituted(self):
+        """Non-chained SET symbol &DB2S must substitute into DSN."""
+        job = parse_jcl(self._JCL).explode()
+        step2 = next(s for s in job.steps if s.name == "STEP2")
+        sysin = step2.get_dd("SYSIN")
+        assert sysin.dataset_name == "OEM.DB2.DAZ1.SDSNLOAD"
+
+
+class TestSetValueEdgeCases:
+    """Edge cases for SET symbol resolution at parse time."""
+
+    @staticmethod
+    def _parse(jcl: str):
+        return parse_jcl(jcl)
+
+    def test_double_ampersand_escape(self):
+        """&& in a SET value must become a literal & (not a symbol reference)."""
+        job = self._parse(
+            "//J JOB A\n//  SET VAR=&&PREFIX.DATA\n//S EXEC PGM=P\n"
+        )
+        assert job.set_statements["VAR"] == "&PREFIX.DATA"
+
+    def test_undefined_symbol_passthrough(self):
+        """An unknown &SYMBOL in a SET value is left unchanged."""
+        job = self._parse(
+            "//J JOB A\n//  SET FOO=&UNDEFINED..BAR\n//S EXEC PGM=P\n"
+        )
+        assert job.set_statements["FOO"] == "&UNDEFINED..BAR"
+
+    def test_symbol_without_trailing_period(self):
+        """&SYMBOL with no trailing period at end of string resolves correctly."""
+        job = self._parse(
+            "//J JOB A\n//  SET CODER=AWS\n//  SET FOO=&CODER\n//S EXEC PGM=P\n"
+        )
+        assert job.set_statements["FOO"] == "AWS"
+
+    def test_symbol_with_single_period_concatenation(self):
+        """&CODER.BAR — the single period is the separator; result is AWSBAR."""
+        job = self._parse(
+            "//J JOB A\n//  SET CODER=AWS\n//  SET FOO=&CODER.BAR\n//S EXEC PGM=P\n"
+        )
+        assert job.set_statements["FOO"] == "AWSBAR"
+
+    def test_three_level_chain(self):
+        """SET A, then B=&A..Y, then C=&B..Z resolves transitively."""
+        job = self._parse(
+            "//J JOB A\n//  SET A=X\n//  SET B=&A..Y\n//  SET C=&B..Z\n//S EXEC PGM=P\n"
+        )
+        assert job.set_statements["A"] == "X"
+        assert job.set_statements["B"] == "X.Y"
+        assert job.set_statements["C"] == "X.Y.Z"
+
+    def test_redefinition_last_wins(self):
+        """The last SET for a symbol wins; earlier value is discarded."""
+        job = self._parse(
+            "//J JOB A\n//  SET A=FIRST\n//  SET A=SECOND\n//S EXEC PGM=P\n"
+        )
+        assert job.set_statements["A"] == "SECOND"
+
+    def test_redefined_symbol_snapshot_semantics(self):
+        """SET B=&A captures A's value at define-time; later A=SECOND doesn't affect B."""
+        job = self._parse(
+            "//J JOB A\n//  SET A=FIRST\n//  SET B=&A\n//  SET A=SECOND\n//S EXEC PGM=P\n"
+        )
+        assert job.set_statements["B"] == "FIRST"
+        assert job.set_statements["A"] == "SECOND"
+
+    def test_multiple_symbols_in_one_value(self):
+        """A SET value can reference two different symbols."""
+        job = self._parse(
+            "//J JOB A\n//  SET A=FOO\n//  SET B=BAR\n//  SET C=&A..&B\n//S EXEC PGM=P\n"
+        )
+        assert job.set_statements["C"] == "FOO.BAR"
+
+    def test_self_referencing_passthrough(self):
+        """SET A=&A..EXTRA — A is not yet defined, so &A remains unresolved."""
+        job = self._parse(
+            "//J JOB A\n//  SET A=&A..EXTRA\n//S EXEC PGM=P\n"
+        )
+        assert job.set_statements["A"] == "&A..EXTRA"
+
+    def test_double_escape_then_symbol(self):
+        """&&& — first && becomes &, then &SYMBOL is resolved."""
+        job = self._parse(
+            "//J JOB A\n//  SET A=VAL\n//  SET B=&&&A\n//S EXEC PGM=P\n"
+        )
+        assert job.set_statements["B"] == "&VAL"
+
+    def test_special_char_at_sign_in_symbol(self):
+        """Symbol names may contain @; &@SYM must resolve correctly."""
+        job = self._parse(
+            "//J JOB A\n//  SET @SYM=ATVAL\n//  SET RESULT=&@SYM..DATA\n//S EXEC PGM=P\n"
+        )
+        assert job.set_statements["RESULT"] == "ATVAL.DATA"
+
+    def test_empty_set_value(self):
+        """SET EMPTY= stores an empty string; references produce empty substitution."""
+        job = self._parse(
+            "//J JOB A\n//  SET EMPTY=\n//  SET FOO=PRE.&EMPTY..SUF\n//S EXEC PGM=P\n"
+        )
+        assert job.set_statements["EMPTY"] == ""
+        assert job.set_statements["FOO"] == "PRE..SUF"
+
+    def test_set_after_step_accumulates(self):
+        """A SET statement that appears after the first EXEC is still accumulated."""
+        jcl = (
+            "//J JOB A\n"
+            "//  SET A=FIRST\n"
+            "//S1 EXEC PGM=P\n"
+            "//  SET B=SECOND\n"
+            "//DD1 DD DSN=&A..&B,DISP=SHR\n"
+            "//S2 EXEC PGM=Q\n"
+            "//DD1 DD DSN=&B,DISP=SHR\n"
+        )
+        job = parse_jcl(jcl)
+        assert job.set_statements["B"] == "SECOND"
+        exploded = job.explode()
+        s1 = next(s for s in exploded.steps if s.name == "S1")
+        s2 = next(s for s in exploded.steps if s.name == "S2")
+        assert s1.get_dd("DD1").dataset_name == "FIRST.SECOND"
+        assert s2.get_dd("DD1").dataset_name == "SECOND"
+
+    def test_system_symbol_in_set_value_not_resolved_at_parse_time(self):
+        """&SYSUID inside a SET value is not in job.set_statements, so it stays raw."""
+        job = self._parse(
+            "//J JOB A\n//  SET FOO=&SYSUID..DATA\n//S EXEC PGM=P\n"
+        )
+        assert job.set_statements["FOO"] == "&SYSUID..DATA"
 
 
 if __name__ == "__main__":

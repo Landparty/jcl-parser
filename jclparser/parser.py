@@ -42,6 +42,25 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .include_loader import IncludeMemberLoader
 
+_SET_SYMBOL_PATTERN = re.compile(r"&&|&([A-Z0-9@#$]+)\.?")
+
+
+def _resolve_set_value(value: str, known_symbols: dict[str, str]) -> str:
+    """Resolve &SYMBOL references in a SET value using already-accumulated SET symbols.
+
+    Mirrors the mainframe rule: SET values are evaluated left-to-right so a
+    symbol can reference any earlier SET in the same job.
+    """
+
+    def _replacer(m: re.Match) -> str:
+        if m.group(0) == "&&":
+            return "&"
+        sym = m.group(1).upper()
+        return known_symbols.get(sym, m.group(0))
+
+    return _SET_SYMBOL_PATTERN.sub(_replacer, value)
+
+
 #: All recognised JCL statement type keywords (single canonical definition).
 _STATEMENT_TYPES: frozenset = frozenset(
     {
@@ -227,6 +246,7 @@ def parse_jcl(
     inline_data_lines: List[str] = []
     in_inline_data = False
     current_procedure = None  # Track when we're inside a PROC/PEND block
+    pending_procedures: List[Any] = []  # Procedures collected before any JOB statement (PROC-only files)
     current_delimiter = "/*"
     orphaned_dds: List[Any] = []  # Track DDs that appear before first EXEC
     in_joblib_concat = False  # True while accumulating JOBLIB concatenation lines
@@ -369,6 +389,8 @@ def parse_jcl(
                 )
                 if job:
                     job.add_procedure(current_procedure)
+                else:
+                    pending_procedures.append(current_procedure)
                 # Reset current_step since we're now inside procedure
                 current_step = None
 
@@ -383,13 +405,13 @@ def parse_jcl(
                     # For SET statements, parameters are in the format SYMBOL=VALUE
                     for key, value in stmt.parameters.items():
                         if not is_positional_key(key):
-                            job.add_set(key, value)
+                            job.add_set(key, _resolve_set_value(value, job.set_statements))
                         elif is_positional_key(key):
                             # Positional parameter might be SYMBOL=VALUE without keyword
                             param_val = value
                             if "=" in param_val:
                                 sym, val = param_val.split("=", 1)
-                                job.add_set(sym.strip(), val.strip())
+                                job.add_set(sym.strip(), _resolve_set_value(val.strip(), job.set_statements))
 
             elif stmt.type == "EXPORT":
                 # EXPORT SYMLIST=(A,B,...)  or  EXPORT SYMLIST=*
@@ -519,7 +541,12 @@ def parse_jcl(
             raise
 
     if job is None:
-        raise JCLSyntaxError("No JOB statement found", 0)
+        if pending_procedures:
+            job = Job(name="", line_number=0)
+            for proc in pending_procedures:
+                job.add_procedure(proc)
+        else:
+            raise JCLSyntaxError("No JOB statement found", 0)
 
     # Create and attach procedure loader for external PROC loading
     if enable_external_procs and job.jcllib_order:
