@@ -622,6 +622,62 @@ def parse_jcl(
     # Resolve OUTPUT=*.name back-references on every DD.
     _resolve_output_refs(job)
 
+    # Resolve SET symbol references in DD dataset names.  SET statements may
+    # appear before or after the DD statements that reference them, so we
+    # perform a substitution pass *after* the main parse loop once all SET
+    # symbols are fully known.
+    #
+    # We also handle chained SET symbols, e.g.:
+    #   // SET HLQ=CORP
+    #   // SET LIB=&HLQ..DATA        ← value contains a symbol reference
+    #   //DD1 DD DSN=&LIB..FILE      ← should resolve to CORP.DATA.FILE
+    #
+    # _resolve_set_value (called during parsing) already handles backward
+    # references (symbol defined before it is used in a SET value).  Forward
+    # references — where SET B=&A. appears before SET A=VALUE — are stored as
+    # the literal string "&A." and are left unresolved after the parse loop.
+    # We fix those here by iteratively pre-resolving the symbol table until it
+    # stabilises (up to 10 passes, which also bounds any accidental cycle).
+    if job.set_statements:
+        from .explosion import (  # noqa: PLC0415
+            substitute_dd_statement,
+            substitute_symbols,
+            SymbolScope,
+        )
+
+        # Pre-resolve the symbol table so every value is fully expanded before
+        # we apply it to DD dataset names.  On each pass we substitute symbols
+        # within each SET value using the *other* symbols in the table
+        # (excluding the symbol itself prevents direct self-reference loops).
+        # We repeat until no value changes or we reach the pass limit.
+        _raw: dict[str, str] = dict(job.set_statements)
+        for _pass in range(10):
+            _changed = False
+            for _name, _val in list(_raw.items()):
+                if "&" not in _val:
+                    continue
+                # Build a temporary scope that excludes this symbol's own name
+                # so "&A." inside SET A's value does not expand to itself.
+                _scope_for_val = SymbolScope(
+                    set_symbols={k: v for k, v in _raw.items() if k != _name}
+                )
+                _new_val = substitute_symbols(_val, _scope_for_val, allow_undefined=True)
+                if _new_val != _val:
+                    _raw[_name] = _new_val
+                    _changed = True
+            if not _changed:
+                break  # table has stabilised – no need for more passes
+
+        # Symbols whose values still contain unresolved &-references after all
+        # passes are excluded from the final scope.  Propagating a raw "&B."
+        # value into a DD dataset_name would leave a literal token in the
+        # output; instead, strict=False in substitute_dd_statement will silently
+        # elide those unresolvable references (they become empty string).
+        _resolved_symbols = {k: v for k, v in _raw.items() if "&" not in v}
+        _set_scope = SymbolScope(set_symbols=_resolved_symbols)
+        for _dd in job.get_dd_statements():
+            substitute_dd_statement(_dd, _set_scope, strict=False)
+
     # Validate the parsed job if in strict mode.  Only ERROR-severity findings
     # are fatal — WARNING/INFO findings (e.g. unresolved OUTPUT back-references,
     # forward dataset references) are advisory and must not break strict parsing.

@@ -8,6 +8,7 @@ Regression tests for the audit bug fixes:
   4. validate_jcl fallback merges continuation lines
   5. CompositeProcedureLoader does not cache None results
   6. Three-part DD overrides (PROCSTEP.INNERST.DDNAME) applied during explosion
+  7. SET symbols resolved in DD dataset_name after parse (e.g. &LBNM..CNTL)
 """
 
 from jclparser import parse_jcl, validate_jcl
@@ -350,3 +351,271 @@ class TestThreePartDDOverride:
             f"No step with OVERRIDDEN.DS found. Steps: "
             f"{[(s.name, [(d.name, d.dataset_name) for d in s.dd_statements]) for s in all_steps]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# 7. SET symbol substitution in DD dataset_name after parse
+# ---------------------------------------------------------------------------
+
+
+class TestSetSymbolSubstitution:
+    """
+    SET statements define symbolic parameters at the job level.  Their values
+    must be substituted into DD dataset_name (and disposition) fields so that
+    callers see resolved names rather than raw ``&VARNAME..`` tokens.
+    """
+
+    def test_basic_set_symbol_resolved_in_dsn(self):
+        """&LBNM..CNTL(DB2CREAT) → MYLIB.CNTL(DB2CREAT) when SET LBNM=MYLIB."""
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//         SET LBNM=MYLIB
+//STEP1   EXEC PGM=IEFBR14
+//MYDD    DD   DSN=&LBNM..CNTL(DB2CREAT),DISP=SHR
+"""
+        job = parse_jcl(jcl)
+        dd = job.get_dd_statements()[0]
+        assert dd.dataset_name == "MYLIB.CNTL(DB2CREAT)"
+
+    def test_set_after_dd_still_resolved(self):
+        """SET symbol defined *after* the DD that uses it is still resolved."""
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//STEP1   EXEC PGM=IEFBR14
+//MYDD    DD   DSN=&PREFIX..DATA,DISP=SHR
+//         SET PREFIX=PROD
+"""
+        job = parse_jcl(jcl)
+        dd = job.get_dd_statements()[0]
+        assert dd.dataset_name == "PROD.DATA"
+
+    def test_multiple_symbols_in_single_dsn(self):
+        """Multiple SET symbols within one DSN are all substituted."""
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//         SET HLQ=CORP
+//         SET LLQ=CNTL
+//STEP1   EXEC PGM=IEFBR14
+//MYDD    DD   DSN=&HLQ..MYLIB.&LLQ.,DISP=SHR
+"""
+        job = parse_jcl(jcl)
+        dd = job.get_dd_statements()[0]
+        assert dd.dataset_name == "CORP.MYLIB.CNTL"
+
+    def test_undefined_symbol_left_as_is(self):
+        """An undefined symbol is quietly elided (strict=False, no exception).
+
+        The substitute_symbols() engine replaces unknown ``&VAR.`` tokens with
+        an empty string when ``strict=False``.  The defined symbol must still
+        be substituted correctly; the undefined one produces no text.
+        """
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//         SET KNOWN=VALUE
+//STEP1   EXEC PGM=IEFBR14
+//MYDD    DD   DSN=&KNOWN..&UNKNOWN..SUFFIX,DISP=SHR
+"""
+        job = parse_jcl(jcl)
+        dd = job.get_dd_statements()[0]
+        # Defined symbol substituted; undefined symbol elided (→ empty)
+        assert "VALUE" in dd.dataset_name
+        assert "&" not in dd.dataset_name  # no raw symbol tokens remain
+
+    def test_no_set_statements_leaves_dsn_unchanged(self):
+        """JCL with no SET statements returns literal DSN unchanged."""
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//STEP1   EXEC PGM=IEFBR14
+//MYDD    DD   DSN=PROD.DATA.SET,DISP=SHR
+"""
+        job = parse_jcl(jcl)
+        dd = job.get_dd_statements()[0]
+        assert dd.dataset_name == "PROD.DATA.SET"
+
+    def test_multiple_steps_all_dds_substituted(self):
+        """Symbol substitution applies to DD statements across all job steps."""
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//         SET BASE=MY.LIB
+//STEP1   EXEC PGM=PROG1
+//DD1     DD   DSN=&BASE..INPUT,DISP=SHR
+//STEP2   EXEC PGM=PROG2
+//DD2     DD   DSN=&BASE..OUTPUT,DISP=(NEW,CATLG)
+"""
+        job = parse_jcl(jcl)
+        dds = {dd.name: dd.dataset_name for dd in job.get_dd_statements()}
+        assert dds["DD1"] == "MY.LIB.INPUT"
+        assert dds["DD2"] == "MY.LIB.OUTPUT"
+
+    # ------------------------------------------------------------------
+    # Chained SET symbol resolution ("symbol of a symbol")
+    # ------------------------------------------------------------------
+
+    def test_chained_set_forward_declared(self):
+        """SET B=&A. declared before SET A=VALUE is fully resolved.
+
+        In real JCL, SET statements are processed left-to-right, so a forward
+        reference (&A. inside B's value) is stored unresolved at parse time.
+        The post-parse pre-resolution pass must fix it.
+
+        Given:
+            SET B=&A..SUFFIX   (forward reference – A not yet known)
+            SET A=CORP
+            DD DSN=&B..DATA
+
+        When: parse_jcl() is called.
+
+        Then: DSN resolves to CORP.SUFFIX.DATA (not &A..SUFFIX.DATA).
+        """
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//         SET B=&A..SUFFIX
+//         SET A=CORP
+//STEP1   EXEC PGM=IEFBR14
+//MYDD    DD   DSN=&B..DATA,DISP=SHR
+"""
+        job = parse_jcl(jcl)
+        dd = job.get_dd_statements()[0]
+        assert dd.dataset_name == "CORP.SUFFIX.DATA"
+
+    def test_chained_set_backward_declared(self):
+        """SET A=VALUE before SET B=&A. is already resolved at parse time.
+
+        _resolve_set_value handles backward references during the main parse
+        loop.  This test verifies that the pre-resolution pass does not break
+        values that were already resolved.
+
+        Given:
+            SET A=CORP         (backward – defined first)
+            SET B=&A..SUFFIX
+            DD DSN=&B..DATA
+
+        When: parse_jcl() is called.
+
+        Then: DSN resolves to CORP.SUFFIX.DATA.
+        """
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//         SET A=CORP
+//         SET B=&A..SUFFIX
+//STEP1   EXEC PGM=IEFBR14
+//MYDD    DD   DSN=&B..DATA,DISP=SHR
+"""
+        job = parse_jcl(jcl)
+        dd = job.get_dd_statements()[0]
+        assert dd.dataset_name == "CORP.SUFFIX.DATA"
+
+    def test_three_level_chain(self):
+        """Three-level chain: DSN=&C. where C=&B., B=&A., A=VALUE.
+
+        Each symbol transitively depends on the one before it.  Forward or
+        backward declaration order must not matter after pre-resolution.
+
+        Given:
+            SET A=CORP                 ← leaf value
+            SET B=&A..LIB              ← depends on A
+            SET C=&B..PDS              ← depends on B (and transitively A)
+            DD DSN=&C..DATA
+
+        When: parse_jcl() is called.
+
+        Then: DSN resolves to CORP.LIB.PDS.DATA.
+        """
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//         SET A=CORP
+//         SET B=&A..LIB
+//         SET C=&B..PDS
+//STEP1   EXEC PGM=IEFBR14
+//MYDD    DD   DSN=&C..DATA,DISP=SHR
+"""
+        job = parse_jcl(jcl)
+        dd = job.get_dd_statements()[0]
+        assert dd.dataset_name == "CORP.LIB.PDS.DATA"
+
+    def test_three_level_chain_all_forward(self):
+        """Three-level chain where every symbol is forward-declared.
+
+        Given:
+            SET C=&B..PDS              ← forward ref to B
+            SET B=&A..LIB              ← forward ref to A
+            SET A=CORP                 ← leaf (last)
+            DD DSN=&C..DATA
+
+        When: parse_jcl() is called.
+
+        Then: DSN resolves to CORP.LIB.PDS.DATA.
+        """
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//         SET C=&B..PDS
+//         SET B=&A..LIB
+//         SET A=CORP
+//STEP1   EXEC PGM=IEFBR14
+//MYDD    DD   DSN=&C..DATA,DISP=SHR
+"""
+        job = parse_jcl(jcl)
+        dd = job.get_dd_statements()[0]
+        assert dd.dataset_name == "CORP.LIB.PDS.DATA"
+
+    def test_circular_set_symbols_no_crash(self):
+        """Circular SET references (A=&B., B=&A.) must not cause an infinite loop.
+
+        The pre-resolution pass is capped at 10 iterations.  After the cap the
+        table may still contain unresolved tokens, but the parser must return
+        without error.  The DD dataset_name should not contain raw ``&``
+        tokens (they are silently elided by strict=False during DD substitution).
+
+        Given:
+            SET A=&B.
+            SET B=&A.
+            DD DSN=&A..SUFFIX
+
+        When: parse_jcl() is called.
+
+        Then: No exception; no raw ``&`` symbols remain in dataset_name.
+        """
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//         SET A=&B.
+//         SET B=&A.
+//STEP1   EXEC PGM=IEFBR14
+//MYDD    DD   DSN=&A..SUFFIX,DISP=SHR
+"""
+        # Must not raise.
+        job = parse_jcl(jcl)
+        dd = job.get_dd_statements()[0]
+        # The cyclic symbols can't resolve – they collapse to empty string.
+        assert "&" not in dd.dataset_name
+
+    def test_mixed_resolved_and_chained(self):
+        """A job combining simple and chained symbols resolves all correctly.
+
+        Given:
+            SET HLQ=CORP               ← simple literal
+            SET LIB=&HLQ..DATA         ← one-level chain
+            SET FULL=&LIB..PDS         ← two-level chain
+            DD1 DSN=&HLQ..PLAIN
+            DD2 DSN=&LIB..SUFFIX
+            DD3 DSN=&FULL..MEMBER
+
+        When: parse_jcl() is called.
+
+        Then: all three DDs resolve to the fully-expanded names.
+        """
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//         SET HLQ=CORP
+//         SET LIB=&HLQ..DATA
+//         SET FULL=&LIB..PDS
+//STEP1   EXEC PGM=IEFBR14
+//DD1     DD   DSN=&HLQ..PLAIN,DISP=SHR
+//DD2     DD   DSN=&LIB..SUFFIX,DISP=SHR
+//DD3     DD   DSN=&FULL..MEMBER,DISP=SHR
+"""
+        job = parse_jcl(jcl)
+        dds = {dd.name: dd.dataset_name for dd in job.get_dd_statements()}
+        assert dds["DD1"] == "CORP.PLAIN"
+        assert dds["DD2"] == "CORP.DATA.SUFFIX"
+        assert dds["DD3"] == "CORP.DATA.PDS.MEMBER"
+

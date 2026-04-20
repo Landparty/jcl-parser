@@ -219,6 +219,43 @@ def test_cond_codes():
     assert cond_val[1] == "(8,EQ,STEP2)"
 
 
+def test_carddemo_creastmt():
+    """Regression test for AWS CardDemo CREASTMT job (5-step VSAM build + report)."""
+    jcl_path = FIXTURES_DIR / "carddemo_creastmt.jcl"
+    job = parse_jcl(jcl_path)
+
+    assert job.name == "CREASTMT"
+    assert job.parameters["CLASS"] == "A"
+    assert job.parameters["MSGCLASS"] == "H"
+    assert job.parameters["NOTIFY"] == "&SYSUID"
+    assert job.parameters["TIME"] == "1440"
+
+    assert len(job.steps) == 5
+    step_names = [s.name for s in job.steps]
+    assert step_names == ["DELDEF01", "STEP010", "STEP020", "STEP030", "STEP040"]
+
+    # DELDEF01: IDCAMS with inline SYSIN data
+    deldef = job.steps[0]
+    sysin = deldef.get_dd("SYSIN")
+    assert sysin is not None
+    assert sysin.has_inline_data
+
+    # STEP010: SORT with multi-continuation SORTOUT DD
+    step010 = job.steps[1]
+    sortout = step010.get_dd("SORTOUT")
+    assert sortout is not None
+    assert sortout.dataset_name == "AWS.M2.CARDDEMO.TRXFL.SEQ"
+    assert sortout.parameters["UNIT"] == "SYSDA"
+
+    # STEP040: report generator with 9 DDs including STMTFILE and HTMLFILE
+    step040 = job.steps[4]
+    dd_names = [dd.name for dd in step040.dd_statements]
+    assert "STMTFILE" in dd_names
+    assert "HTMLFILE" in dd_names
+    stmtfile = step040.get_dd("STMTFILE")
+    assert stmtfile.dataset_name == "AWS.M2.CARDDEMO.STATEMNT.PS"
+
+
 def test_jobparm_parsing():
     """Test parsing of JES2 control statements (JOBPARM, ROUTE)."""
     jcl_path = FIXTURES_DIR / "jobparm_usage.jcl"
