@@ -47,6 +47,46 @@ def _clone_conditional(
     return new_cond
 
 
+def _clone_dd_statement(dd: DDStatement) -> DDStatement:
+    # substitute_dd_statement mutates dataset_name, disposition, parameters
+    # in-place, so each exploded step needs its own DDStatement instance.
+    # Inner parameter values (strings, lists, dicts) are replaced wholesale
+    # by substitute_parameters_dict — never mutated — so a shallow dict
+    # copy is sufficient. output_refs is populated post-parse and not
+    # touched by explosion; sharing the list by reference is safe.
+    new_dd = DDStatement(
+        name=dd.name,
+        dataset_name=dd.dataset_name,
+        disposition=dd.disposition,
+        parameters=dict(dd.parameters),
+        inline_data=dd.inline_data,
+        comments=list(dd.comments),
+        line_number=dd.line_number,
+    )
+    new_dd.output_refs = dd.output_refs
+    return new_dd
+
+
+def _clone_step_for_explosion(step: Step) -> Step:
+    # Performance-tuned alternative to deepcopy(step) on the PROC explosion
+    # hot path. Clones only what downstream substitution actually mutates:
+    # dd_statements (in-place mutation by substitute_dd_statement) and the
+    # outer parameters / dd_overrides / comments containers. Strings and
+    # scalars are shared safely.
+    return Step(
+        name=step.name,
+        program=step.program,
+        procedure=step.procedure,
+        parameters=dict(step.parameters),
+        dd_statements=[_clone_dd_statement(dd) for dd in step.dd_statements],
+        comments=list(step.comments),
+        line_number=step.line_number,
+        is_exploded=step.is_exploded,
+        original_proc_call=step.original_proc_call,
+        dd_overrides={k: _clone_dd_statement(v) for k, v in step.dd_overrides.items()},
+    )
+
+
 @dataclass
 class SymbolScope:
     """
@@ -267,7 +307,7 @@ def expand_proc_invocation(
                 result.append(_clone_conditional(proc_step, _process_proc_steps))
             else:
                 # Clone the step
-                new_step = deepcopy(proc_step)
+                new_step = _clone_step_for_explosion(proc_step)
 
                 # Generate qualified step name
                 if new_step.name:
@@ -502,7 +542,7 @@ def explode_job(
                 result.extend(expanded)
             else:
                 # Regular step - just substitute symbols
-                substituted_step = deepcopy(step)
+                substituted_step = _clone_step_for_explosion(step)
 
                 if substituted_step.program:
                     substituted_step.program = substitute_symbols(
