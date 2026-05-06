@@ -41,6 +41,7 @@ test = [
     "pytest-cov>=4.0",
     "tomli>=1.1.0; python_version < '3.11'",
 ]
+profiling = ["psutil>=5.9"]
 
 [project.scripts]
 jcl-parser = "jclparser.cli:main"
