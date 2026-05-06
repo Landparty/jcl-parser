@@ -123,6 +123,10 @@ from .lint import (
     to_sarif as lint_to_sarif,
     register_rule as register_lint_rule,
 )
+from .profiling import (
+    FunctionProfile,
+    ProfilingResult,
+)
 
 # Initialize global plugin registry
 _registry = get_plugin_registry()
@@ -227,6 +231,9 @@ __all__ = [
     "lint_job",
     "lint_to_sarif",
     "register_lint_rule",
+    # ── Profiling ─────────────────────────────────────────────────────────────
+    "ProfilingResult",
+    "FunctionProfile",
 ]
 
 
