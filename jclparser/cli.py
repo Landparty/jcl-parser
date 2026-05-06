@@ -109,6 +109,24 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="List all available lint rule codes and descriptions, then exit",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Profile the parse and include timing/memory metrics in output",
+    )
+    parser.add_argument(
+        "--profile-top-n",
+        type=int,
+        default=20,
+        metavar="N",
+        help="Number of top functions to include in profiling output (default: 20)",
+    )
+    parser.add_argument(
+        "--profile-output",
+        default=None,
+        metavar="PATH",
+        help="Write cProfile binary to PATH (.prof file)",
+    )
 
     args = parser.parse_args(argv)
     path = Path(args.file)
@@ -127,12 +145,29 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_detect(path, args.json_output)
 
     # --- parse ---
+    enable_profiling = args.profile
+    prof = None
     try:
-        job = parse_jcl(
-            path,
-            proc_base_path=args.proc_path,
-            enable_external_procs=args.proc_path is not None,
-        )
+        if enable_profiling:
+            from .profiling import ProfilerContext
+            ctx = ProfilerContext(
+                top_n=args.profile_top_n,
+                prof_output=args.profile_output,
+            )
+            with ctx:
+                job = parse_jcl(
+                    path,
+                    proc_base_path=args.proc_path,
+                    enable_external_procs=args.proc_path is not None,
+                )
+            assert ctx.result is not None
+            prof = ctx.result
+        else:
+            job = parse_jcl(
+                path,
+                proc_base_path=args.proc_path,
+                enable_external_procs=args.proc_path is not None,
+            )
     except (JCLSyntaxError, JCLValidationError, JCLStructureError) as exc:
         print(f"Parse error: {exc}", file=sys.stderr)
         return 1
@@ -157,7 +192,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if query is None:
         if json_out:
-            print(json.dumps(_job_to_dict(job), indent=2))
+            data = _job_to_dict(job)
+            if prof is not None:
+                data["profiling"] = prof.to_dict()
+            print(json.dumps(data, indent=2))
         else:
             _print_summary(job)
         return 0
