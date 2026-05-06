@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, IO
+from typing import Any, IO, Literal, overload
 from .model import (
     Job,
     Step,
@@ -38,6 +38,7 @@ from .utils import (
 from .continuation_handler import ContinuationLineHandler
 from .condition_parser import parse_condition
 from typing import TYPE_CHECKING
+from .profiling import ProfilerContext, ProfilingResult
 
 if TYPE_CHECKING:
     from .include_loader import IncludeMemberLoader
@@ -109,7 +110,7 @@ def _exec_has_program_spec(parameters: dict) -> bool:
     )
 
 
-def parse_jcl(
+def _parse_jcl_core(
     source: str | Path | IO,
     strict_mode: bool = False,
     config: ParserConfig | None = None,
@@ -117,30 +118,7 @@ def parse_jcl(
     enable_external_procs: bool = True,
     include_loader: "IncludeMemberLoader | None" = None,
 ) -> Job:
-    """
-    Parse JCL script from various input sources into structured Job object.
-
-    Args:
-        source: JCL script content as string, file path, or file-like object
-        strict_mode: Enable strict parsing mode
-        config: Optional parser configuration
-        proc_base_path: Base directory for external PROC libraries
-                       (defaults to JCL_PROCLIB_PATH env var or current directory)
-        enable_external_procs: Enable loading PROCs from file system via JCLLIB ORDER
-        include_loader: Optional :class:`~jclparser.include_loader.IncludeMemberLoader`
-            used to resolve ``INCLUDE MEMBER=name`` statements before parsing.
-            When ``None`` (the default) a :class:`~jclparser.include_loader.JCLLIBMemberLoader`
-            pointing at *proc_base_path* is created automatically, but only if
-            INCLUDE statements are actually found in the source.
-
-    Returns:
-        Job object representing parsed JCL structure
-
-    Raises:
-        JCLSyntaxError: Invalid JCL syntax encountered
-        JCLValidationError: Valid syntax but semantic errors
-        FileNotFoundError: When source is path to non-existent file
-    """
+    """Core parsing implementation. See parse_jcl() for full documentation."""
     # Handle different input source types
     try:
         content = read_source(source)
@@ -699,6 +677,91 @@ def parse_jcl(
                 job.sql_detections[result.step_name] = result
 
     return job
+
+
+@overload
+def parse_jcl(
+    source: str | Path | IO,
+    strict_mode: bool = ...,
+    config: ParserConfig | None = ...,
+    proc_base_path: str | Path | None = ...,
+    enable_external_procs: bool = ...,
+    include_loader: "IncludeMemberLoader | None" = ...,
+    enable_profiling: Literal[False] = ...,
+    top_n: int = ...,
+    prof_output: str | None = ...,
+) -> Job: ...
+
+
+@overload
+def parse_jcl(
+    source: str | Path | IO,
+    strict_mode: bool = ...,
+    config: ParserConfig | None = ...,
+    proc_base_path: str | Path | None = ...,
+    enable_external_procs: bool = ...,
+    include_loader: "IncludeMemberLoader | None" = ...,
+    enable_profiling: Literal[True] = ...,
+    top_n: int = ...,
+    prof_output: str | None = ...,
+) -> tuple[Job, ProfilingResult]: ...
+
+
+def parse_jcl(
+    source: str | Path | IO,
+    strict_mode: bool = False,
+    config: ParserConfig | None = None,
+    proc_base_path: str | Path | None = None,
+    enable_external_procs: bool = True,
+    include_loader: "IncludeMemberLoader | None" = None,
+    enable_profiling: bool = False,
+    top_n: int = 50,
+    prof_output: str | None = None,
+) -> "Job | tuple[Job, ProfilingResult]":
+    """
+    Parse JCL script from various input sources into structured Job object.
+
+    Args:
+        source: JCL script content as string, file path, or file-like object
+        strict_mode: Enable strict parsing mode
+        config: Optional parser configuration
+        proc_base_path: Base directory for external PROC libraries
+                       (defaults to JCL_PROCLIB_PATH env var or current directory)
+        enable_external_procs: Enable loading PROCs from file system via JCLLIB ORDER
+        include_loader: Optional :class:`~jclparser.include_loader.IncludeMemberLoader`
+            used to resolve ``INCLUDE MEMBER=name`` statements before parsing.
+            When ``None`` (the default) a :class:`~jclparser.include_loader.JCLLIBMemberLoader`
+            pointing at *proc_base_path* is created automatically, but only if
+            INCLUDE statements are actually found in the source.
+        enable_profiling: When True, wrap parsing with cProfile + tracemalloc and
+            return a ``(Job, ProfilingResult)`` tuple instead of just a ``Job``.
+        top_n: Number of top functions to include in the profiling report
+            (by cumulative time). Only used when *enable_profiling* is True.
+        prof_output: Optional file path to write the binary ``.prof`` file.
+            Only used when *enable_profiling* is True.
+
+    Returns:
+        Job object representing parsed JCL structure (when enable_profiling=False),
+        or a (Job, ProfilingResult) tuple (when enable_profiling=True).
+
+    Raises:
+        JCLSyntaxError: Invalid JCL syntax encountered
+        JCLValidationError: Valid syntax but semantic errors
+        FileNotFoundError: When source is path to non-existent file
+    """
+    if not enable_profiling:
+        return _parse_jcl_core(
+            source, strict_mode, config, proc_base_path,
+            enable_external_procs, include_loader,
+        )
+    ctx = ProfilerContext(top_n=top_n, prof_output=prof_output)
+    with ctx:
+        job = _parse_jcl_core(
+            source, strict_mode, config, proc_base_path,
+            enable_external_procs, include_loader,
+        )
+    assert ctx.result is not None
+    return job, ctx.result
 
 
 def validate_jcl(source: str | Path | IO, level: str = "basic") -> list[ParseError]:
