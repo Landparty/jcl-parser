@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, IO, Literal, overload
+from typing import Any, IO, Literal, TYPE_CHECKING, overload
 from .model import (
     Job,
     Step,
@@ -37,7 +37,6 @@ from .utils import (
 )
 from .continuation_handler import ContinuationLineHandler
 from .condition_parser import parse_condition
-from typing import TYPE_CHECKING
 from .profiling import ProfilerContext, ProfilingResult
 
 if TYPE_CHECKING:
@@ -218,15 +217,15 @@ def _parse_jcl_core(
 
     # Now parse the merged lines
     job = None
-    conditional_stack: List[Any] = []  # List of tuples: (ConditionalBlock, active_branch)
+    conditional_stack: list[Any] = []  # tuples: (ConditionalBlock, active_branch)
     current_step = None
     current_dd = None
-    inline_data_lines: List[str] = []
+    inline_data_lines: list[str] = []
     in_inline_data = False
     current_procedure = None  # Track when we're inside a PROC/PEND block
-    pending_procedures: List[Any] = []  # Procedures collected before any JOB statement (PROC-only files)
+    pending_procedures: list[Any] = []  # Procedures collected before any JOB statement (PROC-only files)
     current_delimiter = "/*"
-    orphaned_dds: List[Any] = []  # Track DDs that appear before first EXEC
+    orphaned_dds: list[Any] = []  # Track DDs that appear before first EXEC
     in_joblib_concat = False  # True while accumulating JOBLIB concatenation lines
 
     for line, line_num in merged_lines:
@@ -1133,7 +1132,7 @@ def _check_param_balance(param_string: str, line_number: int) -> None:
 
 def _parse_parameters(param_string: str, line_number: int = 0) -> dict[str, Any]:
     """Parse JCL parameters from parameter string"""
-    parameters: Dict[str, Any] = {}
+    parameters: dict[str, Any] = {}
 
     if not param_string.strip():
         return parameters
