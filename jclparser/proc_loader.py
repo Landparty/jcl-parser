@@ -334,3 +334,60 @@ def create_default_loader(
         loaders.append(JCLLIBProcedureLoader(base_path))
 
     return CompositeProcedureLoader(loaders)
+
+
+class DictProcedureLoader(ProcedureLoader):
+    """Loads procedures from an in-memory dict[str, str] (proc_name -> JCL content).
+
+    Parses each procedure lazily on first access and caches the Procedure object
+    so subsequent calls are pure dict lookups.
+    """
+
+    def __init__(self, data: dict[str, str]) -> None:
+        self._content: dict[str, str] = {k.upper(): v for k, v in data.items()}
+        self._parsed: dict[str, Procedure] = {}
+
+    def load_procedure(
+        self, name: str, libraries: Sequence[str] | None = None
+    ) -> Procedure | None:
+        if not name:
+            return None
+        key = name.upper()
+        if key in self._parsed:
+            return self._parsed[key]
+        content = self._content.get(key)
+        if content is None:
+            return None
+        proc = self._parse_proc_content(content, key)
+        if proc is not None:
+            self._parsed[key] = proc
+        return proc
+
+    def _parse_proc_content(self, content: str, proc_name: str) -> Procedure | None:
+        """Parse JCL PROC content string into a Procedure object."""
+        from .parser import parse_jcl
+        from .jcl_file_type import detect_file_type_from_content, FileType
+
+        try:
+            file_type = detect_file_type_from_content(content)
+            if file_type == FileType.JCL:
+                return None  # full JOB file, not a PROC
+            if file_type == FileType.PROC:
+                content = f"//DUMMYJOB JOB\n{content}"
+
+            job = parse_jcl(content, strict_mode=False)
+            for proc in job.procedures:
+                if proc.name.upper() == proc_name:
+                    proc.is_external = True
+                    return proc
+            if job.steps:
+                return Procedure(
+                    name=proc_name,
+                    parameters={},
+                    steps=job.steps,
+                    line_number=0,
+                    is_external=True,
+                )
+        except Exception:
+            pass
+        return None

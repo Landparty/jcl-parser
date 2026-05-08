@@ -48,6 +48,7 @@ from .explosion import (
 from .proc_loader import (
     ProcedureLoader,
     CompositeProcedureLoader,
+    DictProcedureLoader,
     create_default_loader,
 )
 from .system_symbols import (
@@ -169,6 +170,7 @@ __all__ = [
     "explode_job",
     "ProcedureLoader",
     "CompositeProcedureLoader",
+    "DictProcedureLoader",
     "create_default_loader",
     "SystemSymbolProvider",
     "ParserConfig",
