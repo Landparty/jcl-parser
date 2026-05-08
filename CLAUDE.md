@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project Overview
+
+**jclparser** is a pure Python library for parsing IBM z/OS JCL (Job Control Language). It builds a structured model of Jobs, Steps, and DD statements; validates JCL syntax and structure; expands PROCs (both inline and external); and detects file type heuristically. No runtime dependencies.
+
+## Backend Integration
+
+This library is **vendored** into `backend/_vendor/jcl-parser/` — it is not installed from PyPI. Changes to this standalone repo must be manually copied before they reach the backend:
+```bash
+cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser/
+```
+
 ## Commands
 
 ```bash
@@ -73,3 +84,22 @@ The package is `jclparser/` — a pure Python library with no runtime dependenci
 ### External PROC loading
 
 Set `JCL_PROCLIB_PATH` env var or pass `proc_base_path` to `parse_jcl()`. The filesystem layout mirrors mainframe dataset naming: `<base_path>/SYS1.PROCLIB/MYPROC.jcl`. Inline PROCs always take precedence over external ones.
+
+## Test Structure
+
+```
+tests/
+  unit/        # Individual component tests (parser API, models, validators, explosion)
+  integration/ # End-to-end JCL parsing with realistic job streams
+  contracts/   # API stability tests
+  performance/ # Benchmarks
+```
+
+Markers: `unit`, `integration`, `contract`, `performance` (all enforced via `pyproject.toml`). Coverage minimum: **90%** — enforced on every run.
+
+## Code Style
+
+- Python 3.11+ type hints on all signatures
+- `ruff` for linting + formatting (line-length 88); `black` not used — `ruff format` handles formatting
+- `mypy` strict mode; no untyped defs
+- No runtime dependencies; dev tools in `[dev]` extras only
