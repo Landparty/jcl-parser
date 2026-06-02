@@ -618,4 +618,3 @@ class TestSetSymbolSubstitution:
         assert dds["DD1"] == "CORP.PLAIN"
         assert dds["DD2"] == "CORP.DATA.SUFFIX"
         assert dds["DD3"] == "CORP.DATA.PDS.MEMBER"
-

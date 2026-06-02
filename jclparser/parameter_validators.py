@@ -52,7 +52,13 @@ class DISPValidator:
     """
 
     VALID_STATUS: ClassVar[Set[str]] = {"NEW", "OLD", "SHR", "MOD"}
-    VALID_NORMAL_TERM: ClassVar[Set[str]] = {"DELETE", "KEEP", "CATLG", "UNCATLG", "PASS"}
+    VALID_NORMAL_TERM: ClassVar[Set[str]] = {
+        "DELETE",
+        "KEEP",
+        "CATLG",
+        "UNCATLG",
+        "PASS",
+    }
     VALID_ABNORMAL_TERM: ClassVar[Set[str]] = {"DELETE", "KEEP", "CATLG", "UNCATLG"}
 
     # Precomputed sorted join strings (built once at class definition time)
@@ -139,11 +145,12 @@ class DatasetNameValidator:
     """
 
     # Pattern for a single qualifier
-    QUALIFIER_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^[A-Z$#@][A-Z0-9$#@-]{0,7}$")
+    QUALIFIER_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
+        r"^[A-Z$#@][A-Z0-9$#@-]{0,7}$"
+    )
 
     # Pattern for GDG generation
     GDG_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^\([+-]?\d+\)$")
-
 
     @classmethod
     def validate(

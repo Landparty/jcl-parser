@@ -223,7 +223,9 @@ def _parse_jcl_core(
     inline_data_lines: list[str] = []
     in_inline_data = False
     current_procedure = None  # Track when we're inside a PROC/PEND block
-    pending_procedures: list[Any] = []  # Procedures collected before any JOB statement (PROC-only files)
+    pending_procedures: list[
+        Any
+    ] = []  # Procedures collected before any JOB statement (PROC-only files)
     current_delimiter = "/*"
     orphaned_dds: list[Any] = []  # Track DDs that appear before first EXEC
     in_joblib_concat = False  # True while accumulating JOBLIB concatenation lines
@@ -382,13 +384,18 @@ def _parse_jcl_core(
                     # For SET statements, parameters are in the format SYMBOL=VALUE
                     for key, value in stmt.parameters.items():
                         if not is_positional_key(key):
-                            job.add_set(key, _resolve_set_value(value, job.set_statements))
+                            job.add_set(
+                                key, _resolve_set_value(value, job.set_statements)
+                            )
                         elif is_positional_key(key):
                             # Positional parameter might be SYMBOL=VALUE without keyword
                             param_val = value
                             if "=" in param_val:
                                 sym, val = param_val.split("=", 1)
-                                job.add_set(sym.strip(), _resolve_set_value(val.strip(), job.set_statements))
+                                job.add_set(
+                                    sym.strip(),
+                                    _resolve_set_value(val.strip(), job.set_statements),
+                                )
 
             elif stmt.type == "EXPORT":
                 # EXPORT SYMLIST=(A,B,...)  or  EXPORT SYMLIST=*
@@ -531,7 +538,9 @@ def _parse_jcl_core(
 
         proc_loader = create_default_loader(
             inline_procedures=job.procedures,
-            base_path=Path(proc_base_path) if isinstance(proc_base_path, str) else proc_base_path,
+            base_path=Path(proc_base_path)
+            if isinstance(proc_base_path, str)
+            else proc_base_path,
             include_jcllib=True,
         )
         # Store loader on job for later use (e.g., in explosion)
@@ -638,7 +647,9 @@ def _parse_jcl_core(
                 _scope_for_val = SymbolScope(
                     set_symbols={k: v for k, v in _raw.items() if k != _name}
                 )
-                _new_val = substitute_symbols(_val, _scope_for_val, allow_undefined=True)
+                _new_val = substitute_symbols(
+                    _val, _scope_for_val, allow_undefined=True
+                )
                 if _new_val != _val:
                     _raw[_name] = _new_val
                     _changed = True
@@ -750,14 +761,22 @@ def parse_jcl(
     """
     if not enable_profiling:
         return _parse_jcl_core(
-            source, strict_mode, config, proc_base_path,
-            enable_external_procs, include_loader,
+            source,
+            strict_mode,
+            config,
+            proc_base_path,
+            enable_external_procs,
+            include_loader,
         )
     ctx = ProfilerContext(top_n=top_n, prof_output=prof_output)
     with ctx:
         job = _parse_jcl_core(
-            source, strict_mode, config, proc_base_path,
-            enable_external_procs, include_loader,
+            source,
+            strict_mode,
+            config,
+            proc_base_path,
+            enable_external_procs,
+            include_loader,
         )
     assert ctx.result is not None
     return job, ctx.result

@@ -1,8 +1,8 @@
 """Integration tests: jcl-parser CLI --profile flags."""
+
 import contextlib
 import io
 import json
-import sys
 from pathlib import Path
 
 import pytest
@@ -24,6 +24,7 @@ def jcl_file(tmp_path):
 def _run_cli(argv: list[str]) -> tuple[int, str]:
     """Run jcl-parser CLI and capture stdout. Returns (exit_code, stdout)."""
     from jclparser.cli import main
+
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = main(argv)

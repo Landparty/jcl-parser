@@ -653,7 +653,7 @@ def _explode_step(
     # Load procedure definition
     # CompositeProcedureLoader requires a tuple (hashable) for its LRU cache;
     # other loaders accept both.  Always pass a tuple or None.
-    _libs = list(jcllib_order) if jcllib_order else None
+    _libs = tuple(jcllib_order) if jcllib_order else None
     procedure = proc_loader.load_procedure(proc_name, _libs)
 
     if procedure is None:

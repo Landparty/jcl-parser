@@ -499,16 +499,12 @@ class TestSetValueEdgeCases:
 
     def test_double_ampersand_escape(self):
         """&& in a SET value must become a literal & (not a symbol reference)."""
-        job = self._parse(
-            "//J JOB A\n//  SET VAR=&&PREFIX.DATA\n//S EXEC PGM=P\n"
-        )
+        job = self._parse("//J JOB A\n//  SET VAR=&&PREFIX.DATA\n//S EXEC PGM=P\n")
         assert job.set_statements["VAR"] == "&PREFIX.DATA"
 
     def test_undefined_symbol_passthrough(self):
         """An unknown &SYMBOL in a SET value is left unchanged."""
-        job = self._parse(
-            "//J JOB A\n//  SET FOO=&UNDEFINED..BAR\n//S EXEC PGM=P\n"
-        )
+        job = self._parse("//J JOB A\n//  SET FOO=&UNDEFINED..BAR\n//S EXEC PGM=P\n")
         assert job.set_statements["FOO"] == "&UNDEFINED..BAR"
 
     def test_symbol_without_trailing_period(self):
@@ -558,16 +554,12 @@ class TestSetValueEdgeCases:
 
     def test_self_referencing_passthrough(self):
         """SET A=&A..EXTRA — A is not yet defined, so &A remains unresolved."""
-        job = self._parse(
-            "//J JOB A\n//  SET A=&A..EXTRA\n//S EXEC PGM=P\n"
-        )
+        job = self._parse("//J JOB A\n//  SET A=&A..EXTRA\n//S EXEC PGM=P\n")
         assert job.set_statements["A"] == "&A..EXTRA"
 
     def test_double_escape_then_symbol(self):
         """&&& — first && becomes &, then &SYMBOL is resolved."""
-        job = self._parse(
-            "//J JOB A\n//  SET A=VAL\n//  SET B=&&&A\n//S EXEC PGM=P\n"
-        )
+        job = self._parse("//J JOB A\n//  SET A=VAL\n//  SET B=&&&A\n//S EXEC PGM=P\n")
         assert job.set_statements["B"] == "&VAL"
 
     def test_special_char_at_sign_in_symbol(self):
@@ -606,9 +598,7 @@ class TestSetValueEdgeCases:
 
     def test_system_symbol_in_set_value_not_resolved_at_parse_time(self):
         """&SYSUID inside a SET value is not in job.set_statements, so it stays raw."""
-        job = self._parse(
-            "//J JOB A\n//  SET FOO=&SYSUID..DATA\n//S EXEC PGM=P\n"
-        )
+        job = self._parse("//J JOB A\n//  SET FOO=&SYSUID..DATA\n//S EXEC PGM=P\n")
         assert job.set_statements["FOO"] == "&SYSUID..DATA"
 
 
