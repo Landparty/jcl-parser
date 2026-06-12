@@ -81,6 +81,7 @@ def _register_builtins() -> None:
     from .iebgener import IEBGENERProfile, IEBCOPYProfile
     from .sort import SortProfile
     from .ikjeft01 import IKJEFT01Profile
+    from .dfsrrc00 import DFSRRC00Profile
 
     register_profile(IEFBR14Profile())
     register_profile(IDCAMSProfile())
@@ -88,6 +89,7 @@ def _register_builtins() -> None:
     register_profile(IEBCOPYProfile())
     register_profile(SortProfile())
     register_profile(IKJEFT01Profile())
+    register_profile(DFSRRC00Profile())
 
 
 _register_builtins()

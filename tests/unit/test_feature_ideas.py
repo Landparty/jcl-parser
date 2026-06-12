@@ -325,6 +325,62 @@ class TestProgramProfiles:
         assert analyze_job(job) == []
         assert get_profile("MYCUSTOM") is None
 
+    def test_dfsrrc00_bmp_identifies_application_program(self):
+        src = (
+            "//TESTJOB  JOB CLASS=A\n"
+            "//STEP01   EXEC PGM=DFSRRC00,\n"
+            "//             PARM='BMP,PAUDBLOD,PSBPAUTB'\n"
+            "//SYSPRINT DD SYSOUT=*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        result = results[0]
+        assert result.program == "DFSRRC00"
+        notes = " | ".join(result.notes)
+        assert "PAUDBLOD" in notes
+        assert "BMP" in notes
+        assert "PSBPAUTB" in notes
+        assert "PAUDBLOD" in result.summary
+
+    def test_dfsrrc00_dli_identifies_application_program(self):
+        src = (
+            "//BATCHJOB JOB CLASS=A\n"
+            "//STEP01   EXEC PGM=DFSRRC00,PARM='DLI,MYCOBOL,MYPSBNAM'\n"
+            "//SYSPRINT DD SYSOUT=*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        notes = " | ".join(results[0].notes)
+        assert "MYCOBOL" in notes
+        assert "DLI" in notes
+        assert "MYPSBNAM" in notes
+
+    def test_dfsrrc02_also_matched(self):
+        src = (
+            "//MYJOB    JOB CLASS=A\n"
+            "//STEP01   EXEC PGM=DFSRRC02,PARM='BMP,MYAPP,MYPSB'\n"
+            "//SYSPRINT DD SYSOUT=*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert results[0].program == "DFSRRC02"
+        assert "MYAPP" in " | ".join(results[0].notes)
+
+    def test_dfsrrc00_no_parm_graceful(self):
+        src = (
+            "//MYJOB    JOB CLASS=A\n"
+            "//STEP01   EXEC PGM=DFSRRC00\n"
+            "//SYSPRINT DD SYSOUT=*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert results[0].program == "DFSRRC00"
+        assert "unparseable" in results[0].summary
+
 
 # ---------------------------------------------------------------------------
 # B2: RC feasibility
