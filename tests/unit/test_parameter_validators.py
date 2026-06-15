@@ -325,3 +325,121 @@ class TestEdgeCases:
 
         assert result.is_valid is False
         assert len(result.errors) >= 2
+
+
+class TestTimeValidator:
+    """Test TIME parameter validation."""
+
+    def test_minutes_only(self):
+        assert ParameterValidator.validate_time("30").is_valid is True
+
+    def test_minutes_and_seconds(self):
+        assert ParameterValidator.validate_time("(30,15)").is_valid is True
+
+    def test_unlimited_1440(self):
+        assert ParameterValidator.validate_time("1440").is_valid is True
+
+    def test_nolimit_keyword(self):
+        assert ParameterValidator.validate_time("NOLIMIT").is_valid is True
+
+    def test_minutes_over_max(self):
+        assert ParameterValidator.validate_time("2000").is_valid is False
+
+    def test_seconds_over_59(self):
+        result = ParameterValidator.validate_time("(10,75)")
+        assert result.is_valid is False
+
+    def test_empty_is_valid(self):
+        assert ParameterValidator.validate_time("").is_valid is True
+
+
+class TestRegionValidator:
+    """Test REGION parameter validation."""
+
+    def test_kilobytes(self):
+        assert ParameterValidator.validate_region("4096K").is_valid is True
+
+    def test_megabytes(self):
+        assert ParameterValidator.validate_region("32M").is_valid is True
+
+    def test_zero_unlimited(self):
+        assert ParameterValidator.validate_region("0").is_valid is True
+        assert ParameterValidator.validate_region("0M").is_valid is True
+
+    def test_missing_suffix_rejected(self):
+        assert ParameterValidator.validate_region("500").is_valid is False
+
+    def test_garbage_rejected(self):
+        assert ParameterValidator.validate_region("BIG").is_valid is False
+
+
+class TestPriorityAndPerform:
+    """Test PRTY and PERFORM validation."""
+
+    def test_prty_in_range(self):
+        assert ParameterValidator.validate_priority("0").is_valid is True
+        assert ParameterValidator.validate_priority("15").is_valid is True
+
+    def test_prty_out_of_range(self):
+        assert ParameterValidator.validate_priority("16").is_valid is False
+
+    def test_prty_non_numeric(self):
+        assert ParameterValidator.validate_priority("HIGH").is_valid is False
+
+    def test_perform_in_range(self):
+        assert ParameterValidator.validate_perform("1").is_valid is True
+        assert ParameterValidator.validate_perform("999").is_valid is True
+
+    def test_perform_zero_rejected(self):
+        assert ParameterValidator.validate_perform("0").is_valid is False
+
+
+class TestRdValidator:
+    """Test RD (restart definition) validation."""
+
+    def test_valid_values(self):
+        for value in ("R", "RNC", "NR", "NC"):
+            assert ParameterValidator.validate_rd(value).is_valid is True
+
+    def test_invalid_value(self):
+        assert ParameterValidator.validate_rd("YES").is_valid is False
+
+
+class TestMsgLevelValidator:
+    """Test MSGLEVEL validation."""
+
+    def test_valid(self):
+        assert ParameterValidator.validate_msglevel("(1,1)").is_valid is True
+        assert ParameterValidator.validate_msglevel("(2,0)").is_valid is True
+
+    def test_statements_out_of_range(self):
+        assert ParameterValidator.validate_msglevel("(3,1)").is_valid is False
+
+    def test_messages_out_of_range(self):
+        assert ParameterValidator.validate_msglevel("(1,2)").is_valid is False
+
+
+class TestDsnTypeValidator:
+    """Test DSNTYPE validation."""
+
+    def test_valid(self):
+        assert ParameterValidator.validate_dsntype("LIBRARY").is_valid is True
+        assert ParameterValidator.validate_dsntype("LARGE").is_valid is True
+
+    def test_invalid(self):
+        assert ParameterValidator.validate_dsntype("SEQUENTIAL").is_valid is False
+
+
+class TestRecfmValidator:
+    """Test RECFM (record format) validation."""
+
+    def test_valid_formats(self):
+        for value in ("F", "FB", "FBA", "V", "VB", "VBS", "U", "VBA", "FBM"):
+            assert ParameterValidator.validate_recfm(value).is_valid is True, value
+
+    def test_fixed_spanned_rejected(self):
+        # Spanned applies to V/D, not F.
+        assert ParameterValidator.validate_recfm("FS").is_valid is False
+
+    def test_garbage_rejected(self):
+        assert ParameterValidator.validate_recfm("XYZ").is_valid is False

@@ -7,6 +7,31 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Parameter validator pack** on `ParameterValidator`, returning the same
+  `ValidationResult` shape as the existing DISP/DSN validators:
+  `validate_time`, `validate_region`, `validate_priority` (PRTY),
+  `validate_perform`, `validate_rd`, `validate_msglevel`, `validate_dsntype`,
+  and `validate_recfm`. These cover format and range/enumeration rules for
+  JOB/EXEC/DD parameters that were previously stored without validation.
+
+### Fixed
+
+- `jclparser.utils` referenced module-level constants (`_RE_SPECIAL_CHARS`,
+  `_RE_JCL_NAME_START`, `_RE_JCL_NAME_FULL`) and a lazy `_PARAMETER_PARSER`
+  singleton that an earlier refactor had removed, along with the `re`,
+  `collections.deque`, and `typing` imports. The affected helpers
+  (`split_jcl_parameters`, `parse_jcl_parameter`, `quote_jcl_value`,
+  `validate_jcl_name`, `format_jcl_line`) raised `NameError` when called; the
+  constants and imports are restored and covered by tests.
+- `explode_job` now threads the JCLLIB ORDER as an immutable tuple through every
+  nesting level, honoring the loaders' hashable-key contract. Added regression
+  tests covering nested PROC resolution across multiple libraries (including
+  library-order precedence and inline-to-external nesting).
+
 ## [1.0.0] - 2026-03-31
 
 First stable release.

@@ -650,10 +650,11 @@ def _explode_step(
     # Check for circular references (O(1) with frozenset)
     detect_circular_refs(proc_name, call_chain, call_chain_upper)
 
-    # Load procedure definition
-    # CompositeProcedureLoader requires a tuple (hashable) for its LRU cache;
-    # other loaders accept both.  Always pass a tuple or None.
-    _libs = list(jcllib_order) if jcllib_order else None
+    # Load procedure definition. The same JCLLIB ORDER is threaded through every
+    # nesting level so an external PROC invoked from inside another PROC is found
+    # against the job's library order. Pass an immutable tuple: loaders key their
+    # caches on the library list, so a hashable value keeps that contract safe.
+    _libs = tuple(jcllib_order) if jcllib_order else None
     procedure = proc_loader.load_procedure(proc_name, _libs)
 
     if procedure is None:

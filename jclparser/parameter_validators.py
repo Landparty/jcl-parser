@@ -12,6 +12,19 @@ from dataclasses import dataclass, field
 _VALID_QUALIFIER_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$#@-")
 _VALID_VOLUME_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
+# Enumerated keyword values for the JOB/EXEC/DD parameters validated below.
+_VALID_RD_VALUES = frozenset({"R", "RNC", "NR", "NC"})
+_VALID_DSNTYPE_VALUES = frozenset(
+    {"LIBRARY", "PDS", "HFS", "PIPE", "LARGE", "BASIC", "EXTREQ", "EXTPREF"}
+)
+# RECFM: format (F/V/U/D), optional Blocked, optional Spanned (V/D only),
+# optional ANSI/Machine carriage control. U takes neither B nor S.
+_RECFM_PATTERN = re.compile(r"^(FB?|VB?S?|U|DB?)[AM]?$")
+# TIME keywords that stand in for "no limit".
+_TIME_UNLIMITED = frozenset({"NOLIMIT", "MAXIMUM"})
+# REGION: digits with an optional K/M suffix.
+_REGION_PATTERN = re.compile(r"^(\d+)([KM]?)$")
+
 
 @dataclass
 class ValidationResult:
@@ -52,7 +65,13 @@ class DISPValidator:
     """
 
     VALID_STATUS: ClassVar[Set[str]] = {"NEW", "OLD", "SHR", "MOD"}
-    VALID_NORMAL_TERM: ClassVar[Set[str]] = {"DELETE", "KEEP", "CATLG", "UNCATLG", "PASS"}
+    VALID_NORMAL_TERM: ClassVar[Set[str]] = {
+        "DELETE",
+        "KEEP",
+        "CATLG",
+        "UNCATLG",
+        "PASS",
+    }
     VALID_ABNORMAL_TERM: ClassVar[Set[str]] = {"DELETE", "KEEP", "CATLG", "UNCATLG"}
 
     # Precomputed sorted join strings (built once at class definition time)
@@ -139,11 +158,12 @@ class DatasetNameValidator:
     """
 
     # Pattern for a single qualifier
-    QUALIFIER_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^[A-Z$#@][A-Z0-9$#@-]{0,7}$")
+    QUALIFIER_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
+        r"^[A-Z$#@][A-Z0-9$#@-]{0,7}$"
+    )
 
     # Pattern for GDG generation
     GDG_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^\([+-]?\d+\)$")
-
 
     @classmethod
     def validate(
@@ -328,3 +348,191 @@ class ParameterValidator:
             )
 
         return ValidationResult.from_errors(errors, warnings)
+
+    @staticmethod
+    def _strip_parens(value: str) -> str:
+        """Remove one layer of surrounding parentheses, if present."""
+        value = value.strip()
+        if value.startswith("(") and value.endswith(")"):
+            return value[1:-1].strip()
+        return value
+
+    @staticmethod
+    def validate_time(time_value: str) -> ValidationResult:
+        """
+        Validate a TIME parameter.
+
+        Accepts ``TIME=minutes``, ``TIME=(minutes,seconds)``, ``TIME=1440``,
+        ``TIME=NOLIMIT`` and ``TIME=MAXIMUM``. Minutes are 0-1440 (1440 means
+        unlimited); seconds are 0-59.
+        """
+        errors: List[str] = []
+        warnings: List[str] = []
+
+        if not time_value:
+            return ValidationResult.valid()
+
+        value = ParameterValidator._strip_parens(time_value.strip().upper())
+        if value in _TIME_UNLIMITED:
+            return ValidationResult.valid()
+
+        parts = [p.strip() for p in value.split(",")]
+        if len(parts) > 2:
+            errors.append(
+                f"TIME has {len(parts)} subparameters, expected (minutes[,seconds])"
+            )
+
+        minutes = parts[0] if parts else ""
+        if minutes and minutes not in _TIME_UNLIMITED:
+            if minutes.isdigit():
+                if int(minutes) > 1440:
+                    errors.append(f"TIME minutes {minutes} exceeds the maximum of 1440")
+            else:
+                errors.append(f"Invalid TIME minutes: {minutes}")
+
+        seconds = parts[1] if len(parts) > 1 else ""
+        if seconds:
+            if seconds.isdigit():
+                if int(seconds) > 59:
+                    errors.append(f"TIME seconds {seconds} must be 0-59")
+            else:
+                errors.append(f"Invalid TIME seconds: {seconds}")
+
+        return ValidationResult.from_errors(errors, warnings)
+
+    @staticmethod
+    def validate_region(region_value: str) -> ValidationResult:
+        """
+        Validate a REGION parameter.
+
+        Accepts a value size with an optional ``K`` or ``M`` suffix
+        (``REGION=4096K``, ``REGION=32M``). ``REGION=0``/``0K``/``0M`` requests
+        all available storage. A bare number with no suffix is flagged.
+        """
+        errors: List[str] = []
+        warnings: List[str] = []
+
+        if not region_value:
+            return ValidationResult.valid()
+
+        value = ParameterValidator._strip_parens(region_value.strip().upper())
+        match = _REGION_PATTERN.match(value)
+        if not match:
+            errors.append(
+                f"Invalid REGION value: {region_value}. "
+                "Expected a number with an optional K or M suffix."
+            )
+            return ValidationResult.invalid(errors, warnings)
+
+        number = int(match.group(1))
+        suffix = match.group(2)
+        if not suffix and number != 0:
+            errors.append(f"REGION value {region_value} must end with K or M (or be 0)")
+        if suffix == "K" and number % 4 != 0 and number != 0:
+            warnings.append("REGION in K is rounded up to a 4K multiple by the system")
+
+        return ValidationResult.from_errors(errors, warnings)
+
+    @staticmethod
+    def validate_priority(prty_value: str) -> ValidationResult:
+        """Validate a PRTY (job priority) parameter: an integer 0-15."""
+        errors: List[str] = []
+        if not prty_value:
+            return ValidationResult.valid()
+        value = prty_value.strip()
+        if not value.isdigit() or not (0 <= int(value) <= 15):
+            errors.append(f"Invalid PRTY value: {prty_value}. Must be an integer 0-15.")
+        return ValidationResult.from_errors(errors)
+
+    @staticmethod
+    def validate_perform(perform_value: str) -> ValidationResult:
+        """Validate a PERFORM (performance group) parameter: an integer 1-999."""
+        errors: List[str] = []
+        if not perform_value:
+            return ValidationResult.valid()
+        value = perform_value.strip()
+        if not value.isdigit() or not (1 <= int(value) <= 999):
+            errors.append(
+                f"Invalid PERFORM value: {perform_value}. Must be an integer 1-999."
+            )
+        return ValidationResult.from_errors(errors)
+
+    @staticmethod
+    def validate_rd(rd_value: str) -> ValidationResult:
+        """Validate an RD (restart definition) parameter: R, RNC, NR or NC."""
+        errors: List[str] = []
+        if not rd_value:
+            return ValidationResult.valid()
+        value = ParameterValidator._strip_parens(rd_value.strip().upper())
+        if value not in _VALID_RD_VALUES:
+            errors.append(
+                f"Invalid RD value: {rd_value}. "
+                f"Valid values: {', '.join(sorted(_VALID_RD_VALUES))}"
+            )
+        return ValidationResult.from_errors(errors)
+
+    @staticmethod
+    def validate_msglevel(msglevel_value: str) -> ValidationResult:
+        """
+        Validate a MSGLEVEL parameter of the form ``(statements,messages)``.
+
+        ``statements`` is 0, 1 or 2; ``messages`` is 0 or 1. Either subparameter
+        may be omitted.
+        """
+        errors: List[str] = []
+        if not msglevel_value:
+            return ValidationResult.valid()
+
+        value = ParameterValidator._strip_parens(msglevel_value.strip())
+        parts = [p.strip() for p in value.split(",")]
+        if len(parts) > 2:
+            errors.append(
+                f"MSGLEVEL has {len(parts)} subparameters, expected (statements,messages)"
+            )
+
+        statements = parts[0] if parts else ""
+        if statements and (
+            not statements.isdigit() or int(statements) not in (0, 1, 2)
+        ):
+            errors.append(f"MSGLEVEL statements value {statements} must be 0, 1 or 2")
+
+        messages = parts[1] if len(parts) > 1 else ""
+        if messages and (not messages.isdigit() or int(messages) not in (0, 1)):
+            errors.append(f"MSGLEVEL messages value {messages} must be 0 or 1")
+
+        return ValidationResult.from_errors(errors)
+
+    @staticmethod
+    def validate_dsntype(dsntype_value: str) -> ValidationResult:
+        """Validate a DSNTYPE parameter (LIBRARY, PDS, HFS, LARGE, ...)."""
+        errors: List[str] = []
+        if not dsntype_value:
+            return ValidationResult.valid()
+        value = ParameterValidator._strip_parens(dsntype_value.strip().upper())
+        if value not in _VALID_DSNTYPE_VALUES:
+            errors.append(
+                f"Invalid DSNTYPE value: {dsntype_value}. "
+                f"Valid values: {', '.join(sorted(_VALID_DSNTYPE_VALUES))}"
+            )
+        return ValidationResult.from_errors(errors)
+
+    @staticmethod
+    def validate_recfm(recfm_value: str) -> ValidationResult:
+        """
+        Validate a RECFM (record format) parameter.
+
+        Accepts the standard combinations: a format letter (F, V, U or D),
+        optional ``B`` (blocked), optional ``S`` (spanned; V/D only), and an
+        optional ``A``/``M`` carriage-control character (e.g. F, FB, FBA, V, VB,
+        VBS, U, VBA).
+        """
+        errors: List[str] = []
+        if not recfm_value:
+            return ValidationResult.valid()
+        value = ParameterValidator._strip_parens(recfm_value.strip().upper())
+        if not _RECFM_PATTERN.match(value):
+            errors.append(
+                f"Invalid RECFM value: {recfm_value}. "
+                "Expected a format (F/V/U/D) with optional B, S and A/M."
+            )
+        return ValidationResult.from_errors(errors)
