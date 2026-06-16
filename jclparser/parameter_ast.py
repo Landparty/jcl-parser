@@ -7,7 +7,7 @@ Provides structured representation of complex parameters like DCB, SPACE, etc.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Dict
 
 # Module-level frozensets for DCB/SPACE validation (avoids per-call list construction)
 _VALID_RECFM = frozenset(
@@ -267,7 +267,6 @@ class ParameterParser:
         space_string = space_string.strip()
         if space_string.startswith("(") and space_string.endswith(")"):
             space_string = space_string[1:-1]
-
 
         subparams: Dict[str, Any] = {}
 

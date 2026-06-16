@@ -1,5 +1,5 @@
 """Integration tests: parse_jcl() with enable_profiling=True."""
-import pytest
+
 from jclparser import parse_jcl
 from jclparser.profiling import ProfilingResult
 from jclparser.model import Job
@@ -45,6 +45,7 @@ def test_parse_jcl_profiling_top_n_respected():
 
 def test_parse_jcl_profiling_prof_file(tmp_path):
     import os
+
     prof_path = str(tmp_path / "parse.prof")
     parse_jcl(_HELLO, enable_profiling=True, prof_output=prof_path)
     assert os.path.exists(prof_path)

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .jcl_file_type import detect_file_type, FileType
+from .jcl_file_type import detect_file_type
 from .metrics import compute_metrics
 from .lint import lint_job, all_rules
 from .dataset_lifecycle import analyze_dataset_lifecycle, validate_dataset_lifecycle
@@ -150,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if enable_profiling:
             from .profiling import ProfilerContext
+
             ctx = ProfilerContext(
                 top_n=args.profile_top_n,
                 prof_output=args.profile_output,
@@ -403,7 +404,6 @@ def _print_lint_findings(findings: list) -> None:
         return
     for e in findings:
         code = getattr(e, "error_code", None) or "LINT"
-        sev = e.severity.name if e.severity else "WARNING"
         line = e.line_number
         loc = f" line {line:>4}" if line else "       "
         print(f"[{code}]{loc}: {e.message}")
@@ -435,7 +435,9 @@ def _cmd_datasets(job: "Job", json_output: bool = False) -> int:
             }
             for e in violations
         ]
-        print(json.dumps({"lifecycle": lifecycle_dict, "violations": viol_list}, indent=2))
+        print(
+            json.dumps({"lifecycle": lifecycle_dict, "violations": viol_list}, indent=2)
+        )
     else:
         _print_datasets(lifecycle, violations)
     return 1 if violations else 0
@@ -494,7 +496,9 @@ def _print_sql_results(hits: list) -> None:
         db2_tag = " [DB2 program]" if r.is_db2_program else ""
         cats = ", ".join(sorted(r.sql_categories)) if r.sql_categories else ""
         cat_tag = f"  categories={cats}" if cats else ""
-        print(f"  {r.step_name or '(unnamed)':<12} PGM={r.program or '(none)'}{db2_tag}{cat_tag}")
+        print(
+            f"  {r.step_name or '(unnamed)':<12} PGM={r.program or '(none)'}{db2_tag}{cat_tag}"
+        )
         for kw, cat, dd in r.sql_statements:
             print(f"    {kw:<20} [{cat}] in DD={dd}")
 
