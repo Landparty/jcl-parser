@@ -267,7 +267,7 @@ These fixtures contain intentional errors for testing parser error detection:
 - **error_duplicate_dd_name.jcl** - Duplicate DD names in same step
 - **error_name_too_long.jcl** - Name exceeds 8 characters
 - **error_invalid_continuation.jcl** - Continuation line without //
-- **error_missing_delimiter.jcl** - Inline data without delimiter
+- **error_missing_delimiter.jcl** - `DD *` with no closing `/*`; valid on z/OS (the next `//` statement terminates the in-stream data)
 - **error_circular_proc.jcl** - Circular procedure references
 - **error_undefined_proc.jcl** - Reference to non-existent procedure
 - **error_invalid_proc_override.jcl** - Override for non-existent step

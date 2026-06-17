@@ -371,13 +371,27 @@ class TestMismatchedBrackets:
 
 
 class TestMissingDelimiter:
-    """error_missing_delimiter.jcl — DD * with no closing /* delimiter."""
+    """error_missing_delimiter.jcl — DD * with no closing /* delimiter.
 
-    def test_missing_delimiter_validate_reports_error(self):
-        """validate_jcl must surface at least one ERROR for this file."""
+    On z/OS a missing ``/*`` is not an error: ``DD *`` in-stream data is
+    terminated by the next record beginning with ``//`` (or by end-of-file).
+    The following ``//STEP2`` therefore closes the data and the job is valid.
+    """
+
+    def test_missing_delimiter_terminated_by_next_statement(self):
+        """The next // statement ends the data; the job parses into two steps."""
+        job = parse_jcl(FIXTURES_DIR / "error_missing_delimiter.jcl")
+        assert [s.name for s in job.steps] == ["STEP1", "STEP2"]
+        dd1 = job.steps[0].dd_statements[0]
+        assert dd1.inline_data == (
+            "This is inline data\nBut there's no delimiter to end it"
+        )
+
+    def test_missing_delimiter_reports_no_error(self):
+        """validate_jcl must not flag the (valid) missing-/* file as an error."""
         errors = validate_jcl(FIXTURES_DIR / "error_missing_delimiter.jcl")
         error_msgs = [e for e in errors if str(e.severity).endswith("ERROR")]
-        assert len(error_msgs) > 0
+        assert error_msgs == []
 
 
 class TestNameTooLong:

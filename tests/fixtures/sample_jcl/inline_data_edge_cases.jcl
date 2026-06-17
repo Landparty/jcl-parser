@@ -23,9 +23,9 @@ Record 3
   SORT FIELDS=(1,10,CH,A)
 $$
 //*
-//* Data with JCL-like lines
+//* Data with JCL-like lines (DD DATA so // records are kept as data)
 //STEP3    EXEC PGM=IDCAMS
-//SYSIN    DD *
+//SYSIN    DD DATA
 //THIS LOOKS LIKE JCL BUT IT'S DATA
 //ANOTHER  FAKE JCL LINE
   DELETE MY.OLD.FILE

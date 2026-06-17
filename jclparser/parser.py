@@ -157,44 +157,57 @@ def _parse_jcl_core(
     non_inline_orig_indices: list[int] = []  # parallel to non_inline_lines
     in_inline_data = False
     delimiter = "/*"
+    # When the current in-stream dataset was opened with ``DD *`` (and *no*
+    # custom ``DLM=``), z/OS terminates the data at the next record beginning
+    # with ``//`` as well as at ``/*``.  ``DD DATA`` deliberately does not do
+    # this so that records containing ``//`` can be supplied as data; for
+    # ``DD DATA`` (or any dataset with an explicit ``DLM=``) only the delimiter
+    # ends the data.
+    terminates_on_slash = False
 
     for i, line in enumerate(lines):
         if in_inline_data:
-            inline_data_indices.add(i)
             if line.strip() == delimiter or line.strip().startswith(delimiter):
+                # The delimiter record belongs to the in-stream data block
+                # (it is not a JCL statement) — mark it and stop collecting.
+                inline_data_indices.add(i)
                 in_inline_data = False
-        else:
-            if (
-                line.strip()
-                and line.startswith("//")
-                and not line.strip().startswith("//*")
-            ):
-                upper_line = line.upper()
-                if (
-                    " DD " in upper_line
+                continue
+            if terminates_on_slash and line.startswith("//"):
+                # Unterminated ``DD *`` data: the next JCL statement ends it.
+                # Fall through so this line is treated as a normal statement.
+                in_inline_data = False
+            else:
+                inline_data_indices.add(i)
+                continue
+        if (
+            line.strip()
+            and line.startswith("//")
+            and not line.strip().startswith("//*")
+        ):
+            upper_line = line.upper()
+            if " DD " in upper_line or " DD*" in upper_line or "\tDD\t" in upper_line:
+                is_star = (
+                    " DD *" in upper_line
                     or " DD*" in upper_line
-                    or "\tDD\t" in upper_line
-                ):
-                    if (
-                        " DD *" in upper_line
-                        or " DD*" in upper_line
-                        or " DD DATA" in upper_line
-                        or "\tDD\t*" in upper_line
-                        or ",DLM=" in upper_line
-                    ):
-                        delimiter = "/*"
-                        if "DLM=" in upper_line:
-                            dlm_start = upper_line.index("DLM=") + 4
-                            dlm_end = dlm_start
-                            while (
-                                dlm_end < len(upper_line)
-                                and upper_line[dlm_end] not in ",) \t\r\n"
-                            ):
-                                dlm_end += 1
-                            delimiter = line[dlm_start:dlm_end]
-                        in_inline_data = True
-            non_inline_lines.append(line)
-            non_inline_orig_indices.append(i)
+                    or "\tDD\t*" in upper_line
+                )
+                has_dlm = ",DLM=" in upper_line
+                if is_star or " DD DATA" in upper_line or has_dlm:
+                    delimiter = "/*"
+                    if "DLM=" in upper_line:
+                        dlm_start = upper_line.index("DLM=") + 4
+                        dlm_end = dlm_start
+                        while (
+                            dlm_end < len(upper_line)
+                            and upper_line[dlm_end] not in ",) \t\r\n"
+                        ):
+                            dlm_end += 1
+                        delimiter = line[dlm_start:dlm_end]
+                    in_inline_data = True
+                    terminates_on_slash = is_star and not has_dlm
+        non_inline_lines.append(line)
+        non_inline_orig_indices.append(i)
 
     # Merge continuation lines on the non-inline subset only.
     handler = ContinuationLineHandler()
@@ -227,6 +240,7 @@ def _parse_jcl_core(
         Any
     ] = []  # Procedures collected before any JOB statement (PROC-only files)
     current_delimiter = "/*"
+    current_terminates_on_slash = False
     orphaned_dds: list[Any] = []  # Track DDs that appear before first EXEC
     in_joblib_concat = False  # True while accumulating JOBLIB concatenation lines
 
@@ -243,6 +257,14 @@ def _parse_jcl_core(
                     inline_data_lines = []
                     in_inline_data = False
                     continue
+                elif current_terminates_on_slash and line.startswith("//"):
+                    # Unterminated ``DD *`` data: the next JCL statement ends the
+                    # in-stream block.  Flush what we collected and fall through
+                    # so this record is parsed as a normal statement.
+                    if current_dd:
+                        current_dd.inline_data = "\n".join(inline_data_lines)
+                    inline_data_lines = []
+                    in_inline_data = False
                 else:
                     # Collect inline data
                     inline_data_lines.append(line)
@@ -345,19 +367,20 @@ def _parse_jcl_core(
                     for k, v in current_dd.parameters.items()
                     if is_positional_key(k)
                 )
-                if current_dd and (
-                    current_dd.parameters.get("*")
-                    or "DATA" in current_dd.parameters
-                    or has_star_pos
-                ):
+                is_star_dd = bool(current_dd.parameters.get("*") or has_star_pos)
+                if current_dd and (is_star_dd or "DATA" in current_dd.parameters):
                     in_inline_data = True
                     inline_data_lines = []
+                    has_dlm = "DLM" in current_dd.parameters
                     current_delimiter = current_dd.parameters.get("DLM", "/*")
                     # Handle quoted delimiter
                     if current_delimiter.startswith("'") and current_delimiter.endswith(
                         "'"
                     ):
                         current_delimiter = current_delimiter[1:-1]
+                    # ``DD *`` without an explicit ``DLM=`` also terminates at the
+                    # next ``//`` record; ``DD DATA`` does not (so // can be data).
+                    current_terminates_on_slash = is_star_dd and not has_dlm
 
             elif stmt.type == "PROC":
                 # Inline procedure definition - start tracking procedure
@@ -523,6 +546,12 @@ def _parse_jcl_core(
 
         except (JCLSyntaxError, JCLValidationError):
             raise
+
+    # In-stream data that runs to end-of-file without a closing delimiter is
+    # still valid: end-of-input terminates it.  Flush whatever was collected
+    # rather than silently discarding it.
+    if in_inline_data and current_dd and inline_data_lines:
+        current_dd.inline_data = "\n".join(inline_data_lines)
 
     if job is None:
         if pending_procedures:

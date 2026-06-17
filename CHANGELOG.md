@@ -18,8 +18,21 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   and `validate_recfm`. These cover format and range/enumeration rules for
   JOB/EXEC/DD parameters that were previously stored without validation.
 
+### Changed
+
+- In-stream data opened with `DD *` (and no explicit `DLM=`) is now terminated
+  by the next record beginning with `//`, matching z/OS. Previously such data
+  was collected until `/*` or end-of-file, which could silently swallow the
+  following JCL statement. `DD DATA` is unchanged: `//` records remain part of
+  the data and only `/*` (or a custom `DLM=`) ends it. A missing `/*` is no
+  longer treated as a validation error — the next statement, or end-of-file,
+  legitimately closes the data.
+
 ### Fixed
 
+- In-stream data that runs to end-of-file without a closing delimiter is no
+  longer silently discarded; the collected records are now attached to the DD
+  statement's `inline_data`.
 - `jclparser.utils` referenced module-level constants (`_RE_SPECIAL_CHARS`,
   `_RE_JCL_NAME_START`, `_RE_JCL_NAME_FULL`) and a lazy `_PARAMETER_PARSER`
   singleton that an earlier refactor had removed, along with the `re`,

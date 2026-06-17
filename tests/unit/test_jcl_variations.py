@@ -180,6 +180,30 @@ class TestInStreamDataVariations:
         )
         assert _first_dd(job).inline_data == ""
 
+    def test_dd_star_terminated_by_next_statement_without_delimiter(self):
+        """A DD * with no /* is closed by the next // record (z/OS rule)."""
+        job = parse_jcl(
+            "//J JOB (A),'T'\n//S EXEC PGM=X\n//SYSIN DD *\nrow1\nrow2\n"
+            "//S2 EXEC PGM=Y\n//D2 DD DSN=A,DISP=SHR\n"
+        )
+        assert _first_dd(job).inline_data == "row1\nrow2"
+        # The following statement must NOT be swallowed as data.
+        assert [s.name for s in job.steps] == ["S", "S2"]
+        assert job.steps[1].dd_statements[0].name == "D2"
+
+    def test_dd_star_terminated_by_end_of_file(self):
+        """A DD * that runs to EOF keeps its data instead of dropping it."""
+        job = parse_jcl("//J JOB (A),'T'\n//S EXEC PGM=X\n//SYSIN DD *\nfinal\ndata\n")
+        assert _first_dd(job).inline_data == "final\ndata"
+
+    def test_dd_data_with_dlm_keeps_slashslash_until_delimiter(self):
+        job = parse_jcl(
+            "//J JOB (A),'T'\n//S EXEC PGM=X\n//SYSIN DD DATA,DLM=##\n"
+            "//STEP-LIKE LINE\n/* not the end\n##\n//S2 EXEC PGM=Y\n"
+        )
+        assert _first_dd(job).inline_data == "//STEP-LIKE LINE\n/* not the end"
+        assert [s.name for s in job.steps] == ["S", "S2"]
+
 
 class TestSymbolicParameterResolution:
     """SET symbols, period concatenation, and pathological references."""

@@ -256,10 +256,15 @@ Line 2
         assert len(job.steps[0].dd_statements) >= 1
 
     def test_inline_data_with_jcl_like_lines(self, fixtures_dir):
-        """Test inline data containing JCL-like lines"""
+        """Test inline data containing JCL-like lines.
+
+        Records beginning with ``//`` may only appear in the data when the
+        dataset is opened with ``DD DATA``; a plain ``DD *`` would be
+        terminated by the first such record (matching z/OS).
+        """
         jcl = """//TESTJOB  JOB (ACCT),'TEST'
 //STEP1    EXEC PGM=TESTPGM
-//INPUT    DD *
+//INPUT    DD DATA
 //THIS LOOKS LIKE JCL BUT IT'S DATA
 //ANOTHER  FAKE JCL LINE
 /*
@@ -268,8 +273,10 @@ Line 2
         job = parse_jcl(jcl)
         # Should parse inline data correctly
         assert len(job.steps[0].dd_statements) >= 1
-        # Verify inline data was captured
-        assert job.steps[0].dd_statements[0].inline_data is not None
+        # Verify inline data was captured, including the // records.
+        input_dd = job.steps[0].dd_statements[0]
+        assert input_dd.inline_data is not None
+        assert "//THIS LOOKS LIKE JCL BUT IT'S DATA" in input_dd.inline_data
 
 
 class TestCommentWhitespaceEdgeCases:

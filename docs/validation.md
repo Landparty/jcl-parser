@@ -61,8 +61,12 @@ errors useful for testing your own tooling:
 |------|-------|
 | `error_unclosed_quote.jcl` | Unclosed `'` in parameter |
 | `error_unclosed_paren.jcl` | Unmatched `(` in parameter |
-| `error_missing_delimiter.jcl` | `DD *` with no closing `/*` |
 | `error_circular_proc.jcl` | PROCA → PROCB → PROCA cycle |
 | `error_undefined_proc.jcl` | `EXEC PROC=NONEXIST` |
 | `error_name_too_long.jcl` | Step name > 8 characters |
 | `error_dd_without_exec.jcl` | DD before any EXEC |
+
+> **Note:** `error_missing_delimiter.jcl` (a `DD *` with no closing `/*`) is
+> retained for historical reasons but is *not* an error. As on z/OS, the
+> in-stream data is terminated by the following `//` statement (or by
+> end-of-file), so the file parses cleanly.
