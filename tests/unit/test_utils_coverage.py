@@ -43,19 +43,15 @@ class TestReadSource:
         f.write_text("//J JOB\n")
         assert read_source(str(f)) == "//J JOB\n"
 
-    def test_plain_string_naming_existing_file_is_read(self, tmp_path: Path):
+    def test_plain_string_naming_existing_file_is_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         # No extension and no separator in the name, but it exists on disk.
         f = tmp_path / "PROCMEMB"
         f.write_text("//STEP EXEC PGM=X\n")
         # Pass just the file name while cwd is tmp_path so there is no separator.
-        import os
-
-        old = os.getcwd()
-        try:
-            os.chdir(tmp_path)
-            assert read_source("PROCMEMB") == "//STEP EXEC PGM=X\n"
-        finally:
-            os.chdir(old)
+        monkeypatch.chdir(tmp_path)
+        assert read_source("PROCMEMB") == "//STEP EXEC PGM=X\n"
 
     def test_plain_jcl_content_returned_as_is(self):
         content = "//J JOB\n//S EXEC PGM=X\n"
