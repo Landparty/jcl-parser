@@ -10,11 +10,14 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
+import logging
 import os
 
 from .model import Procedure
 from .errors import JCLSyntaxError, JCLValidationError
 from .utils import _read_file_with_fallback
+
+logger = logging.getLogger(__name__)
 
 
 class ProcedureLoader(ABC):
@@ -258,9 +261,16 @@ class JCLLIBProcedureLoader(ProcedureLoader):
                     is_external=True,
                 )
 
-        except (JCLSyntaxError, JCLValidationError, OSError, ValueError):
-            # Parsing failed - return None
-            pass
+        except (JCLSyntaxError, JCLValidationError, OSError, ValueError) as exc:
+            # Parsing/reading failed - log the cause and return None so the
+            # composite loader can fall through to the next candidate/loader.
+            logger.warning(
+                "Failed to load procedure %r from %s: %s: %s",
+                proc_name,
+                file_path,
+                type(exc).__name__,
+                exc,
+            )
 
         return None
 
@@ -388,6 +398,13 @@ class DictProcedureLoader(ProcedureLoader):
                     line_number=0,
                     is_external=True,
                 )
-        except Exception:
-            pass
+        except (JCLSyntaxError, JCLValidationError, ValueError) as exc:
+            # Parsing failed - log the cause and return None. Narrowed from a
+            # bare ``except Exception`` so genuine programming errors surface.
+            logger.warning(
+                "Failed to parse in-memory procedure %r: %s: %s",
+                proc_name,
+                type(exc).__name__,
+                exc,
+            )
         return None

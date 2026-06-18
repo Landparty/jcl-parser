@@ -56,6 +56,22 @@ class TestExceptionHandling:
         with pytest.raises(ValueError, match="cannot be None"):
             detect_file_type(None)
 
+    def test_is_jcl_file_logs_detection_failure(self, caplog):
+        """is_jcl_file logs (at DEBUG) when detection fails instead of being silent."""
+        import logging
+
+        with caplog.at_level(logging.DEBUG, logger="jclparser.jcl_file_type"):
+            assert is_jcl_file(12345) is False
+        assert any("could not detect file type" in r.message for r in caplog.records)
+
+    def test_is_proc_file_logs_detection_failure(self, caplog):
+        """is_proc_file logs (at DEBUG) when detection fails instead of being silent."""
+        import logging
+
+        with caplog.at_level(logging.DEBUG, logger="jclparser.jcl_file_type"):
+            assert is_proc_file(None) is False
+        assert any("could not detect file type" in r.message for r in caplog.records)
+
 
 class TestBinaryFileHandling:
     """Test handling of binary files."""
