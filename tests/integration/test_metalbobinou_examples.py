@@ -84,7 +84,7 @@ class TestIebgenerPdsToInternalReader:
         assert sysut2 is not None
         sysout = sysut2.parameters.get("SYSOUT")
         assert isinstance(sysout, list)
-        assert sysout[0] == ""          # blank class
+        assert sysout[0] == ""  # blank class
         assert sysout[1] == "INTRDR"
 
 
@@ -500,7 +500,7 @@ class TestSmtpMail:
         """MSGLEVEL=1 (scalar, not list); non-standard CLASS=I and MSGCLASS=Y."""
         job = parse_jcl(FIXTURES / "smtp_mail.jcl")
         assert job.name == "MYSMAIL"
-        assert job.parameters["MSGLEVEL"] == "1"   # scalar form
+        assert job.parameters["MSGLEVEL"] == "1"  # scalar form
         assert job.parameters["CLASS"] == "I"
         assert job.parameters["MSGCLASS"] == "Y"
         assert job.parameters["NOTIFY"] == "&SYSUID"
@@ -598,7 +598,7 @@ class TestCCompileLink:
         dd_names = [dd.name for dd in step.dd_statements]
         steplib_idx = dd_names.index("STEPLIB")
         concat_count = 1
-        for name in dd_names[steplib_idx + 1:]:
+        for name in dd_names[steplib_idx + 1 :]:
             if name == "":
                 concat_count += 1
             else:
@@ -621,12 +621,12 @@ class TestCCompileLink:
         assert "SYSLIB" in dd_names
         syslib_idx = dd_names.index("SYSLIB")
         concat_count = 1
-        for name in dd_names[syslib_idx + 1:]:
+        for name in dd_names[syslib_idx + 1 :]:
             if name == "":
                 concat_count += 1
             else:
                 break
-        assert concat_count >= 4   # CEE.SCEELKEX + at least 3 more libs
+        assert concat_count >= 4  # CEE.SCEELKEX + at least 3 more libs
 
 
 @pytest.mark.integration
@@ -687,7 +687,9 @@ class TestCobolCompileLink:
         """COBOL compile needs 7 work DDs (SYSUT1–SYSUT7)."""
         job = parse_jcl(FIXTURES / "cobol_compile_link.jcl")
         step = job.steps[0]
-        sysut_names = [dd.name for dd in step.dd_statements if dd.name.startswith("SYSUT")]
+        sysut_names = [
+            dd.name for dd in step.dd_statements if dd.name.startswith("SYSUT")
+        ]
         assert len(sysut_names) == 7
 
     def test_link_step_opts_inline(self):

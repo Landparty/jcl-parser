@@ -3,7 +3,21 @@ JCL Parser for Python 3.10+
 
 A Python package for parsing IBM JCL (Job Control Language) scripts.
 Provides a simple API for extracting, analyzing, and manipulating JCL statements.
+
+Logging
+-------
+This library emits diagnostics via the standard :mod:`logging` module under the
+``jclparser`` logger. Following library convention, a :class:`logging.NullHandler`
+is attached so applications that do not configure logging see no output. To see
+diagnostics (e.g. why an external PROC failed to load), configure logging in the
+application, for example::
+
+    import logging
+    logging.getLogger("jclparser").setLevel(logging.DEBUG)
+    logging.basicConfig()
 """
+
+import logging as _logging
 
 # Package metadata
 __version__ = "1.0.0"
@@ -128,6 +142,10 @@ from .profiling import (
     FunctionProfile,
     ProfilingResult,
 )
+
+# Attach a NullHandler to the package logger so library logging is silent by
+# default unless the consuming application configures handlers.
+_logging.getLogger(__name__).addHandler(_logging.NullHandler())
 
 # Initialize global plugin registry
 _registry = get_plugin_registry()

@@ -5,7 +5,10 @@ Targets the previously-uncovered ``DictProcedureLoader`` and the
 ``list_all_procedures`` discovery helper on ``JCLLIBProcedureLoader``.
 """
 
+import logging
+import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from jclparser.proc_loader import (
     DictProcedureLoader,
@@ -73,6 +76,41 @@ class TestDictProcedureLoader:
         loader = DictProcedureLoader({"MYPROC": PROC_CONTENT})
         assert loader.has_procedure("MYPROC") is True
         assert loader.has_procedure("MISSING") is False
+
+    def test_parse_failure_is_logged(self, caplog):
+        # A genuine parse failure should be surfaced via a warning log rather
+        # than swallowed silently, while still returning None to callers.
+        loader = DictProcedureLoader({"X": PROC_CONTENT})
+        with caplog.at_level(logging.WARNING, logger="jclparser.proc_loader"):
+            with patch(
+                "jclparser.parser.parse_jcl",
+                side_effect=ValueError("boom"),
+            ):
+                assert loader.load_procedure("X") is None
+        assert any(
+            "Failed to parse in-memory procedure" in r.message and "boom" in r.message
+            for r in caplog.records
+        )
+
+
+class TestExternalLoadLogging:
+    """The external file loader logs (rather than swallows) load failures."""
+
+    def test_parse_procedure_file_failure_is_logged(self, caplog):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            lib = base / "LIB"
+            lib.mkdir()
+            (lib / "BROKEN.jcl").write_text(PROC_CONTENT)
+
+            loader = JCLLIBProcedureLoader(base_path=base)
+            with caplog.at_level(logging.WARNING, logger="jclparser.proc_loader"):
+                with patch("builtins.open", side_effect=OSError("disk error")):
+                    assert loader.load_procedure("BROKEN", ["LIB"]) is None
+        assert any(
+            "Failed to load procedure" in r.message and "disk error" in r.message
+            for r in caplog.records
+        )
 
 
 class TestListAllProcedures:
