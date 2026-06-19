@@ -10,11 +10,14 @@ This module follows the KISS (Keep It Simple, Stupid) principle:
 - Minimal API surface: detect_file_type() + helper functions
 """
 
+import logging
 from enum import Enum
 from pathlib import Path
 from typing import Union, IO, Optional
 
 from .utils import read_source
+
+logger = logging.getLogger(__name__)
 
 # Module-level constants (avoids per-call set/list construction)
 _PREAMBLE_STATEMENTS = frozenset(
@@ -141,7 +144,8 @@ def is_jcl_file(source: Union[str, Path, IO]) -> bool:
     """
     try:
         return detect_file_type(source) == FileType.JCL
-    except (TypeError, ValueError, OSError):
+    except (TypeError, ValueError, OSError) as exc:
+        logger.debug("is_jcl_file: could not detect file type: %s", exc)
         return False
 
 
@@ -164,7 +168,8 @@ def is_proc_file(source: Union[str, Path, IO]) -> bool:
     """
     try:
         return detect_file_type(source) == FileType.PROC
-    except (TypeError, ValueError, OSError):
+    except (TypeError, ValueError, OSError) as exc:
+        logger.debug("is_proc_file: could not detect file type: %s", exc)
         return False
 
 
