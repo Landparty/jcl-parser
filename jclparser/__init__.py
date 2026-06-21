@@ -65,6 +65,10 @@ from .proc_loader import (
     DictProcedureLoader,
     create_default_loader,
 )
+from .proc_aliases import (
+    DEFAULT_PROC_ALIASES,
+    build_alias_loader,
+)
 from .system_symbols import (
     SystemSymbolProvider,
 )
@@ -190,6 +194,8 @@ __all__ = [
     "CompositeProcedureLoader",
     "DictProcedureLoader",
     "create_default_loader",
+    "DEFAULT_PROC_ALIASES",
+    "build_alias_loader",
     "SystemSymbolProvider",
     "ParserConfig",
     "SymbolScope",
