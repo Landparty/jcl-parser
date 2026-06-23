@@ -326,14 +326,21 @@ def create_default_loader(
     inline_procedures: list[Procedure],
     base_path: Path | None = None,
     include_jcllib: bool = True,
+    include_builtins: bool = True,
 ) -> ProcedureLoader:
     """
     Create a default composite loader with standard configuration.
+
+    The chain resolves in precedence order: inline procedures first, then
+    external JCLLIB procedures, then the bundled IBM-supplied utility
+    procedures (IMSBATCH, DLIBATCH, DSNUPROC, ...) as a last-resort fallback.
 
     Args:
         inline_procedures: Inline procedures from job
         base_path: Base path for JCLLIB loading
         include_jcllib: Whether to include JCLLIB loader in chain
+        include_builtins: Whether to append the bundled IBM utility procedures
+            as the final fallback
 
     Returns:
         Configured composite loader
@@ -342,6 +349,13 @@ def create_default_loader(
 
     if include_jcllib:
         loaders.append(JCLLIBProcedureLoader(base_path))
+
+    if include_builtins:
+        # Imported lazily to avoid a circular import (builtin_procs imports
+        # from this module).
+        from .builtin_procs import create_builtin_proc_loader
+
+        loaders.append(create_builtin_proc_loader())
 
     return CompositeProcedureLoader(loaders)
 

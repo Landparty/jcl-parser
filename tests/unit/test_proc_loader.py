@@ -192,4 +192,18 @@ class TestCreateDefaultLoader:
         loader = create_default_loader([], include_jcllib=True)
 
         assert isinstance(loader, CompositeProcedureLoader)
-        assert len(loader.loaders) == 2  # Inline + JCLLIB
+        # Inline + JCLLIB + bundled IBM utility procs (default)
+        assert len(loader.loaders) == 3
+
+    def test_create_without_builtins(self):
+        """Builtins can be excluded from the default chain"""
+        loader = create_default_loader([], include_jcllib=True, include_builtins=False)
+
+        assert isinstance(loader, CompositeProcedureLoader)
+        assert len(loader.loaders) == 2  # Inline + JCLLIB only
+
+    def test_builtins_included_by_default(self):
+        """Bundled IBM utility procs resolve through the default loader"""
+        loader = create_default_loader([], include_jcllib=False)
+
+        assert loader.load_procedure("IMSBATCH") is not None
