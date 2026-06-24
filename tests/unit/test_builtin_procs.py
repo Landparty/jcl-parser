@@ -1,4 +1,4 @@
-"""Unit tests for the bundled IBM-supplied utility procedures."""
+"""Unit tests for the bundled utility PROC templates."""
 
 import pytest
 

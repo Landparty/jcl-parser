@@ -1,20 +1,25 @@
-"""Bundled IBM-supplied cataloged procedures.
+"""Bundled utility PROC templates for common IBM-supplied procedure names.
 
-Customers ``EXEC`` standard IBM-supplied cataloged procedures (IMS region
+Customers ``EXEC`` widely used vendor cataloged procedures by name (IMS region
 controllers, DB2 utilities, COBOL compile/link procs) but almost never store
-their definitions alongside their own JCL — the definitions live in vendor
-PROCLIBs (IMS ``SDFSPROC``, DB2 ``SDSNSAMP``, COBOL ``SIGYPROC``) on the
-mainframe.  Without those definitions the explosion engine raises
-``ProcedureNotFoundError`` and the invoking step is never expanded.
+their definitions alongside their own JCL — on the mainframe those definitions
+live in installation-specific vendor PROCLIBs. Without a definition the
+explosion engine raises ``ProcedureNotFoundError`` and the invoking step is
+never expanded.
 
-This module ships a curated set of authentic IBM cataloged procedures as plain
-JCL text so they can always be resolved.  The definitions are intentionally
-faithful to the IBM-shipped originals but trimmed to the steps, symbolic
-parameters, and DD statements that matter for static analysis.
+To keep static analysis working, this module ships minimal, non-verbatim
+*templates* keyed by those well-known procedure names. They are original
+reconstructions of each procedure's public interface — the program it invokes,
+the region type passed via ``PARM``, and the handful of DD statements that
+matter for dependency/dataset analysis — written from publicly documented
+naming and parameter conventions. They are deliberately NOT copies of any
+vendor PROCLIB member: the real procedures carry many more symbolic parameters
+and DD statements that are irrelevant here. No third-party PROCLIB source is
+reproduced.
 
-The bundled procedures are exposed as a ``dict`` and as a ready-made loader.
-They are designed to be the *last* fallback in a loader chain so inline PROCs
-and customer/site PROCs of the same name always take precedence.
+The templates are exposed as a ``dict`` and as a ready-made loader. They are
+designed to be the *last* fallback in a loader chain so inline PROCs and
+customer/site PROCs of the same name always take precedence.
 """
 
 from __future__ import annotations
@@ -83,8 +88,8 @@ _DBBBATCH = """\
 // PEND
 """
 
-# Message processing region. IBM ships this as DFSMPR; IMSMSG is the classic
-# alias many sites use, so both spellings resolve to the same definition.
+# Message processing region. The common procedure name is DFSMPR; IMSMSG is a
+# classic alias many sites use, so both spellings resolve to the same template.
 _MPR_BODY = """\
 //{name} PROC RGN=512K,SOUT=A,CL1=001,CL2=000,CL3=000,CL4=000,
 //         SPIE=0,VALCK=0,TLIM=00,PCB=000,PRLD=,STIMER=,
@@ -220,7 +225,7 @@ BUILTIN_UTILITY_PROCS: dict[str, str] = {
     "DLIBATCH": _DLIBATCH,
     "DBBBATCH": _DBBBATCH,
     "IMSMSG": _IMSMSG,
-    "DFSMPR": _DFSMPR,  # IBM-shipped name for the message processing region
+    "DFSMPR": _DFSMPR,  # common procedure name for the message processing region
     # DB2
     "DSNUPROC": _DSNUPROC,
     "DSNHICOB": _DSNHICOB,
@@ -232,7 +237,7 @@ BUILTIN_UTILITY_PROCS: dict[str, str] = {
 
 
 def create_builtin_proc_loader() -> ProcedureLoader:
-    """Return a loader serving the bundled IBM-supplied utility procedures.
+    """Return a loader serving the bundled utility PROC templates.
 
     The loader is a plain :class:`DictProcedureLoader`; place it last in a
     :class:`CompositeProcedureLoader` chain so inline and site PROCs override
