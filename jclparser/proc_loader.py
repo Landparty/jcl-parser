@@ -332,14 +332,15 @@ def create_default_loader(
     Create a default composite loader with standard configuration.
 
     The chain resolves in precedence order: inline procedures first, then
-    external JCLLIB procedures, then the bundled IBM-supplied utility
-    procedures (IMSBATCH, DLIBATCH, DSNUPROC, ...) as a last-resort fallback.
+    external JCLLIB procedures, then the bundled utility PROC templates for
+    common IBM-supplied procedure names (IMSBATCH, DLIBATCH, DSNUPROC, ...)
+    as a last-resort fallback.
 
     Args:
         inline_procedures: Inline procedures from job
         base_path: Base path for JCLLIB loading
         include_jcllib: Whether to include JCLLIB loader in chain
-        include_builtins: Whether to append the bundled IBM utility procedures
+        include_builtins: Whether to append the bundled utility PROC templates
             as the final fallback
 
     Returns:
