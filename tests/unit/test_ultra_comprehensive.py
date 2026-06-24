@@ -161,7 +161,7 @@ $$
         """Test CNTL/ENDCNTL statements"""
         jcl = """//JOB1 JOB CLASS=A
 //STEP1 EXEC PGM=PROG
-//SYSIN DD *
+//SYSIN DD DATA
 //CNTL
 //INTERNAL JOB
 //ENDCNTL
