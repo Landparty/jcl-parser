@@ -8,7 +8,6 @@ and dispatch.
 from .base import ProgramProfile, ProgramAnalysis
 from .registry import (
     register_profile,
-    clear_profiles,
     get_profile,
     analyze_step,
     analyze_job,
@@ -18,7 +17,6 @@ __all__ = [
     "ProgramProfile",
     "ProgramAnalysis",
     "register_profile",
-    "clear_profiles",
     "get_profile",
     "analyze_step",
     "analyze_job",

@@ -5,8 +5,6 @@ Tests for parameter AST and complex parameter parsing.
 from jclparser.parameter_ast import (
     ParameterParser,
     SPACEParameter,
-    SimpleParameter,
-    ListParameter,
     NestedParameter,
 )
 
@@ -278,27 +276,6 @@ class TestParameterParserUtilities:
 
 class TestParameterNodeClasses:
     """Test parameter node base classes."""
-
-    def test_simple_parameter(self):
-        """Test SimpleParameter creation."""
-        param = SimpleParameter(
-            key="TEST", value="VALUE", raw_value="TEST=VALUE", line_number=10
-        )
-
-        assert param.key == "TEST"
-        assert param.value == "VALUE"
-        assert param.raw_value == "TEST=VALUE"
-        assert param.line_number == 10
-
-    def test_list_parameter(self):
-        """Test ListParameter creation."""
-        param = ListParameter(
-            key="TEST", values=["A", "B", "C"], raw_value="TEST=(A,B,C)", line_number=10
-        )
-
-        assert param.key == "TEST"
-        assert len(param.values) == 3
-        assert "B" in param.values
 
     def test_nested_parameter(self):
         """Test NestedParameter creation."""

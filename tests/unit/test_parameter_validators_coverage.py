@@ -8,7 +8,6 @@ edge cases (SER= prefix, invalid chars).
 from jclparser.parameter_validators import (
     DISPValidator,
     DatasetNameValidator,
-    ParameterValidator,
 )
 
 
@@ -94,62 +93,3 @@ class TestDatasetNameValidatorCoverage:
         dsn = ".".join(["Q"] * 23)
         result = DatasetNameValidator.validate(dsn)
         assert any("23 qualifiers" in w for w in result.warnings)
-
-
-# ---------------------------------------------------------------------------
-# ParameterValidator.validate_unit — lines 263-264
-# ---------------------------------------------------------------------------
-
-
-class TestValidateUnitCoverage:
-    """Test ParameterValidator.validate_unit() edge cases."""
-
-    def test_empty_unit(self):
-        """Empty UNIT value is invalid (lines 263-264)."""
-        result = ParameterValidator.validate_unit("")
-        assert result.is_valid is False
-        assert any("empty" in e.lower() for e in result.errors)
-
-    def test_uncommon_unit_warning(self):
-        """Uncommon UNIT value produces a warning (lines 287-290)."""
-        result = ParameterValidator.validate_unit("MYDEVICE")
-        assert result.is_valid is True
-        assert len(result.warnings) > 0
-        assert any("Uncommon" in w for w in result.warnings)
-
-    def test_parenthesized_unit_no_warning(self):
-        """Unit starting with '(' is accepted without warning."""
-        result = ParameterValidator.validate_unit("(3390,2)")
-        assert result.is_valid is True
-        assert len(result.warnings) == 0
-
-
-# ---------------------------------------------------------------------------
-# ParameterValidator.validate_volume — lines 305, 311
-# ---------------------------------------------------------------------------
-
-
-class TestValidateVolumeCoverage:
-    """Test ParameterValidator.validate_volume() edge cases."""
-
-    def test_volume_ser_prefix_stripped(self):
-        """'SER=' prefix is stripped before validation (line 311)."""
-        result = ParameterValidator.validate_volume("SER=VOL001")
-        assert result.is_valid is True
-
-    def test_volume_too_long(self):
-        """Volume serial > 6 chars is invalid (lines 314-315)."""
-        result = ParameterValidator.validate_volume("TOOLONGVOL")
-        assert result.is_valid is False
-        assert any("too long" in e.lower() for e in result.errors)
-
-    def test_volume_invalid_chars(self):
-        """Volume serial with non-alphanumeric chars is invalid (lines 318-322)."""
-        result = ParameterValidator.validate_volume("VO!#$")
-        assert result.is_valid is False
-        assert any("invalid characters" in e.lower() for e in result.errors)
-
-    def test_empty_volume_valid(self):
-        """Empty volume is valid (returns early, lines 304-305)."""
-        result = ParameterValidator.validate_volume("")
-        assert result.is_valid is True

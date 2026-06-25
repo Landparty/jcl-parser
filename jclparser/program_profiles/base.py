@@ -37,6 +37,10 @@ class ProgramAnalysis:
             :func:`jclparser.dataset_lifecycle.analyze_dataset_lifecycle`).
         notes: Free-form annotations (e.g. "SORT with INCLUDE filter").
         raw_control: The raw SYSIN text that was parsed (if any).
+        invoked_programs: Application programs the step actually runs that are
+            named inside the control text rather than on ``EXEC PGM=`` — e.g. a
+            program named in a DSN ``RUN PROGRAM(...)`` subcommand or a TSO
+            ``CALL`` under IKJEFT01.  Upper-cased and de-duplicated.
     """
 
     program: str
@@ -45,6 +49,7 @@ class ProgramAnalysis:
     dataset_events: list[DatasetEvent] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     raw_control: str | None = None
+    invoked_programs: list[str] = field(default_factory=list)
 
 
 class ProgramProfile(ABC):

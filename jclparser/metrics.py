@@ -15,7 +15,7 @@ Usage::
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from typing import Any
 
 from .model import (
@@ -52,9 +52,6 @@ class JobMetrics:
     def to_dict(self) -> dict[str, Any]:
         """Return a plain-dict representation suitable for JSON output."""
         return asdict(self)
-
-    # Named field for backwards-compatible CLI users:
-    metrics: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
 
 def _walk(steps: list, depth: int = 0) -> tuple[int, int, int]:

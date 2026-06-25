@@ -32,11 +32,6 @@ def register_profile(profile: ProgramProfile) -> None:
     _PROFILES.append(profile)
 
 
-def clear_profiles() -> None:
-    """Remove all registered profiles (primarily for tests)."""
-    _PROFILES.clear()
-
-
 def get_profile(program_name: str | None) -> ProgramProfile | None:
     """Return the most recently registered profile that handles *program_name*.
 
@@ -81,6 +76,7 @@ def _register_builtins() -> None:
     from .iebgener import IEBGENERProfile, IEBCOPYProfile
     from .sort import SortProfile
     from .ikjeft01 import IKJEFT01Profile
+    from .db2_batch import DB2BatchProfile
     from .dfsrrc00 import DFSRRC00Profile
 
     register_profile(IEFBR14Profile())
@@ -89,6 +85,7 @@ def _register_builtins() -> None:
     register_profile(IEBCOPYProfile())
     register_profile(SortProfile())
     register_profile(IKJEFT01Profile())
+    register_profile(DB2BatchProfile())
     register_profile(DFSRRC00Profile())
 
 
@@ -97,7 +94,6 @@ _register_builtins()
 
 __all__ = [
     "register_profile",
-    "clear_profiles",
     "get_profile",
     "analyze_step",
     "analyze_job",
