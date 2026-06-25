@@ -9,15 +9,6 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-### Added
-
-- **Parameter validator pack** on `ParameterValidator`, returning the same
-  `ValidationResult` shape as the existing DISP/DSN validators:
-  `validate_time`, `validate_region`, `validate_priority` (PRTY),
-  `validate_perform`, `validate_rd`, `validate_msglevel`, `validate_dsntype`,
-  and `validate_recfm`. These cover format and range/enumeration rules for
-  JOB/EXEC/DD parameters that were previously stored without validation.
-
 ### Changed
 
 - In-stream data opened with `DD *` (and no explicit `DLM=`) is now terminated
@@ -33,17 +24,39 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - In-stream data that runs to end-of-file without a closing delimiter is no
   longer silently discarded; the collected records are now attached to the DD
   statement's `inline_data`.
-- `jclparser.utils` referenced module-level constants (`_RE_SPECIAL_CHARS`,
-  `_RE_JCL_NAME_START`, `_RE_JCL_NAME_FULL`) and a lazy `_PARAMETER_PARSER`
-  singleton that an earlier refactor had removed, along with the `re`,
-  `collections.deque`, and `typing` imports. The affected helpers
-  (`split_jcl_parameters`, `parse_jcl_parameter`, `quote_jcl_value`,
-  `validate_jcl_name`, `format_jcl_line`) raised `NameError` when called; the
-  constants and imports are restored and covered by tests.
 - `explode_job` now threads the JCLLIB ORDER as an immutable tuple through every
   nesting level, honoring the loaders' hashable-key contract. Added regression
   tests covering nested PROC resolution across multiple libraries (including
   library-order precedence and inline-to-external nesting).
+- SQL/DB2 detection now recognises `IKJEFT1A` (it was already handled by the
+  IKJEFT01 program profile but missing from `sql_detector.DB2_PROGRAMS`, so a
+  job running it was profiled as DB2 yet skipped by SQL detection).
+- `explode_job(strict_symbols=True)` now also raises `UndefinedSymbolError` for
+  undefined `&SYMBOL` references inside expanded PROC bodies. Previously strict
+  mode only applied to non-PROC steps and silently dropped undefined symbols in
+  PROC expansion. Added a regression test.
+
+### Removed
+
+These symbols were unused internal/compatibility surface (not part of a tagged
+release) and have been removed along with their tests:
+
+- **`ParameterValidator`** and its `validate_*` methods (the parameter
+  validator pack added earlier in this unreleased cycle). The class was never
+  wired into `validate_jcl()` and had no callers outside its own tests. The
+  live `DISPValidator` / `DatasetNameValidator` are unaffected.
+- Deprecated/orphaned `jclparser.utils` helpers that were no longer on the
+  parse path and had no in-package callers: `split_jcl_parameters`,
+  `parse_jcl_parameter`, `quote_jcl_value`, `unquote_jcl_value`,
+  `validate_jcl_name` (use `validators.validate_jcl_identifier`),
+  `format_jcl_line`, `extract_inline_data`, `calculate_jcl_checksum`,
+  `is_continuation_line` (use `ContinuationLineHandler.is_continuation_line`),
+  and the module-level `merge_continuation_lines` wrapper (use
+  `ContinuationLineHandler().merge_continuation_lines`).
+- Other dead code: `validators.validate_parameter_syntax`, the non-functional
+  `JobMetrics.metrics` back-compat field, `JESControlStatement.to_source`,
+  `program_profiles.clear_profiles`, and the never-instantiated
+  `parameter_ast.SimpleParameter` / `ListParameter` nodes.
 
 ## [1.0.0] - 2026-03-31
 
