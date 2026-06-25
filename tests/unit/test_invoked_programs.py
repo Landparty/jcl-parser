@@ -40,6 +40,16 @@ class TestExtractInvokedPrograms:
         progs = extract_invoked_programs("CALL 'PGMXYZ'")
         assert [p.name for p in progs] == ["PGMXYZ"]
 
+    def test_call_parens_in_parameters_not_treated_as_member(self):
+        # Parentheses inside the parameter operand must not be read as a member.
+        progs = extract_invoked_programs("CALL PGM,'PARM(MEM)'")
+        assert [p.name for p in progs] == ["PGM"]
+
+    def test_call_name_with_parenthesised_parms(self):
+        # NAME(PARMS) where NAME is a bare module -> the program is NAME.
+        progs = extract_invoked_programs("CALL PROC(1)")
+        assert [p.name for p in progs] == ["PROC"]
+
     def test_dotted_dataset_without_member_is_ambiguous(self):
         # No member, dotted name -> not an extractable module name.
         assert extract_invoked_programs("CALL 'PROD.LOAD.LIB'") == []

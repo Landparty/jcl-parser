@@ -49,16 +49,30 @@ def _resolve_call_target(raw: str) -> str | None:
     Handles ``'HLQ.LOADLIB(MEMBER)'``, ``*(MEMBER)``, ``MEMBER`` and
     ``'MEMBER'``.  A dotted dataset name without an explicit member is
     ambiguous (no extractable module name) and yields None.
-    """
-    raw = raw.strip()
-    # Only the first comma-delimited operand is the program; the rest are parms.
-    member = _RE_MEMBER.search(raw)
-    if member:
-        return member.group(1).upper()
 
-    token = raw.split(",", 1)[0].strip().strip("'").strip()
-    if _RE_SIMPLE_NAME.match(token):
-        return token.upper()
+    Only the first comma-delimited operand names the program; the rest are
+    run-time parameters.  Parentheses are interpreted as a dataset member only
+    for dataset/member forms (``*(MEM)`` or ``HLQ.LIB(MEM)``); otherwise
+    ``NAME(PARMS)`` is treated as the program ``NAME`` — so ``PGM,'PARM(MEM)'``
+    resolves to ``PGM`` and ``PROC(1)`` resolves to ``PROC``.
+    """
+    operand = raw.strip().split(",", 1)[0].strip().strip("'").strip()
+    if not operand:
+        return None
+
+    member = _RE_MEMBER.search(operand)
+    if member:
+        prefix = operand[: member.start()]
+        if prefix == "*" or "." in prefix:
+            # *(MEM) / HLQ.LIB(MEM) — the program is the member.
+            return member.group(1).upper()
+        if _RE_SIMPLE_NAME.match(prefix):
+            # NAME(PARMS) — the parentheses hold parameters, not a member.
+            return prefix.upper()
+        return None
+
+    if _RE_SIMPLE_NAME.match(operand):
+        return operand.upper()
     return None
 
 
