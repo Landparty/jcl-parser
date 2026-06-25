@@ -22,10 +22,7 @@ pytestmark = pytest.mark.unit
 
 
 _CUSTOM_PROC = (
-    "//MYUTIL   PROC\n"
-    "//RUN     EXEC PGM=MYHOMEPGM\n"
-    "//SYSPRINT DD SYSOUT=*\n"
-    "// PEND\n"
+    "//MYUTIL   PROC\n//RUN     EXEC PGM=MYHOMEPGM\n//SYSPRINT DD SYSOUT=*\n// PEND\n"
 )
 
 
