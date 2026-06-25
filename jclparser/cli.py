@@ -363,7 +363,6 @@ def _cmd_metrics(job: "Job", json_output: bool = False) -> int:
 
 def _print_metrics(m) -> None:
     fields = m.to_dict()
-    fields.pop("metrics", None)  # remove backwards-compat shadow dict
     width = max(len(k) for k in fields)
     for k, v in fields.items():
         print(f"  {k:<{width}}  {v}")
@@ -523,6 +522,7 @@ def _cmd_analyze(
                 "program": r.program,
                 "summary": r.summary,
                 "notes": r.notes,
+                "invoked_programs": r.invoked_programs,
                 "raw_control": r.raw_control,
             }
             for r in results

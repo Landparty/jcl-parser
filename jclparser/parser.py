@@ -350,9 +350,8 @@ def _parse_jcl_core(
                     # This is a DD override for a procedure step
                     parts = stmt.name.split(".", 1)  # Split on first dot only
                     if len(parts) == 2:
-                        # Store as override on the current step
-                        current_dd = _create_dd_from_statement(stmt)
-                        # Keep the qualified name for matching during explosion
+                        # Store as override on the current step, keeping the
+                        # qualified name for matching during explosion.
                         current_step.dd_overrides[stmt.name] = current_dd
                     else:
                         # Regular DD statement
@@ -410,7 +409,7 @@ def _parse_jcl_core(
                             job.add_set(
                                 key, _resolve_set_value(value, job.set_statements)
                             )
-                        elif is_positional_key(key):
+                        else:
                             # Positional parameter might be SYMBOL=VALUE without keyword
                             param_val = value
                             if "=" in param_val:

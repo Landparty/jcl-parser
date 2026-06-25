@@ -32,11 +32,6 @@ def register_profile(profile: ProgramProfile) -> None:
     _PROFILES.append(profile)
 
 
-def clear_profiles() -> None:
-    """Remove all registered profiles (primarily for tests)."""
-    _PROFILES.clear()
-
-
 def get_profile(program_name: str | None) -> ProgramProfile | None:
     """Return the most recently registered profile that handles *program_name*.
 
@@ -99,7 +94,6 @@ _register_builtins()
 
 __all__ = [
     "register_profile",
-    "clear_profiles",
     "get_profile",
     "analyze_step",
     "analyze_job",

@@ -273,6 +273,7 @@ def expand_proc_invocation(
     overrides: Dict[str, Any],
     scope: SymbolScope,
     step_prefix: Optional[str] = None,
+    strict: bool = False,
 ) -> List[Step]:
     """
     Expand a single procedure invocation into steps.
@@ -283,6 +284,7 @@ def expand_proc_invocation(
         overrides: Parameter overrides from EXEC statement
         scope: Symbol resolution scope
         step_prefix: Optional prefix for qualified step names
+        strict: Whether to raise on undefined symbols inside the PROC body
 
     Returns:
         List of expanded steps with substituted parameters
@@ -294,8 +296,6 @@ def expand_proc_invocation(
         exec_overrides=overrides.copy(),
         system_provider=scope.system_provider,
     )
-
-    expanded_steps = []
 
     # Generate step name prefix
     prefix = step_prefix or step.name or "PROC"
@@ -322,17 +322,17 @@ def expand_proc_invocation(
                 # Substitute symbols in program name
                 if new_step.program:
                     new_step.program = substitute_symbols(
-                        new_step.program, expansion_scope, strict=False
+                        new_step.program, expansion_scope, strict=strict
                     )
 
                 # Substitute symbols in step parameters
                 new_step.parameters = substitute_parameters_dict(
-                    new_step.parameters, expansion_scope
+                    new_step.parameters, expansion_scope, strict=strict
                 )
 
                 # Substitute symbols in DD statements
                 for dd in new_step.dd_statements:
-                    substitute_dd_statement(dd, expansion_scope, strict=False)
+                    substitute_dd_statement(dd, expansion_scope, strict=strict)
 
                 result.append(new_step)
         return result
@@ -343,7 +343,7 @@ def expand_proc_invocation(
 
 
 def substitute_parameters_dict(
-    parameters: Dict[str, Any], scope: SymbolScope
+    parameters: Dict[str, Any], scope: SymbolScope, strict: bool = False
 ) -> Dict[str, Any]:
     """
     Substitute symbols in parameter dictionary.
@@ -351,6 +351,7 @@ def substitute_parameters_dict(
     Args:
         parameters: Parameter dictionary
         scope: Symbol resolution scope
+        strict: Whether to raise on undefined symbols
 
     Returns:
         Dictionary with substituted values
@@ -359,16 +360,16 @@ def substitute_parameters_dict(
 
     for key, value in parameters.items():
         if isinstance(value, str):
-            result[key] = substitute_symbols(value, scope, strict=False)
+            result[key] = substitute_symbols(value, scope, strict=strict)
         elif isinstance(value, (list, tuple)):
             result[key] = [
-                substitute_symbols(str(v), scope, strict=False)
+                substitute_symbols(str(v), scope, strict=strict)
                 if isinstance(v, str)
                 else v
                 for v in value
             ]
         elif isinstance(value, dict):
-            result[key] = substitute_parameters_dict(value, scope)
+            result[key] = substitute_parameters_dict(value, scope, strict=strict)
         else:
             result[key] = value
 
@@ -384,6 +385,7 @@ def substitute_dd_statement(
     Args:
         dd: DD statement to process
         scope: Symbol resolution scope
+        strict: Whether to raise on undefined symbols
     """
     # Substitute dataset name
     if dd.dataset_name:
@@ -394,7 +396,7 @@ def substitute_dd_statement(
         dd.disposition = substitute_symbols(dd.disposition, scope, strict=strict)
 
     # Substitute all parameters
-    dd.parameters = substitute_parameters_dict(dd.parameters, scope)
+    dd.parameters = substitute_parameters_dict(dd.parameters, scope, strict=strict)
 
     # Note: inline_data intentionally NOT substituted (data content preserved)
 
@@ -670,10 +672,11 @@ def _explode_step(
         overrides=overrides,
         scope=base_scope,
         step_prefix=step.name,
+        strict=strict_symbols,
     )
 
     # Apply DD overrides if present
-    if hasattr(step, "dd_overrides") and step.dd_overrides:
+    if step.dd_overrides:
         apply_dd_overrides(expanded, step.dd_overrides, step.name or "PROC")
 
     # Record audit information

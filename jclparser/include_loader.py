@@ -26,7 +26,7 @@ import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from .utils import _read_file_with_fallback
+from .utils import _read_file_with_fallback, is_within_directory
 
 
 class IncludeMemberLoader(ABC):
@@ -116,13 +116,13 @@ class JCLLIBMemberLoader(IncludeMemberLoader):
         libraries: list[str] | None = None,
     ) -> str | None:
         """Search libraries in order and return the first matching member."""
-        base_resolved = self._base.resolve()
         candidates = self._candidate_paths(member_name, libraries)
         for path in candidates:
+            # Guard against path traversal outside the configured base directory.
+            if not is_within_directory(path, self._base):
+                continue
             try:
                 resolved = path.resolve()
-                if not resolved.is_relative_to(base_resolved):
-                    continue
                 if resolved.is_file():
                     return _read_file_with_fallback(resolved)
             except (OSError, PermissionError):

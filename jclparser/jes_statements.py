@@ -31,12 +31,6 @@ class JESControlStatement:
     line_number: int = 0
     type: str = field(default="JES", init=False, repr=False)
 
-    def to_source(self) -> str:
-        """Return an approximate source representation (``/*CMD raw``)."""
-        if self.raw:
-            return f"/*{self.name} {self.raw}".rstrip()
-        return f"/*{self.name}"
-
 
 @dataclass
 class JobParmStatement(JESControlStatement):

@@ -15,9 +15,46 @@ import os
 
 from .model import Procedure
 from .errors import JCLSyntaxError, JCLValidationError
-from .utils import _read_file_with_fallback
+from .utils import _read_file_with_fallback, is_within_directory
 
 logger = logging.getLogger(__name__)
+
+
+def _build_procedure_from_content(content: str, proc_name: str) -> Procedure | None:
+    """Parse JCL PROC *content* into a :class:`Procedure`.
+
+    Returns ``None`` when the content is a full JOB file (not a PROC) or holds
+    nothing usable. Underlying parse errors propagate so callers can add
+    context-specific logging.
+    """
+    from .parser import parse_jcl
+    from .jcl_file_type import detect_file_type_from_content, FileType
+
+    file_type = detect_file_type_from_content(content)
+    # A PROC file must not carry a JOB card; a full JCL job is not a procedure.
+    if file_type == FileType.JCL:
+        return None
+    # Standalone PROC files (no JOB statement) are wrapped so the parser accepts them.
+    if file_type == FileType.PROC:
+        content = f"//DUMMYJOB JOB\n{content}"
+
+    job = parse_jcl(content, strict_mode=False)
+    target = proc_name.upper()
+    for proc in job.procedures:
+        if proc.name.upper() == target:
+            proc.is_external = True
+            return proc
+
+    # No explicit PROC/PEND: treat the whole file's steps as the procedure body.
+    if job.steps:
+        return Procedure(
+            name=proc_name,
+            parameters={},
+            steps=job.steps,
+            line_number=0,
+            is_external=True,
+        )
+    return None
 
 
 class ProcedureLoader(ABC):
@@ -150,10 +187,7 @@ class JCLLIBProcedureLoader(ProcedureLoader):
             for f in sorted(lib_dir.iterdir()):
                 if not f.is_file():
                     continue
-                try:
-                    if not f.resolve().is_relative_to(lib_dir.resolve()):
-                        continue
-                except (OSError, ValueError):
+                if not is_within_directory(f, lib_dir):
                     continue
                 if f.suffix.lower() in (".jcl",) or not f.suffix:
                     procs.append(f.stem.upper())
@@ -194,11 +228,7 @@ class JCLLIBProcedureLoader(ProcedureLoader):
 
         for candidate in candidates:
             # Guard against path traversal (e.g. name="../../secret")
-            try:
-                resolved = candidate.resolve()
-                if not resolved.is_relative_to(library_path.resolve()):
-                    continue
-            except (OSError, ValueError):
+            if not is_within_directory(candidate, library_path):
                 continue
             if candidate.exists() and candidate.is_file():
                 return self._parse_procedure_file(candidate, name)
@@ -218,49 +248,10 @@ class JCLLIBProcedureLoader(ProcedureLoader):
         Returns:
             Procedure object
         """
-        from .parser import parse_jcl
-        from .jcl_file_type import detect_file_type_from_content, FileType
-
         try:
             # Read the file content once using the shared encoding-fallback reader
             content = _read_file_with_fallback(file_path)
-
-            # Detect the file type from already-read content (avoids second read)
-            file_type = detect_file_type_from_content(content)
-
-            # Reject if it's a JCL job file (has JOB card)
-            # A PROC file should NOT have a JOB card
-            if file_type == FileType.JCL:
-                # This is a JCL job file, not a PROC - skip it
-                # In a real system, you might want to log a warning
-                return None
-
-            # For standalone PROC files (no JOB statement), we need to wrap them
-            # in a dummy JOB statement so the parser can handle them
-            if file_type == FileType.PROC:
-                # Prepend a dummy JOB statement
-                content = f"//DUMMYJOB JOB\n{content}"
-
-            # Parse to extract procedure definition
-            job = parse_jcl(content, strict_mode=False)
-
-            # Look for the procedure in the parsed job
-            for proc in job.procedures:
-                if proc.name.upper() == proc_name.upper():
-                    proc.is_external = True
-                    return proc
-
-            # If no explicit PROC/PEND, treat entire file as procedure
-            # This is a simplified approach - real z/OS might differ
-            if job.steps:
-                return Procedure(
-                    name=proc_name,
-                    parameters={},
-                    steps=job.steps,
-                    line_number=0,
-                    is_external=True,
-                )
-
+            return _build_procedure_from_content(content, proc_name)
         except (JCLSyntaxError, JCLValidationError, OSError, ValueError) as exc:
             # Parsing/reading failed - log the cause and return None so the
             # composite loader can fall through to the next candidate/loader.
@@ -271,8 +262,7 @@ class JCLLIBProcedureLoader(ProcedureLoader):
                 type(exc).__name__,
                 exc,
             )
-
-        return None
+            return None
 
 
 class CompositeProcedureLoader(ProcedureLoader):
@@ -390,29 +380,8 @@ class DictProcedureLoader(ProcedureLoader):
 
     def _parse_proc_content(self, content: str, proc_name: str) -> Procedure | None:
         """Parse JCL PROC content string into a Procedure object."""
-        from .parser import parse_jcl
-        from .jcl_file_type import detect_file_type_from_content, FileType
-
         try:
-            file_type = detect_file_type_from_content(content)
-            if file_type == FileType.JCL:
-                return None  # full JOB file, not a PROC
-            if file_type == FileType.PROC:
-                content = f"//DUMMYJOB JOB\n{content}"
-
-            job = parse_jcl(content, strict_mode=False)
-            for proc in job.procedures:
-                if proc.name.upper() == proc_name:
-                    proc.is_external = True
-                    return proc
-            if job.steps:
-                return Procedure(
-                    name=proc_name,
-                    parameters={},
-                    steps=job.steps,
-                    line_number=0,
-                    is_external=True,
-                )
+            return _build_procedure_from_content(content, proc_name)
         except (JCLSyntaxError, JCLValidationError, ValueError) as exc:
             # Parsing failed - log the cause and return None. Narrowed from a
             # bare ``except Exception`` so genuine programming errors surface.
@@ -422,4 +391,4 @@ class DictProcedureLoader(ProcedureLoader):
                 type(exc).__name__,
                 exc,
             )
-        return None
+            return None

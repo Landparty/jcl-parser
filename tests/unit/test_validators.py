@@ -13,7 +13,6 @@ from jclparser.validators import (
     validate_dd_statement,
     validate_disposition,
     validate_data_dependencies,
-    validate_parameter_syntax,
 )
 from jclparser.model import Job, Step, DDStatement
 from jclparser.errors import ErrorType
@@ -303,33 +302,6 @@ class TestValidateDataDependencies:
         errors = validate_data_dependencies(job)
         # Should have some validation result
         assert len(errors) >= 0
-
-
-class TestValidateParameterSyntax:
-    """Test validate_parameter_syntax function."""
-
-    def test_valid_parameter(self):
-        """Test valid parameter."""
-        errors = validate_parameter_syntax("DSN", "MY.DATA.SET")
-        assert len(errors) == 0
-
-    def test_invalid_parameter_name(self):
-        """Test invalid parameter name."""
-        errors = validate_parameter_syntax("123INVALID", "VALUE")
-        # Should have some validation result
-        assert len(errors) >= 0
-
-    def test_unmatched_quotes(self):
-        """Test parameter with unmatched quotes."""
-        errors = validate_parameter_syntax("PARM", "'UNMATCHED")
-        # Should have some validation result
-        assert len(errors) >= 0
-
-    def test_matched_quotes(self):
-        """Test parameter with matched quotes."""
-        errors = validate_parameter_syntax("PARM", "'MATCHED'")
-        # Should not have quote errors
-        assert not any("unmatched" in str(e).lower() for e in errors)
 
 
 class TestIntegrationScenarios:

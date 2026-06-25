@@ -11,32 +11,15 @@ analysis does not stop at the DB2 driver.
 from __future__ import annotations
 
 from .base import ProgramProfile, ProgramAnalysis
-from ._invoked import extract_invoked_programs
-from ..sql_detector import detect_sql_in_text
+from ._invoked import collect_control_text, invoked_and_sql_notes
 
 
 class DB2BatchProfile(ProgramProfile):
     program_names = frozenset({"DSNTEP2", "DSNTEP4", "DSNTIAD"})
 
     def analyze(self, step) -> ProgramAnalysis:
-        notes: list[str] = []
-        texts: list[str] = []
-
-        for dd_name in ("SYSTSIN", "SYSIN"):
-            dd = step.get_dd(dd_name)
-            if dd and dd.inline_data:
-                texts.append(dd.inline_data)
-
-        combined = "\n".join(texts)
-
-        invoked = extract_invoked_programs(combined)
-        for prog in invoked:
-            notes.append(f"{prog.via}({prog.name})")
-
-        sql_hits = detect_sql_in_text(combined) if combined else []
-        if sql_hits:
-            categories = sorted({cat for _, cat in sql_hits})
-            notes.append(f"embedded SQL: {', '.join(categories)}")
+        combined = collect_control_text(step)
+        invoked, notes = invoked_and_sql_notes(combined)
 
         summary = (
             f"{step.program}: {len(notes)} DB2 batch operations"

@@ -312,8 +312,7 @@ class _Parser:
     # -- grammar rules -------------------------------------------------------
 
     def parse(self) -> ConditionNode:
-        node = self._parse_or()
-        return node
+        return self._parse_or()
 
     def _parse_or(self) -> ConditionNode:
         left = self._parse_and()

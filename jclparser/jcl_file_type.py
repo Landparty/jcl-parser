@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 _PREAMBLE_STATEMENTS = frozenset(
     {"SET", "JCLLIB", "IF", "THEN", "ELSE", "ENDIF", "INCLUDE"}
 )
+# Statement types that may appear without a leading //NAME label. Prefix-match
+# order is irrelevant here since no entry is a prefix of another.
+_NAMELESS_STATEMENTS = _PREAMBLE_STATEMENTS | {"PEND"}
 _KNOWN_TYPES = frozenset(
     {
         "JOB",
@@ -87,20 +90,8 @@ def detect_file_type(source: Union[str, Path, IO]) -> FileType:
     if source is None:
         raise ValueError("Source cannot be None")
 
-    # Get content as string
-    content = read_source(source)
-
-    # Find first non-comment, non-blank statement
-    first_statement_type = _find_first_statement_type(content)
-
-    # Determine file type based on first statement
-    if first_statement_type is None:
-        return FileType.UNKNOWN
-    elif first_statement_type == "JOB":
-        return FileType.JCL
-    else:
-        # Any other statement type (PROC, EXEC, DD, SET, etc.) indicates PROC
-        return FileType.PROC
+    # Get content as string, then delegate to the content-based detector.
+    return detect_file_type_from_content(read_source(source))
 
 
 def detect_file_type_from_content(content: str) -> FileType:
@@ -252,12 +243,10 @@ def _extract_statement_type(line: str) -> Optional[str]:
     if not line:
         return None
 
-    # Known statement types that don't require a name
-    nameless_types = ["SET", "JCLLIB", "INCLUDE", "IF", "THEN", "ELSE", "ENDIF", "PEND"]
-
-    # Check for nameless statement types
-    for stmt_type in nameless_types:
-        if line.upper().startswith(stmt_type):
+    # Check for nameless statement types (those that may omit a //NAME label)
+    line_upper = line.upper()
+    for stmt_type in _NAMELESS_STATEMENTS:
+        if line_upper.startswith(stmt_type):
             return stmt_type
 
     # For statements with names: //NAME TYPE PARAMS

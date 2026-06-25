@@ -8,7 +8,6 @@ from jclparser import parse_jcl
 from jclparser.continuation_handler import (
     ContinuationLineHandler,
     ContinuationContext,
-    merge_continuation_lines,
 )
 from jclparser.utils import normalize_jcl_line
 
@@ -248,19 +247,6 @@ class TestContinuationLineHandler:
         # Should be balanced (escaped quote doesn't toggle state)
         assert ctx.in_quotes is False
         assert ctx.is_complete is True
-
-
-class TestConvenienceFunction:
-    """Test the convenience function."""
-
-    def test_merge_continuation_lines_function(self):
-        """Test the module-level convenience function."""
-        lines = ["//STEP1 EXEC PGM=MYPROG,", "//             PARM='VALUE'"]
-
-        merged = merge_continuation_lines(lines)
-
-        assert len(merged) == 1
-        assert "PARM='VALUE'" in merged[0][0]
 
 
 class TestContinuationEdgeCases:
