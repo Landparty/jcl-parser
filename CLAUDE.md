@@ -19,7 +19,7 @@ cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser/
 # Install for development
 pip install -e .[dev]
 
-# Run all tests (includes coverage by default via pytest.ini)
+# Run all tests (coverage on by default via pyproject.toml [tool.pytest.ini_options])
 pytest
 
 # Run a single test file
@@ -34,9 +34,10 @@ pytest -m integration
 pytest -m contract
 pytest -m performance
 
-# Lint and format
+# Lint, format, type-check
 ruff check .
 ruff format .
+mypy jclparser/   # strict mode — currently reports known violations (typing cleanup WIP)
 ```
 
 Coverage is enforced at 90% minimum (configured in `pyproject.toml` under `[tool.coverage.report]`). Tests always generate HTML coverage to `htmlcov/` and XML to `coverage.xml`.
@@ -61,7 +62,7 @@ The package is `jclparser/` — a pure Python library with no runtime dependenci
 
 7. **`explosion.py`** — PROC expansion (`explode_job()`). Resolves inline PROCs and substitutes symbolic parameters (`&SYMBOL`). Tracks expansion depth to detect circular references. Exposes `SymbolScope`.
 
-8. **`proc_loader.py`** — Loads external PROCs from the filesystem. Supports `JCLLIB ORDER` statements. Loader hierarchy: `InlineProcedureLoader` → `JCLLIBProcedureLoader` → `CompositeProcedureLoader`. `create_default_loader()` wires them together.
+8. **`proc_loader.py`** — Loads external PROCs from the filesystem. Supports `JCLLIB ORDER` statements. Loaders: `InlineProcedureLoader`, `JCLLIBProcedureLoader`, `DictProcedureLoader`, `CompositeProcedureLoader`. `create_default_loader()` wires the chain in precedence order — inline → JCLLIB → bundled utility templates (`builtin_procs.py`, see #26) as a last-resort fallback; toggle the fallback with `include_builtins`.
 
 9. **`include_loader.py`** — Loads `// INCLUDE MEMBER=name` members from JCLLIB. Mirrors PROC loader conventions. Exposes `IncludeMemberLoader`, `DictMemberLoader`, `JCLLIBMemberLoader`, and `resolve_includes()`.
 
@@ -81,7 +82,7 @@ The package is `jclparser/` — a pure Python library with no runtime dependenci
 
 17. **`rc_analysis.py`** — Return-code feasibility analysis. Walks the job in execution order and determines whether IF-guarded or COND-guarded steps are reachable under any combination of predecessor RCs from a symbolic domain. Exposes `FeasibilityReport`, `compute_feasible_paths()`, `DEFAULT_RC_DOMAIN`.
 
-18. **`program_profiles/`** — Program profile analysis. Maps known z/OS programs (SORT, IEBCOPY, IDCAMS, DB2 utilities, etc.) to structured profiles describing their purpose and DD requirements. Exposes `ProgramProfile`, `ProgramAnalysis`, `analyze_step()`, `analyze_job()`, `register_profile()`.
+18. **`program_profiles/`** — Program profile analysis. Maps known z/OS programs (SORT, IEBGENER, IEFBR14, IDCAMS, IKJEFT01, IMS DFSRRC00, etc.) to structured profiles describing their purpose and DD requirements. Exposes `ProgramProfile`, `ProgramAnalysis`, `analyze_step()`, `analyze_job()`, `register_profile()`.
 
 19. **`lint/`** — Linting rules for JCL best practices. Rules are registered via `register_lint_rule()`. Exposes `LintRule`, `LintConfig`, `lint_job()`, `lint_to_sarif()`.
 
@@ -97,10 +98,12 @@ The package is `jclparser/` — a pure Python library with no runtime dependenci
 
 25. **`__main__.py`** — Enables `python -m jclparser` invocation (delegates to `cli.main`).
 
+26. **`builtin_procs.py`** — Bundled, non-verbatim utility-PROC *templates* keyed by well-known IBM-supplied procedure names (IMS: `IMSBATCH`, `DLIBATCH`, `DBBBATCH`, `IMSMSG`, `DFSMPR`; DB2: `DSNUPROC`, `DSNHICOB`; COBOL: `IGYWCL`, `IGYWCLG`, `COBUCL`). Serves as the last-resort fallback in the loader chain so static analysis still resolves common vendor PROCs that aren't shipped alongside the JCL. Inline and site PROCs always override these. Exposes `BUILTIN_UTILITY_PROCS`, `create_builtin_proc_loader()`.
+
 ### Public API tiers (from `__init__.py`)
 
 - **Tier 1 (stable)**: `parse_jcl`, `validate_jcl`, `parse_statement`, `parse` (alias), core model classes (`Job`, `Step`, `DDStatement`, `Parameter`, `Statement`, `OutputStatement`), core error types (`JCLSyntaxError`, `JCLValidationError`, `JCLStructureError`, `ParseError`, `ValidationError`, `ErrorType`, `ErrorSeverity`, `ValidationLevel`, `UndefinedSymbolError`, `CircularProcedureError`, `ExplosionDepthError`, `ProcedureNotFoundError`).
-- **Tier 2 (advanced)**: `explode_job`, `SymbolScope`, loader classes, `ParserConfig`, `validate_*` utilities, `FileType`/`detect_file_type`/`detect_file_type_from_content`, `parse_condition` + condition AST nodes, SQL detection API, INCLUDE resolution, dataset lifecycle, JES statement types, `compute_metrics`/`JobMetrics`, `compute_feasible_paths`/`FeasibilityReport`, program profile analysis, lint API, plugin system.
+- **Tier 2 (advanced)**: `explode_job`, `SymbolScope`, loader classes, bundled utility-PROC templates (`BUILTIN_UTILITY_PROCS`, `create_builtin_proc_loader`), `ParserConfig`, `validate_*` utilities, `FileType`/`detect_file_type`/`detect_file_type_from_content`, `parse_condition` + condition AST nodes, SQL detection API, INCLUDE resolution, dataset lifecycle, JES statement types, `compute_metrics`/`JobMetrics`, `compute_feasible_paths`/`FeasibilityReport`, program profile analysis, lint API, plugin system.
 - **Tier 3 (internal/backwards-compat)**: `MockSystemSymbolProvider`, individual loader types, `FunctionProfile`/`ProfilingResult` — may be removed in a future major version.
 
 ### External PROC loading
@@ -113,15 +116,14 @@ Set `JCL_PROCLIB_PATH` env var or pass `proc_base_path` to `parse_jcl()`. The fi
 tests/
   unit/        # Individual component tests (parser API, models, validators, explosion)
   integration/ # End-to-end JCL parsing with realistic job streams
-  contracts/   # API stability tests
-  performance/ # Benchmarks
+  benchmarks/  # pytest-benchmark perf tests (excluded from default runs via norecursedirs)
 ```
 
-Markers: `unit`, `integration`, `contract`, `performance` (all enforced via `pyproject.toml`). Coverage minimum: **90%** — enforced on every run.
+Markers (enforced via `pyproject.toml`): `unit`, `integration`, `contract`, `performance`, `slow`, `benchmark`. `contract`/`performance` tests are tagged by marker, not housed in their own directories. Coverage minimum: **90%** — enforced on every run.
 
 ## Code Style
 
-- Python 3.10+ type hints on all signatures
-- `ruff` for linting + formatting (line-length 88); `black` not used — `ruff format` handles formatting
-- `mypy` strict mode; no untyped defs
-- No runtime dependencies; dev tools in `[dev]` extras only
+- Python 3.10+ type hints on all new/changed signatures
+- `ruff` for linting + formatting (line-length 88); `black` not used — `ruff format` handles formatting. `ruff check .` is clean.
+- `mypy` strict is the standard (`strict = true` in `pyproject.toml`), but the codebase is **not yet strict-clean** — there's a backlog of known violations (mostly missing annotations and generic type args, plus a few real type issues in `profiling.py`/`explosion.py`/`parser.py`). Run `mypy jclparser/` for the current list. Add the missing types when you touch a file; keep new code fully annotated rather than widening the config.
+- No runtime dependencies; dev tools (pytest, ruff, mypy) live in the `[dev]` extra
