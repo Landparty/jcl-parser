@@ -236,11 +236,92 @@ BUILTIN_UTILITY_PROCS: dict[str, str] = {
 }
 
 
-def create_builtin_proc_loader() -> ProcedureLoader:
-    """Return a loader serving the bundled utility PROC templates.
+# ---------------------------------------------------------------------------
+# Custom ("home-made") utility PROC registry
+#
+# Sites run plenty of their own cataloged utility procedures that are not
+# IBM-supplied — local wrappers around SORT, in-house compile/link procs, etc.
+# These behave exactly like the bundled IBM procs above (they resolve as a
+# last-resort fallback by name) but are supplied at runtime by the host
+# application rather than shipped with the library. The host registers them
+# once (e.g. when a customer uploads their PROCLIB) via
+# :func:`register_utility_proc`, or passes them per-call through
+# ``create_builtin_proc_loader(extra_procs=...)``.
+# ---------------------------------------------------------------------------
 
-    The loader is a plain :class:`DictProcedureLoader`; place it last in a
-    :class:`CompositeProcedureLoader` chain so inline and site PROCs override
-    these defaults.
+_REGISTERED_UTILITY_PROCS: dict[str, str] = {}
+
+
+def register_utility_proc(name: str, content: str) -> None:
+    """Register a custom utility PROC so it resolves like a bundled IBM proc.
+
+    The registered procedure is served by every loader returned from
+    :func:`create_builtin_proc_loader` thereafter, keyed by *name*
+    case-insensitively. A registered proc overrides a bundled proc of the same
+    name (so a site can correct a template); inline and site PROC loaders still
+    take precedence over both when ordered ahead in the composite chain.
+
+    Args:
+        name: Procedure name as referenced by ``EXEC <name>`` (case-insensitive).
+        content: Full PROC source (``//NAME PROC ... // PEND``).
+
+    Raises:
+        ValueError: If *name* or *content* is blank.
     """
-    return DictProcedureLoader(BUILTIN_UTILITY_PROCS)
+    if not name or not name.strip():
+        raise ValueError("Utility PROC name must be a non-empty string")
+    if not content or not content.strip():
+        raise ValueError("Utility PROC content must be a non-empty string")
+    _REGISTERED_UTILITY_PROCS[name.strip().upper()] = content
+
+
+def unregister_utility_proc(name: str) -> bool:
+    """Remove a previously registered custom utility PROC.
+
+    Args:
+        name: Procedure name (case-insensitive).
+
+    Returns:
+        ``True`` if a proc was removed, ``False`` if none was registered under
+        *name*.
+    """
+    if not name or not name.strip():
+        return False
+    return _REGISTERED_UTILITY_PROCS.pop(name.strip().upper(), None) is not None
+
+
+def clear_registered_utility_procs() -> None:
+    """Drop all procs registered via :func:`register_utility_proc`."""
+    _REGISTERED_UTILITY_PROCS.clear()
+
+
+def get_registered_utility_procs() -> dict[str, str]:
+    """Return a copy of the currently registered custom utility PROCs."""
+    return dict(_REGISTERED_UTILITY_PROCS)
+
+
+def create_builtin_proc_loader(
+    extra_procs: dict[str, str] | None = None,
+) -> ProcedureLoader:
+    """Return a loader serving the bundled and custom utility PROC templates.
+
+    The loader resolves these PROC sources in increasing order of precedence:
+
+    1. :data:`BUILTIN_UTILITY_PROCS` — procs shipped with this library.
+    2. Procs registered globally via :func:`register_utility_proc`.
+    3. *extra_procs* — a per-call mapping of ``name -> PROC source``, typically a
+       single customer's own "home-made" utility procedures resolved for the
+       current request/tenant.
+
+    All three are served from one :class:`DictProcedureLoader`; place it last in
+    a :class:`CompositeProcedureLoader` chain so inline and site PROCs override
+    these defaults.
+
+    Args:
+        extra_procs: Optional per-call ``name -> PROC source`` overrides/additions.
+    """
+    merged: dict[str, str] = dict(BUILTIN_UTILITY_PROCS)
+    merged.update(_REGISTERED_UTILITY_PROCS)
+    if extra_procs:
+        merged.update({name.upper(): content for name, content in extra_procs.items()})
+    return DictProcedureLoader(merged)

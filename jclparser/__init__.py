@@ -68,6 +68,10 @@ from .proc_loader import (
 from .builtin_procs import (
     BUILTIN_UTILITY_PROCS,
     create_builtin_proc_loader,
+    register_utility_proc,
+    unregister_utility_proc,
+    clear_registered_utility_procs,
+    get_registered_utility_procs,
 )
 from .system_symbols import (
     SystemSymbolProvider,
@@ -196,6 +200,10 @@ __all__ = [
     "create_default_loader",
     "BUILTIN_UTILITY_PROCS",
     "create_builtin_proc_loader",
+    "register_utility_proc",
+    "unregister_utility_proc",
+    "clear_registered_utility_procs",
+    "get_registered_utility_procs",
     "SystemSymbolProvider",
     "ParserConfig",
     "SymbolScope",
