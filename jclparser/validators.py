@@ -6,14 +6,13 @@ and data integrity checks for parsed JCL structures.
 """
 
 import re
-from typing import List, Set, Dict, Any
+from typing import List, Set, Dict
 from .model import Job, Step, DDStatement, iter_execution_steps
 from .errors import ValidationError, ErrorType, ErrorSeverity
 from .parameter_validators import DatasetNameValidator, DISPValidator
 
 # Precompiled regex patterns for performance
 _RE_JCL_ID_VALID = re.compile(r"^[A-Za-z@#$][A-Za-z0-9@#$]*$")
-_RE_PARAM_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 
 # Shared description used in all JCL name validation error messages
 _JCL_NAME_FORMAT = "must be 1-8 characters, alphanumeric + @#$"
@@ -351,44 +350,6 @@ def validate_data_dependencies(job: Job) -> List[ValidationError]:
                     f"Temporary dataset {temp_ds} used but never created",
                     ErrorType.VALIDATION_ERROR,
                     severity=ErrorSeverity.WARNING,
-                )
-            )
-
-    return errors
-
-
-def validate_parameter_syntax(
-    param_name: str, param_value: Any
-) -> List[ValidationError]:
-    """
-    Validate individual parameter syntax.
-
-    Args:
-        param_name: Parameter name
-        param_value: Parameter value
-
-    Returns:
-        List of validation errors
-    """
-    errors = []
-
-    # Parameter name validation
-    if not _RE_PARAM_NAME.match(param_name):
-        errors.append(
-            ValidationError(
-                f"Invalid parameter name '{param_name}': must start with letter, alphanumeric only",
-                ErrorType.VALIDATION_ERROR,
-            )
-        )
-
-    # Value validation depends on type
-    if isinstance(param_value, str):
-        # Check for unmatched quotes
-        if param_value.count("'") % 2 != 0:
-            errors.append(
-                ValidationError(
-                    f"Unmatched quotes in parameter {param_name}: {param_value}",
-                    ErrorType.SYNTAX_ERROR,
                 )
             )
 

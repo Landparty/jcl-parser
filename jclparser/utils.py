@@ -1,36 +1,17 @@
 """
 Helper utilities for JCL syntax handling.
 
-Contains utility functions for JCL-specific syntax operations.
-
-Function classification
------------------------
-Runtime-critical (used by the main parse path):
-    read_source, normalize_jcl_line, is_continuation_line
+Contains utility functions for JCL-specific syntax operations used by the
+main parse path: ``read_source``, ``normalize_jcl_line``, ``is_positional_key``.
 """
 
 from __future__ import annotations
 
-import re
-from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 #: Prefix used to store positional (keyword-less) JCL parameters in dicts.
 POSITIONAL_PARAM_PREFIX: str = "_pos_"
-
-# Precompiled patterns used by the parameter/name helpers below. These were
-# dropped by an earlier refactor that left the helper functions referencing
-# them, which made those functions raise NameError when called.
-_RE_SPECIAL_CHARS = re.compile(r"[,()=\s']")
-_RE_JCL_NAME_START = re.compile(r"^[A-Za-z@#$]")
-_RE_JCL_NAME_FULL = re.compile(r"^[A-Za-z0-9@#$]+$")
-
-# Lazily-initialized ParameterParser singleton used by split_jcl_parameters().
-# Imported lazily (inside the function) to avoid a circular import with
-# parameter_ast; must exist at module scope so the ``global`` read does not
-# raise NameError on first use.
-_PARAMETER_PARSER = None
 
 
 def is_positional_key(key: str) -> bool:
@@ -72,25 +53,6 @@ def normalize_jcl_line(line: str) -> str:
     return line
 
 
-def is_continuation_line(line: str) -> bool:
-    """
-    Check if line is a JCL continuation line.
-
-    Args:
-        line: JCL line to check
-
-    Returns:
-        True if line is a continuation
-    """
-    stripped = line.lstrip()
-    return (
-        stripped.startswith("//")
-        and not stripped.startswith("//*")
-        and len(stripped) > 2
-        and stripped[2] == " "
-    )
-
-
 def _read_file_with_fallback(path: Path) -> str:
     """
     Read a file trying utf-8, latin-1, cp1252, then binary fallback.
@@ -117,6 +79,19 @@ def _require_file(path: Path) -> str:
     if not path.exists():
         raise FileNotFoundError(f"JCL file not found: {path}")
     return _read_file_with_fallback(path)
+
+
+def is_within_directory(path: Path, anchor: Path) -> bool:
+    """Return ``True`` if *path* resolves to a location inside *anchor*.
+
+    Path-traversal guard used by the PROC/INCLUDE loaders so a crafted member
+    name (e.g. ``../../secret``) cannot escape its library directory. Any
+    resolution failure is treated as "not contained".
+    """
+    try:
+        return path.resolve().is_relative_to(anchor.resolve())
+    except (OSError, ValueError):
+        return False
 
 
 def read_source(source: str | Path | Any) -> str:
@@ -171,294 +146,3 @@ def read_source(source: str | Path | Any) -> str:
         except (OSError, IOError):
             pass  # Non-seekable streams are fine; seek is best-effort only
     return content
-
-
-def split_jcl_parameters(param_string: str) -> List[str]:
-    """
-    Split JCL parameter string into individual parameters.
-
-    Handles quoted strings, parentheses, and nested structures properly.
-
-    .. note::
-        This is a compatibility wrapper that delegates to
-        :meth:`jclparser.parameter_ast.ParameterParser._split_parameters`,
-        which is the canonical implementation.
-
-    Args:
-        param_string: String containing JCL parameters
-
-    Returns:
-        List of individual parameter strings
-    """
-    if not param_string.strip():
-        return []
-    global _PARAMETER_PARSER
-    if _PARAMETER_PARSER is None:
-        from .parameter_ast import ParameterParser
-
-        _PARAMETER_PARSER = ParameterParser()
-    return _PARAMETER_PARSER._split_parameters(param_string)
-
-
-def parse_jcl_parameter(param: str) -> Tuple[str, Any]:
-    """
-    Parse individual JCL parameter into key-value pair.
-
-    .. deprecated::
-        Superseded by :class:`jclparser.parameter_ast.ParameterParser`, which
-        provides a richer AST and handles all JCL parameter types correctly.
-        Use ``ParameterParser`` for new code.
-
-    Args:
-        param: Parameter string (e.g., "DSN=MY.DATA", "CLASS=A")
-
-    Returns:
-        Tuple of (parameter_name, parameter_value)
-    """
-    if "=" not in param:
-        # Positional parameter
-        return "_positional", param.strip()
-
-    key, value = param.split("=", 1)
-    key = key.strip()
-    value = value.strip()
-
-    # Handle quoted values
-    if value.startswith("'") and value.endswith("'") and len(value) > 1:
-        value = value[1:-1]
-        # Handle escaped quotes
-        value = value.replace("''", "'")
-
-    # Handle parenthesized values (like DISP)
-    if value.startswith("(") and value.endswith(")") and len(value) > 2:
-        # Parse as sub-parameters
-        inner = value[1:-1]
-        sub_params = split_jcl_parameters(inner)
-        if len(sub_params) == 1:
-            value = sub_params[0]
-        else:
-            return key, sub_params
-
-    return key, value
-
-
-def quote_jcl_value(value: str) -> str:
-    """
-    Add JCL quotes to value if needed.
-
-    Args:
-        value: Value to potentially quote
-
-    Returns:
-        Quoted value if necessary
-    """
-    # Quote if contains special characters or spaces (including apostrophes)
-    if _RE_SPECIAL_CHARS.search(value):
-        # Escape existing quotes
-        escaped = value.replace("'", "''")
-        return f"'{escaped}'"
-
-    return value
-
-
-def unquote_jcl_value(value: str) -> str:
-    """
-    Remove JCL quotes from value.
-
-    Args:
-        value: Potentially quoted value
-
-    Returns:
-        Unquoted value
-    """
-    if value.startswith("'") and value.endswith("'") and len(value) > 1:
-        # Remove quotes and unescape
-        unquoted = value[1:-1]
-        return unquoted.replace("''", "'")
-
-    return value
-
-
-def validate_jcl_name(name: str, max_length: int = 8) -> bool:
-    """
-    Validate JCL name format.
-
-    .. note::
-        Identical to ``validators.validate_jcl_identifier()``.
-        Consider using that function directly.
-
-    Args:
-        name: Name to validate
-        max_length: Maximum allowed length
-
-    Returns:
-        True if valid JCL name
-    """
-    if not name or len(name) > max_length:
-        return False
-
-    # Must start with letter or @, #, $
-    if not _RE_JCL_NAME_START.match(name):
-        return False
-
-    # Remaining characters can be alphanumeric or @, #, $
-    return _RE_JCL_NAME_FULL.match(name) is not None
-
-
-def format_jcl_line(
-    statement_type: str,
-    name: str,
-    parameters: Dict[str, Any],
-    max_line_length: int = 71,
-) -> List[str]:
-    """
-    Format JCL statement with proper line length and continuation.
-
-    Args:
-        statement_type: JCL statement type (JOB, EXEC, DD)
-        name: Statement name
-        parameters: Statement parameters
-        max_line_length: Maximum line length before continuation
-
-    Returns:
-        List of formatted JCL lines
-    """
-    lines = []
-
-    # Start with basic statement
-    base = f"//{name} {statement_type}"
-
-    if not parameters:
-        return [base]
-
-    # Format parameters
-    param_parts = []
-    for key, value in parameters.items():
-        if key.startswith("_positional"):
-            param_parts.append(str(value))
-        else:
-            if isinstance(value, (list, tuple)):
-                # Handle list values (like DISP) - don't quote parenthesized values
-                value_str = "(" + ",".join(str(v) for v in value) + ")"
-                param_parts.append(f"{key}={value_str}")
-            else:
-                value_str = str(value)
-                # Quote if necessary
-                if isinstance(value_str, str):
-                    value_str = quote_jcl_value(value_str)
-                param_parts.append(f"{key}={value_str}")
-
-    param_string = ",".join(param_parts)
-    full_line = f"{base} {param_string}"
-
-    # Handle line length
-    if len(full_line) <= max_line_length:
-        return [full_line]
-
-    # Need continuation
-    lines.append(base)
-
-    # Add parameters with continuation
-    current_line = "//"
-    remaining_params = deque(param_parts)
-
-    while remaining_params:
-        param = remaining_params.popleft()
-
-        # Check if we can fit this parameter
-        test_line = current_line + (" " if len(current_line) > 2 else "") + param
-        if remaining_params:
-            test_line += ","
-
-        if len(test_line) <= max_line_length:
-            current_line = test_line
-            if not remaining_params:
-                lines.append(current_line)
-        else:
-            # Start new continuation line
-            if len(current_line) > 2:  # Has content
-                lines.append(current_line + ",")
-            current_line = "// " + param
-            if not remaining_params:
-                lines.append(current_line)
-
-    return lines
-
-
-def extract_inline_data(
-    lines: List[str], start_index: int
-) -> Tuple[Optional[str], int]:
-    """
-    Extract inline data from DD * statement.
-
-    .. deprecated::
-        Inline data extraction is now handled internally by the main parser
-        in :func:`jclparser.parser.parse_jcl`.  This standalone helper may
-        produce inconsistent results for complex JCL with custom delimiters.
-
-    Args:
-        lines: List of JCL lines
-        start_index: Index where DD * statement was found
-
-    Returns:
-        Tuple of (inline_data, end_index) or (None, start_index)
-    """
-    if start_index >= len(lines):
-        return None, start_index
-
-    data_lines: List[str] = []
-    current_index = start_index + 1
-
-    while current_index < len(lines):
-        line = lines[current_index]
-
-        # Check for end marker
-        if line.strip() == "/*":
-            return "\n".join(data_lines), current_index
-
-        # Collect data line
-        data_lines.append(line)
-        current_index += 1
-
-    # No end marker found
-    return "\n".join(data_lines), current_index - 1
-
-
-def merge_continuation_lines(lines: List[str]) -> List[str]:
-    """
-    Merge JCL continuation lines into complete statements.
-
-    .. deprecated::
-        Superseded by :class:`jclparser.continuation_handler.ContinuationLineHandler`,
-        which correctly handles all edge-cases defined in z/OS JCL syntax rules.
-        Use that class for new code.
-
-    Args:
-        lines: List of raw JCL lines
-
-    Returns:
-        List of complete JCL statements
-    """
-    from .continuation_handler import merge_continuation_lines as _handler_merge
-
-    return [merged for merged, _lineno in _handler_merge(lines)]
-
-
-def calculate_jcl_checksum(jcl_content: str) -> str:
-    """
-    Calculate checksum for JCL content (useful for caching).
-
-    Args:
-        jcl_content: JCL script content
-
-    Returns:
-        Hexadecimal checksum string
-    """
-    import hashlib
-
-    # Normalize content for consistent checksums
-    normalized = "\n".join(
-        line.strip() for line in jcl_content.splitlines() if line.strip()
-    )
-
-    return hashlib.md5(normalized.encode("utf-8")).hexdigest()

@@ -177,7 +177,7 @@ def compute_feasible_paths(
                     )
                     continue
 
-                ever_true, ever_false, ever_unknown = _evaluate_over_domain(
+                ever_true, ever_false, _ever_unknown = _evaluate_over_domain(
                     ast,
                     predecessors=running_preds or predecessors,
                     rc_domain=rc_domain,
@@ -200,10 +200,6 @@ def compute_feasible_paths(
                     for step in iter_execution_steps(item.else_steps):
                         if step.name:
                             report.always_skipped.append(step.name)
-                # Suppress lint for the intentionally unused name — retained
-                # in the tuple for forward-compat with callers that want to
-                # distinguish "we don't know" from "concretely satisfiable".
-                _ = ever_unknown
 
                 # Look for duplicate IF signatures across siblings.
                 if item.condition in enclosing_condition_signatures:

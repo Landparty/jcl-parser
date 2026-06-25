@@ -160,6 +160,22 @@ class TestSymbolicParameterSubstitution:
             job.explode(strict_symbols=True)
         assert "UNDEFINED" in str(exc.value)
 
+    def test_undefined_symbol_strict_inside_proc(self):
+        """Strict mode must also reach undefined symbols inside PROC bodies."""
+        jcl = """
+//TESTJOB  JOB (ACCT),'TEST',CLASS=A
+//MYPROC   PROC
+//PSTEP    EXEC PGM=IEFBR14
+//DD1      DD DSN=&UNDEFINED,DISP=SHR
+//         PEND
+//STEP1    EXEC MYPROC
+//"""
+        job = parse_jcl(jcl, strict_mode=False)
+
+        with pytest.raises(UndefinedSymbolError) as exc:
+            job.explode(strict_symbols=True)
+        assert "UNDEFINED" in str(exc.value)
+
     def test_symbol_resolution_fixture(self, fixtures_dir):
         """Test complex symbol resolution from fixture file"""
         jcl_file = fixtures_dir / "symbol_resolution.jcl"

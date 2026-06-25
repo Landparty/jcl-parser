@@ -21,6 +21,7 @@ DB2_PROGRAMS: frozenset[str] = frozenset(
         "DSNTEP4",  # DB2 batch SQL processor (extended)
         "DSNTIAD",  # DB2 interactive SQL
         "IKJEFT01",  # TSO batch - commonly used to run DB2 commands
+        "IKJEFT1A",  # TSO batch (alias)
         "IKJEFT1B",  # TSO batch (alias)
         "DSNUPROC",  # DB2 utility driver
         "DSNUTILB",  # DB2 utility (batch)
@@ -59,7 +60,7 @@ _SQL_STATEMENT_PATTERNS: list[tuple[str, str]] = [
 # (whitespace-stripped) line.  Word-boundary after the keyword prevents
 # matching identifiers that merely *start* with a SQL keyword.
 _SQL_KW_RE = re.compile(
-    r"^\s*(?:" + "|".join(re.escape(kw) for kw, _ in _SQL_STATEMENT_PATTERNS) + r")\b",
+    r"^\s*(" + "|".join(re.escape(kw) for kw, _ in _SQL_STATEMENT_PATTERNS) + r")\b",
     re.IGNORECASE,
 )
 
@@ -115,15 +116,10 @@ def detect_sql_in_text(text: str) -> list[tuple[str, str]]:
         line = raw_line.strip()
         if not line or line.startswith("--"):
             continue
-        if _SQL_KW_RE.match(line):
-            # Determine which keyword matched.
-            upper = line.upper()
-            for kw, cat in _SQL_STATEMENT_PATTERNS:
-                if upper.startswith(kw) and (
-                    len(upper) == len(kw) or not upper[len(kw)].isalpha()
-                ):
-                    results.append((kw, cat))
-                    break
+        match = _SQL_KW_RE.match(line)
+        if match:
+            keyword = match.group(1).upper()
+            results.append((keyword, _KW_CATEGORY[keyword]))
     return results
 
 

@@ -25,22 +25,6 @@ class ParameterNode:
 
 
 @dataclass
-class SimpleParameter(ParameterNode):
-    """Simple key=value parameter."""
-
-    key: str = ""
-    value: str = ""
-
-
-@dataclass
-class ListParameter(ParameterNode):
-    """List parameter: KEY=(val1,val2,val3)."""
-
-    key: str = ""
-    values: list[str] = field(default_factory=list)
-
-
-@dataclass
 class NestedParameter(ParameterNode):
     """Nested parameter: KEY=(SUB1=val1,SUB2=val2)."""
 

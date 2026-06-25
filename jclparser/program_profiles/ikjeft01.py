@@ -12,8 +12,7 @@ from __future__ import annotations
 import re
 
 from .base import ProgramProfile, ProgramAnalysis
-from ._invoked import extract_invoked_programs
-from ..sql_detector import detect_sql_in_text
+from ._invoked import collect_control_text, invoked_and_sql_notes
 
 _RE_DSN = re.compile(r"\bDSN\s+SYSTEM\s*\(\s*([A-Z0-9]+)\s*\)", re.IGNORECASE)
 _RE_BIND = re.compile(r"\bBIND\s+(?:PACKAGE|PLAN)\b", re.IGNORECASE)
@@ -23,31 +22,19 @@ class IKJEFT01Profile(ProgramProfile):
     program_names = frozenset({"IKJEFT01", "IKJEFT1A", "IKJEFT1B"})
 
     def analyze(self, step) -> ProgramAnalysis:
+        combined = collect_control_text(step)
+
         notes: list[str] = []
-        texts: list[str] = []
-
-        for dd_name in ("SYSTSIN", "SYSIN"):
-            dd = step.get_dd(dd_name)
-            if dd and dd.inline_data:
-                texts.append(dd.inline_data)
-
-        combined = "\n".join(texts)
-
         for m in _RE_DSN.finditer(combined):
             notes.append(f"DSN SYSTEM({m.group(1).upper()})")
         if _RE_BIND.search(combined):
             notes.append("BIND PACKAGE/PLAN")
 
         # Application programs invoked from the control stream (RUN PROGRAM /
-        # CALL) — the real targets hidden behind the IKJEFT01 wrapper.
-        invoked = extract_invoked_programs(combined)
-        for prog in invoked:
-            notes.append(f"{prog.via}({prog.name})")
-
-        sql_hits = detect_sql_in_text(combined) if combined else []
-        if sql_hits:
-            categories = sorted({cat for _, cat in sql_hits})
-            notes.append(f"embedded SQL: {', '.join(categories)}")
+        # CALL) — the real targets hidden behind the IKJEFT01 wrapper — plus any
+        # embedded SQL recovered from the same control text.
+        invoked, control_notes = invoked_and_sql_notes(combined)
+        notes.extend(control_notes)
 
         summary = (
             f"{step.program}: {len(notes)} TSO/DSN commands"

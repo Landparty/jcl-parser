@@ -192,11 +192,14 @@ class TestCLIVersion:
     """Test --version flag."""
 
     def test_version(self, capsys):
+        from jclparser import __version__
+
         with pytest.raises(SystemExit) as exc_info:
             main(["--version"])
         assert exc_info.value.code == 0
         out = capsys.readouterr().out
-        assert "1.0.0" in out
+        # Assert against the actual package version so the test survives bumps.
+        assert __version__ in out
 
 
 @pytest.mark.unit

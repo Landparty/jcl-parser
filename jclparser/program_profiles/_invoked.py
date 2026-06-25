@@ -16,6 +16,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ..sql_detector import detect_sql_in_text
+
 # DSN subcommand: RUN PROGRAM(PROGA) PLAN(PLANA) ...
 _RE_RUN_PROGRAM = re.compile(
     r"\bRUN\s+PROGRAM\s*\(\s*([A-Za-z0-9@#$]+)\s*\)", re.IGNORECASE
@@ -107,4 +109,35 @@ def extract_invoked_programs(text: str | None) -> list[InvokedProgram]:
     return found
 
 
-__all__ = ["InvokedProgram", "extract_invoked_programs"]
+def collect_control_text(step) -> str:
+    """Join the SYSTSIN/SYSIN in-stream data of a TSO/DB2 driver *step*."""
+    texts: list[str] = []
+    for dd_name in ("SYSTSIN", "SYSIN"):
+        dd = step.get_dd(dd_name)
+        if dd and dd.inline_data:
+            texts.append(dd.inline_data)
+    return "\n".join(texts)
+
+
+def invoked_and_sql_notes(combined: str) -> tuple[list[InvokedProgram], list[str]]:
+    """Recover invoked programs and embedded SQL from *combined* control text.
+
+    Returns ``(invoked_programs, notes)`` where *notes* lists each invoked
+    program (``VIA(NAME)``) followed by a single embedded-SQL summary line when
+    SQL is present.
+    """
+    invoked = extract_invoked_programs(combined)
+    notes = [f"{prog.via}({prog.name})" for prog in invoked]
+    sql_hits = detect_sql_in_text(combined) if combined else []
+    if sql_hits:
+        categories = sorted({cat for _, cat in sql_hits})
+        notes.append(f"embedded SQL: {', '.join(categories)}")
+    return invoked, notes
+
+
+__all__ = [
+    "InvokedProgram",
+    "extract_invoked_programs",
+    "collect_control_text",
+    "invoked_and_sql_notes",
+]

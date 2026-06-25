@@ -287,17 +287,3 @@ class ContinuationLineHandler:
         )
 
         return ctx
-
-
-def merge_continuation_lines(lines: List[str]) -> List[Tuple[str, int]]:
-    """
-    Convenience function to merge continuation lines.
-
-    Args:
-        lines: List of JCL lines
-
-    Returns:
-        List of (merged_line, line_number) tuples
-    """
-    handler = ContinuationLineHandler()
-    return handler.merge_continuation_lines(lines)
