@@ -12,11 +12,11 @@ from __future__ import annotations
 import re
 
 from .base import ProgramProfile, ProgramAnalysis
+from ._invoked import extract_invoked_programs
 from ..sql_detector import detect_sql_in_text
 
 _RE_DSN = re.compile(r"\bDSN\s+SYSTEM\s*\(\s*([A-Z0-9]+)\s*\)", re.IGNORECASE)
 _RE_BIND = re.compile(r"\bBIND\s+(?:PACKAGE|PLAN)\b", re.IGNORECASE)
-_RE_RUN_PROG = re.compile(r"\bRUN\s+PROGRAM\s*\(\s*([A-Z0-9]+)\s*\)", re.IGNORECASE)
 
 
 class IKJEFT01Profile(ProgramProfile):
@@ -37,8 +37,12 @@ class IKJEFT01Profile(ProgramProfile):
             notes.append(f"DSN SYSTEM({m.group(1).upper()})")
         if _RE_BIND.search(combined):
             notes.append("BIND PACKAGE/PLAN")
-        for m in _RE_RUN_PROG.finditer(combined):
-            notes.append(f"RUN PROGRAM({m.group(1).upper()})")
+
+        # Application programs invoked from the control stream (RUN PROGRAM /
+        # CALL) — the real targets hidden behind the IKJEFT01 wrapper.
+        invoked = extract_invoked_programs(combined)
+        for prog in invoked:
+            notes.append(f"{prog.via}({prog.name})")
 
         sql_hits = detect_sql_in_text(combined) if combined else []
         if sql_hits:
@@ -57,4 +61,5 @@ class IKJEFT01Profile(ProgramProfile):
             dataset_events=[],
             notes=notes,
             raw_control=combined or None,
+            invoked_programs=[p.name for p in invoked],
         )
