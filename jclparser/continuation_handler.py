@@ -6,7 +6,10 @@ Handles complex multi-line statements with proper context awareness.
 
 from typing import ClassVar, List, Optional, Set, Tuple
 from dataclasses import dataclass
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -201,6 +204,14 @@ class ContinuationLineHandler:
                 else:
                     # Not a continuation, stop merging
                     break
+
+            continued = j - i - 1
+            if continued:
+                logger.debug(
+                    "merged %d continuation line(s) into statement at line %d",
+                    continued,
+                    original_line_num,
+                )
 
             merged.append((merged_line, original_line_num))
             i = j

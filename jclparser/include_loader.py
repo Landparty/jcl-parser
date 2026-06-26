@@ -22,11 +22,14 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from .utils import _read_file_with_fallback, is_within_directory
+
+logger = logging.getLogger(__name__)
 
 
 class IncludeMemberLoader(ABC):
@@ -202,6 +205,7 @@ def resolve_includes(
             if member_content is not None:
                 if _collected is not None:
                     _collected.append(member)
+                logger.debug("resolved INCLUDE member %r (depth %d)", member, _depth)
                 expanded = resolve_includes(
                     member_content,
                     loader=loader,
@@ -216,6 +220,9 @@ def resolve_includes(
                 result.append(expanded)
                 continue
             # Member not found — leave the INCLUDE line intact
+            logger.debug(
+                "INCLUDE member %r not found; leaving statement intact", member
+            )
         result.append(line)
 
     return "".join(result)

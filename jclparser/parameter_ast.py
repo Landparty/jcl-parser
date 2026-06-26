@@ -6,8 +6,11 @@ Provides structured representation of complex parameters like DCB, SPACE, etc.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 # Module-level frozensets for DCB/SPACE validation (avoids per-call list construction)
 _VALID_RECFM = frozenset(
@@ -230,6 +233,11 @@ class ParameterParser:
                 key, value = part.split("=", 1)
                 subparams[key.strip().upper()] = value.strip()
 
+        logger.debug(
+            "parsed DCB at line %d into %d subparameter(s)",
+            line_number,
+            len(subparams),
+        )
         return DCBParameter(
             key="DCB",
             raw_value=dcb_string,
@@ -280,6 +288,11 @@ class ParameterParser:
             option = parts[i].strip().upper()
             subparams[option] = True
 
+        logger.debug(
+            "parsed SPACE at line %d into %d subparameter(s)",
+            line_number,
+            len(subparams),
+        )
         return SPACEParameter(
             key="SPACE",
             raw_value=space_string,

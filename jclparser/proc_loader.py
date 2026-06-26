@@ -303,8 +303,16 @@ class CompositeProcedureLoader(ProcedureLoader):
             proc = loader.load_procedure(name, lib_list)
             if proc is not None:
                 self._cache[cache_key] = proc  # only cache successes
+                logger.debug(
+                    "resolved procedure %r via %s",
+                    name,
+                    type(loader).__name__,
+                )
                 return proc
 
+        logger.debug(
+            "procedure %r not found in any loader (libraries=%s)", name, lib_list
+        )
         return None  # not found — do NOT cache so retries can succeed
 
     def has_procedure(self, name: str, libraries: Sequence[str] | None = None) -> bool:

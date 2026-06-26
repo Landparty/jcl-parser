@@ -74,9 +74,15 @@ resolution, and validation. The CLI is intentionally out of scope.
 
 ### 3. Validation
 
-**`validators.py` / `parameter_validators.py`**
-- DEBUG: which job/step/DD is being validated and which checks fired; DEBUG count
-  of findings. No INFO (validation output is itself diagnostic).
+**`validators.py`**
+- DEBUG: which job is being validated (`validate_job_structure` entry) and a
+  count of findings on exit. No INFO (validation output is itself diagnostic).
+
+**`parameter_validators.py`** — *intentionally not logged.* Its only entry points
+are per-parameter `validate` classmethods (DISP, dataset name) invoked in the hot
+path. Per the "terse, guarded" decision, adding DEBUG there would flood the log
+without adding signal beyond the `validators.py` validation-level trace, so it is
+left quiet.
 
 ## Out of scope
 

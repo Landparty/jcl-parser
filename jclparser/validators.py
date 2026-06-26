@@ -5,11 +5,14 @@ Contains validation logic for JCL syntax rules, semantic constraints,
 and data integrity checks for parsed JCL structures.
 """
 
+import logging
 import re
 from typing import List, Set, Dict
 from .model import Job, Step, DDStatement, iter_execution_steps
 from .errors import ValidationError, ErrorType, ErrorSeverity
 from .parameter_validators import DatasetNameValidator, DISPValidator
+
+logger = logging.getLogger(__name__)
 
 # Precompiled regex patterns for performance
 _RE_JCL_ID_VALID = re.compile(r"^[A-Za-z@#$][A-Za-z0-9@#$]*$")
@@ -65,6 +68,8 @@ def validate_job_structure(job: Job) -> List[ValidationError]:
     """
     errors = []
 
+    logger.debug("validating structure of job %s", job.name or "(unnamed)")
+
     # Job name validation
     if not validate_jcl_identifier(job.name):
         errors.append(
@@ -113,6 +118,11 @@ def validate_job_structure(job: Job) -> List[ValidationError]:
     # Validate OUTPUT=*.name back-references (populated by parse_jcl).
     errors.extend(validate_output_references(job))
 
+    logger.debug(
+        "validation of job %s produced %d finding(s)",
+        job.name or "(unnamed)",
+        len(errors),
+    )
     return errors
 
 

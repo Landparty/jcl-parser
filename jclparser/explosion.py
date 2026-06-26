@@ -5,6 +5,7 @@ Implements symbolic parameter substitution and procedure expansion with
 support for nested procedures, circular dependency detection, and audit logging.
 """
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
@@ -21,6 +22,8 @@ from .errors import (
 )
 from .proc_loader import ProcedureLoader, create_default_loader
 from .system_symbols import SystemSymbolProvider, get_default_provider
+
+logger = logging.getLogger(__name__)
 
 
 # Single-pass pattern: matches && (escaped ampersand) OR &SYMBOL with optional trailing period
@@ -206,6 +209,7 @@ def _make_replacer(
             if strict:
                 raise UndefinedSymbolError(symbol_name, source_text=source_text)
             return ""
+        logger.debug("resolved &%s -> %s", symbol_name, value)
         return value
 
     return _replacer
@@ -601,6 +605,13 @@ def explode_job(
         exploded_job.explosion_audit = explosion_audit
     exploded_job.explosion_map = explosion_map
 
+    logger.info(
+        "exploded job %s: %d steps expanded from %d PROC invocation(s)",
+        exploded_job.name or "(unnamed)",
+        len(exploded_steps),
+        len(explosion_map),
+    )
+
     return exploded_job
 
 
@@ -643,13 +654,27 @@ def _explode_step(
 
     # Check depth limit
     if depth > max_depth:
+        logger.debug(
+            "explosion depth limit exceeded: depth %d > max %d (chain=%s)",
+            depth,
+            max_depth,
+            call_chain,
+        )
         raise ExplosionDepthError(depth, max_depth, call_chain)
 
     proc_name = step.procedure
     if not proc_name:
         return [step]
 
+    logger.debug("expanding PROC %s at depth %d", proc_name, depth)
+
     # Check for circular references (O(1) with frozenset)
+    if proc_name.upper() in call_chain_upper:
+        logger.debug(
+            "circular PROC reference detected: %s already in chain %s",
+            proc_name,
+            call_chain,
+        )
     detect_circular_refs(proc_name, call_chain, call_chain_upper)
 
     # Load procedure definition. The same JCLLIB ORDER is threaded through every

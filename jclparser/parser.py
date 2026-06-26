@@ -8,6 +8,7 @@ and plugin extensibility.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Any, IO, Literal, TYPE_CHECKING, overload
@@ -41,6 +42,8 @@ from .profiling import ProfilerContext, ProfilingResult
 
 if TYPE_CHECKING:
     from .include_loader import IncludeMemberLoader
+
+logger = logging.getLogger(__name__)
 
 _SET_SYMBOL_PATTERN = re.compile(r"&&|&([A-Z0-9@#$]+)\.?")
 
@@ -143,6 +146,11 @@ def _parse_jcl_core(
             loader=include_loader,
             libraries=jcllib_libs,
             _collected=_expanded_includes,
+        )
+        logger.debug(
+            "expanded %d INCLUDE member(s) before parse: %s",
+            len(_expanded_includes),
+            _expanded_includes,
         )
 
     # Parse the content
@@ -368,6 +376,11 @@ def _parse_jcl_core(
                 )
                 is_star_dd = bool(current_dd.parameters.get("*") or has_star_pos)
                 if current_dd and (is_star_dd or "DATA" in current_dd.parameters):
+                    logger.debug(
+                        "inline-data block started at DD %s (line %d)",
+                        current_dd.name or "(unnamed)",
+                        line_num,
+                    )
                     in_inline_data = True
                     inline_data_lines = []
                     has_dlm = "DLM" in current_dd.parameters
@@ -526,7 +539,11 @@ def _parse_jcl_core(
             elif stmt.type == "UNKNOWN":
                 # Unknown statement type - log but continue processing
                 # Could add to job.warnings list if we create one
-                pass
+                logger.debug(
+                    "unknown statement type %r at line %d; ignoring",
+                    stmt.parameters.get("_statement_type", ""),
+                    line_num,
+                )
 
             elif stmt.type == "XMIT":
                 # XMIT statement - similar to DD but for data transmission
@@ -562,6 +579,7 @@ def _parse_jcl_core(
 
     # Create and attach procedure loader for external PROC loading
     if enable_external_procs and job.jcllib_order:
+        logger.debug("loading external PROCs via JCLLIB order: %s", job.jcllib_order)
         from .proc_loader import create_default_loader
 
         proc_loader = create_default_loader(
@@ -653,6 +671,10 @@ def _parse_jcl_core(
     # We fix those here by iteratively pre-resolving the symbol table until it
     # stabilises (up to 10 passes, which also bounds any accidental cycle).
     if job.set_statements:
+        logger.debug(
+            "resolving %d SET symbol(s) across DD statements",
+            len(job.set_statements),
+        )
         from .explosion import (  # noqa: PLC0415
             substitute_dd_statement,
             substitute_symbols,
@@ -698,6 +720,7 @@ def _parse_jcl_core(
     # are fatal — WARNING/INFO findings (e.g. unresolved OUTPUT back-references,
     # forward dataset references) are advisory and must not break strict parsing.
     if strict_mode:
+        logger.debug("running strict-mode validation for job %s", job.name)
         validation_errors = job.validate()
         fatal = [
             err for err in validation_errors if err.severity == ErrorSeverity.ERROR
@@ -713,6 +736,25 @@ def _parse_jcl_core(
         for result in detect_sql_in_job(job):
             if result.step_name:
                 job.sql_detections[result.step_name] = result
+
+    if logger.isEnabledFor(logging.INFO):
+        from .model import iter_execution_steps
+
+        step_count = sum(1 for _ in iter_execution_steps(job.steps))
+        dd_count = len(job.get_dd_statements())
+        if job.name:
+            logger.info(
+                "parsed job %s: %d steps, %d DD statements",
+                job.name,
+                step_count,
+                dd_count,
+            )
+        else:
+            logger.info(
+                "parsed PROC-only file: %d procedures, %d DD statements",
+                len(job.procedures),
+                dd_count,
+            )
 
     return job
 
@@ -1238,6 +1280,7 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> dict[str, Any]
                 value = value[1:-1].replace("''", "'")
             parameters[f"{POSITIONAL_PARAM_PREFIX}{i}"] = value
 
+    logger.debug("parsed %d parameter(s) at line %d", len(parameters), line_number)
     return parameters
 
 
