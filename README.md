@@ -50,7 +50,7 @@ cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser/
 
 ## Documentation
 
-Full reference: [`docs/okf/index.md`](docs/okf/index.md)
+Full reference: [`docs/index.md`](docs/index.md)
 
 ## License
 

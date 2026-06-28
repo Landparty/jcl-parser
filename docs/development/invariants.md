@@ -1,0 +1,95 @@
+---
+title: Key Invariants
+updated: 2026-06-27
+sources: LegacyLens team, 2026-06-27
+---
+
+# Key Invariants
+
+14 non-obvious behaviors that bite contributors. Read before touching any parsing code.
+
+---
+
+**1. Column 71 is the continuation column.**
+JCL content occupies columns 1–71. Column 72 is sometimes a sequence number. `ContinuationLineHandler` enforces this — it merges multi-line statements before any parsing occurs. **Never pass pre-stripped lines** to `parse_jcl()`; doing so breaks continuation detection.
+
+---
+
+**2. `ConditionalBlock.condition` (raw string) is authoritative.**
+The raw `condition` string is always present. `condition_ast` (parsed AST) may be `None` if `parse_condition()` returned `None` for an unparseable expression. Always read `condition` for display and logging; use `condition_ast` only when you need to traverse the AST.
+
+---
+
+**3. Inline PROCs always win.**
+Even if a PROC with the same name exists in an external PROCLIB or in the builtin templates, the inline definition (from `PROC…PEND` within the same JCL) takes precedence. No override is possible.
+
+---
+
+**4. `&&` is an escaped ampersand in JCL.**
+Symbol substitution replaces `&NAME` → value and `&&` → literal `&`. Handled in `explosion.py:_SYMBOL_SUB_PATTERN`. Do not mistake `&&TEMP` in a DSN for double-substitution — the leading `&&` signals a temporary dataset, not an escaped ampersand.
+
+---
+
+**5. Dataset names are case-insensitive on z/OS but stored as-is.**
+Validation checks length (max 44 chars total, max 8 chars per qualifier) and charset, but does not uppercase. String comparisons against DSN values must account for this.
+
+---
+
+**6. `parse_jcl()` does not expand PROCs.**
+PROC invocations remain as `Step(exec_type="PROC")` objects. Call `explode_job()` separately when you need expansion. This is intentional — parsing and expansion are independent operations.
+
+---
+
+**7. `validate_jcl()` returns `(Job, list)`, not a boolean.**
+```python
+job, errors = validate_jcl(source)   # always unpack both values
+```
+Check `result.errors` for `ErrorSeverity.ERROR` items to determine hard failure. Warnings and INFO entries are also in the list.
+
+---
+
+**8. `//` comment lines are preserved.**
+Comment lines appear as `Statement(type="COMMENT")` objects in `job.statements`. They are not stripped during parsing. Code that iterates `job.statements` must handle comments.
+
+---
+
+**9. JES control statements are parsed separately.**
+`/*JOBPARM`, `/*ROUTE`, `/*XMIT`, etc. are handled in `jes_statements.py` via `parse_jes_control()`. They are **not** in `job.steps` and are **not** part of the main `Job` model. Access them through the JES API if needed.
+
+---
+
+**10. SET symbols resolve left-to-right.**
+A `SET` statement can reference an earlier SET symbol but not a later one, mirroring mainframe evaluation order. Code that synthesizes JCL with multiple SET statements must order them accordingly.
+
+---
+
+**11. Vendoring is always manual.**
+Changes to `jclparser/` are **not** automatically propagated to `backend/_vendor/jcl-parser/`. You must run:
+```bash
+cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser/
+```
+Forgetting this step means the backend runs on stale library code.
+
+---
+
+**12. `--version` reads from `jclparser.__version__`.**
+The CLI reads the version string from `jclparser/__init__.py:__version__`, not from package metadata. When releasing, update **both** `__init__.py` and `pyproject.toml:version` together.
+
+---
+
+**13. Coverage must not drop below 90%.**
+Every `pytest` run enforces `--cov-fail-under=90`. If you add a new module, add tests alongside it in the same commit. The CI will fail otherwise.
+
+---
+
+**14. `builtin_procs.py` contains non-verbatim templates.**
+The built-in IBM utility PROC templates (IMS, DB2, COBOL) are **structural approximations**, not exact copies of the IBM-supplied PROCs. They are sufficient for static analysis and PROC expansion in tests, but must not be submitted to a real mainframe.
+
+---
+
+## See Also
+
+- [../core/parsing-pipeline.md](../core/parsing-pipeline.md) — pipeline overview
+- [../advanced/proc-expansion.md](../advanced/proc-expansion.md) — invariants 3, 4, 6
+- [../advanced/validation.md](../advanced/validation.md) — invariants 7, 8
+- [development-workflow.md](development-workflow.md) — invariants 11, 12, 13
