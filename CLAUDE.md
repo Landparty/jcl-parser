@@ -2,16 +2,20 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **OKF hooks:** Run `git config core.hooksPath .githooks` once after cloning to enable the pre-commit staleness check. A Claude Code `PostToolUse` hook also fires inline on Edit/Write. See `.claude/settings.json`.
+>
+> **Quick navigation:** [`docs/okf/index.md`](docs/okf/index.md) — section map and most-common task → file lookup.
+> **Full reference:** module inventory, parsing pipeline, API tiers, PROC loader chain, 14 invariants, and task → file lookup: [`docs/OKF.md`](docs/OKF.md). Load that file at the start of any non-trivial session.
+
 ## Project Overview
 
 **jclparser** is a pure Python library for parsing IBM z/OS JCL (Job Control Language). It builds a structured model of Jobs, Steps, and DD statements; validates JCL syntax and structure; expands PROCs (both inline and external); detects file type heuristically; and provides analysis tools for datasets, SQL usage, metrics, linting, and RC feasibility. No runtime dependencies.
 
 ## Backend Integration
 
-This library is **vendored** into `backend/_vendor/jcl-parser/` — it is not installed from PyPI. Changes to this standalone repo must be manually copied before they reach the backend:
-```bash
-cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser/
-```
+This library is **vendored** into `backend/_vendor/jcl-parser/` — it is not installed from PyPI. Changes to this standalone repo must be manually copied before they reach the backend.
+
+**Interface contract:** [`interface-contract.md`](interface-contract.md) — documents exactly which functions/classes the backend adapter calls, what attributes it reads off the `Job`/`Step`/`DD` objects, and what the `program_structure` dict it produces looks like. Read this before changing public API shapes.
 
 ## Commands
 
@@ -19,7 +23,7 @@ cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser/
 # Install for development
 pip install -e .[dev]
 
-# Run all tests (coverage on by default via pyproject.toml [tool.pytest.ini_options])
+# Run all tests (coverage enforced at 90% minimum)
 pytest
 
 # Run a single test file
@@ -38,92 +42,90 @@ pytest -m performance
 ruff check .
 ruff format .
 mypy jclparser/   # strict mode — currently reports known violations (typing cleanup WIP)
+
+# Vendor sync — run after any change to jclparser/
+cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser/
 ```
 
-Coverage is enforced at 90% minimum (configured in `pyproject.toml` under `[tool.coverage.report]`). Tests always generate HTML coverage to `htmlcov/` and XML to `coverage.xml`.
+Coverage always generates HTML to `htmlcov/` and XML to `coverage.xml`.
 
 ## Architecture
 
-The package is `jclparser/` — a pure Python library with no runtime dependencies. Supports Python 3.10+.
+The package is `jclparser/` — pure Python, no runtime dependencies. Supports Python 3.10+.
 
 ### Parsing pipeline
 
-1. **`parser.py`** — The core. `parse_jcl()` is the main entry point. Handles continuation lines by delegating to `continuation_handler.py`, then builds the AST of `Statement` objects. Also exposes `validate_jcl()` and `parse_statement()`.
+```
+Input (string / file / IO)
+  → read_source()                          utils.py
+  → ContinuationLineHandler.process()      continuation_handler.py  [merges column-71 continuations]
+  → resolve_includes()                     include_loader.py         [optional: expand // INCLUDE]
+  → parse_jcl() core loop                  parser.py                 [JOB/EXEC/DD/SET/IF/PROC/OUTPUT]
+  → ParameterParser                        parameter_ast.py          [typed param AST per statement]
+  → validate_jcl() checks                  validators.py             [optional: structural rules]
+  → explode_job()                          explosion.py              [optional: expand PROCs + &SYMBOLS]
+  → Job object
+```
 
-2. **`continuation_handler.py`** — Merges multi-line JCL statements before parsing. JCL uses `//` continuation lines with column-71 breaks.
+See **OKF §3** for the full step-by-step data flow, **OKF §4** for all API tier tables, **OKF §6** for PROC loader chain, and **OKF §12** for common task → file lookup.
 
-3. **`model.py`** — Data model: `Job`, `Step`, `DDStatement`, `Parameter`, `Statement`, `OutputStatement`, `ConditionalBlock`, `Procedure`. These are the objects returned from parsing.
+### Key modules
 
-4. **`parameter_ast.py`** — Parses JCL parameter strings into a typed AST (handles nested parentheses, positional vs. keyword params, `DCB`, `SPACE`, etc.).
+| Module | Role |
+|--------|------|
+| `parser.py` | Core — `parse_jcl()`, `validate_jcl()`, `parse_statement()` |
+| `model.py` | Data model — `Job`, `Step`, `DDStatement`, `ConditionalBlock`, `Procedure` |
+| `explosion.py` | PROC expansion — `explode_job()`, `SymbolScope` |
+| `proc_loader.py` | External PROC loading — `create_default_loader()`, loader chain |
+| `continuation_handler.py` | Merges multi-line JCL statements (column-71 breaks) |
+| `parameter_ast.py` | Typed parameter string AST (DCB, SPACE, nested parens) |
+| `validators.py` / `parameter_validators.py` | Structural + parameter validation rules |
+| `condition_parser.py` | `// IF` condition → typed AST |
+| `errors.py` | Exception hierarchy |
+| `lint/` | Lint rules + SARIF output |
+| `plugins/` | `StatementPlugin`, `ValidationPlugin`, `PluginRegistry` |
+| `program_profiles/` | Known z/OS program analysis (SORT, IEBGENER, IDCAMS, …) |
+| `cli.py` | `jcl-parser` CLI — `steps`, `procs`, `detect`, `metrics`, `lint`, `datasets`, `sql`, `analyze`, `paths` |
+| `builtin_procs.py` | Last-resort IBM utility PROC templates (IMS, DB2, COBOL) |
 
-5. **`parameter_validators.py`** — Validates structured parameter objects (e.g., DCB field combinations, SPACE unit types, TIME, REGION, MSGLEVEL, RECFM, etc.).
+Full inventory with line counts: **OKF §2**.
 
-6. **`validators.py`** — Higher-level validation: identifier naming rules, dataset name rules, job/step/DD structure validation.
+### Public API tiers
 
-7. **`explosion.py`** — PROC expansion (`explode_job()`). Resolves inline PROCs and substitutes symbolic parameters (`&SYMBOL`). Tracks expansion depth to detect circular references. Exposes `SymbolScope`.
+- **Tier 1 (stable):** `parse_jcl`, `validate_jcl`, `parse_statement`, `parse`, core model classes, core error types.
+- **Tier 2 (advanced):** `explode_job`, loader classes, `detect_file_type`, `parse_condition`, SQL detection, lint/metrics/RC-analysis APIs, plugin system.
+- **Tier 3 (internal):** `MockSystemSymbolProvider`, individual loader types, `FunctionProfile`/`ProfilingResult`.
 
-8. **`proc_loader.py`** — Loads external PROCs from the filesystem. Supports `JCLLIB ORDER` statements. Loaders: `InlineProcedureLoader`, `JCLLIBProcedureLoader`, `DictProcedureLoader`, `CompositeProcedureLoader`. `create_default_loader()` wires the chain in precedence order — inline → JCLLIB → bundled utility templates (`builtin_procs.py`, see #26) as a last-resort fallback; toggle the fallback with `include_builtins`.
-
-9. **`include_loader.py`** — Loads `// INCLUDE MEMBER=name` members from JCLLIB. Mirrors PROC loader conventions. Exposes `IncludeMemberLoader`, `DictMemberLoader`, `JCLLIBMemberLoader`, and `resolve_includes()`.
-
-10. **`system_symbols.py`** — Provides JCL system symbols (`&SYSUID`, `&SYSDATE`, etc.). Pluggable via `SystemSymbolProvider` base class; `MockSystemSymbolProvider` is used in tests.
-
-11. **`jcl_file_type.py`** — Heuristic detection of whether a file is JCL, a PROC, or neither (`detect_file_type()`, `detect_file_type_from_content()`, `is_jcl_file()`, `is_proc_file()`).
-
-12. **`condition_parser.py`** — Parses `// IF condition THEN` expressions into an AST (`parse_condition()`). Supports `AND`/`OR`/`NOT`, step RC comparisons, `ABEND`, and `RUN` atoms. Returns `None` for unparseable conditions; the raw string on `ConditionalBlock.condition` remains authoritative.
-
-13. **`sql_detector.py`** — Detects SQL/DB2 program usage in steps and DD statements (`detect_sql_in_step`, `detect_sql_in_job`, `detect_sql_in_dd`, `detect_sql_in_text`, `is_db2_program`, `DB2_PROGRAMS`).
-
-14. **`jes_statements.py`** — Typed JES2/JES3 control statement models. Promotes common `/*COMMAND` statements to dataclasses with parsed fields (`JobParmStatement`, `RouteStatement`, `XmitStatement`, etc.). Exposes `parse_jes_control()`.
-
-15. **`dataset_lifecycle.py`** — Cross-step dataset lifecycle analysis. Tracks how datasets are created, opened, and disposed across all steps. Detects duplicate creation, forward references, and uncatalog-before-use. Exposes `DatasetEvent`, `analyze_dataset_lifecycle()`, `validate_dataset_lifecycle()`.
-
-16. **`metrics.py`** — Structural job metrics: step counts, PROC usage, conditional nesting depth, dataset fan-in/fan-out, and a lightweight cyclomatic-style score. Exposes `JobMetrics`, `compute_metrics()`.
-
-17. **`rc_analysis.py`** — Return-code feasibility analysis. Walks the job in execution order and determines whether IF-guarded or COND-guarded steps are reachable under any combination of predecessor RCs from a symbolic domain. Exposes `FeasibilityReport`, `compute_feasible_paths()`, `DEFAULT_RC_DOMAIN`.
-
-18. **`program_profiles/`** — Program profile analysis. Maps known z/OS programs (SORT, IEBGENER, IEFBR14, IDCAMS, IKJEFT01, IMS DFSRRC00, etc.) to structured profiles describing their purpose and DD requirements. Exposes `ProgramProfile`, `ProgramAnalysis`, `analyze_step()`, `analyze_job()`, `register_profile()`.
-
-19. **`lint/`** — Linting rules for JCL best practices. Rules are registered via `register_lint_rule()`. Exposes `LintRule`, `LintConfig`, `lint_job()`, `lint_to_sarif()`.
-
-20. **`plugins/`** — Extension points: `StatementPlugin` (custom statement parsing), `ValidationPlugin` (custom validation rules), `PluginRegistry`, `ParserConfig`, `ValidationLevel`. Get the global registry via `get_plugin_registry()`.
-
-21. **`errors.py`** — Exception hierarchy: `JCLSyntaxError`, `JCLValidationError`, `JCLStructureError`, plus `UndefinedSymbolError`, `CircularProcedureError`, `ExplosionDepthError`, `ProcedureNotFoundError`. Also `ParseError`, `ValidationError`, `ErrorType`, `ErrorSeverity`.
-
-22. **`utils.py`** — Internal parsing helpers (column splitting, identifier extraction, file reading with encoding fallback, etc.).
-
-23. **`profiling.py`** — Parse profiling support. Used by the CLI `--profile` flag. Exposes `FunctionProfile`, `ProfilingResult`, `ProfilerContext`.
-
-24. **`cli.py`** — CLI entry point (`jcl-parser` command). Subcommands: `steps`, `procs`, `detect`, `metrics`, `lint`, `datasets`, `sql`, `analyze`, `paths`, plus `--validate`, `--json`, `--explode`, `--proc-path`, `--profile`.
-
-25. **`__main__.py`** — Enables `python -m jclparser` invocation (delegates to `cli.main`).
-
-26. **`builtin_procs.py`** — Bundled, non-verbatim utility-PROC *templates* keyed by well-known IBM-supplied procedure names (IMS: `IMSBATCH`, `DLIBATCH`, `DBBBATCH`, `IMSMSG`, `DFSMPR`; DB2: `DSNUPROC`, `DSNHICOB`; COBOL: `IGYWCL`, `IGYWCLG`, `COBUCL`). Serves as the last-resort fallback in the loader chain so static analysis still resolves common vendor PROCs that aren't shipped alongside the JCL. Inline and site PROCs always override these. Exposes `BUILTIN_UTILITY_PROCS`, `create_builtin_proc_loader()`.
-
-### Public API tiers (from `__init__.py`)
-
-- **Tier 1 (stable)**: `parse_jcl`, `validate_jcl`, `parse_statement`, `parse` (alias), core model classes (`Job`, `Step`, `DDStatement`, `Parameter`, `Statement`, `OutputStatement`), core error types (`JCLSyntaxError`, `JCLValidationError`, `JCLStructureError`, `ParseError`, `ValidationError`, `ErrorType`, `ErrorSeverity`, `ValidationLevel`, `UndefinedSymbolError`, `CircularProcedureError`, `ExplosionDepthError`, `ProcedureNotFoundError`).
-- **Tier 2 (advanced)**: `explode_job`, `SymbolScope`, loader classes, bundled utility-PROC templates (`BUILTIN_UTILITY_PROCS`, `create_builtin_proc_loader`), `ParserConfig`, `validate_*` utilities, `FileType`/`detect_file_type`/`detect_file_type_from_content`, `parse_condition` + condition AST nodes, SQL detection API, INCLUDE resolution, dataset lifecycle, JES statement types, `compute_metrics`/`JobMetrics`, `compute_feasible_paths`/`FeasibilityReport`, program profile analysis, lint API, plugin system.
-- **Tier 3 (internal/backwards-compat)**: `MockSystemSymbolProvider`, individual loader types, `FunctionProfile`/`ProfilingResult` — may be removed in a future major version.
+Full tables: **OKF §4**.
 
 ### External PROC loading
 
-Set `JCL_PROCLIB_PATH` env var or pass `proc_base_path` to `parse_jcl()`. The filesystem layout mirrors mainframe dataset naming: `<base_path>/SYS1.PROCLIB/MYPROC.jcl`. Inline PROCs always take precedence over external ones.
+Set `JCL_PROCLIB_PATH` env var or pass `proc_base_path` to `parse_jcl()`. Layout: `<base_path>/SYS1.PROCLIB/MYPROC.jcl`. Inline PROCs always win; builtins are the last-resort fallback.
+
+## Key Invariants
+
+1. **`parse_jcl()` does not expand PROCs** — call `explode_job()` separately when you need explosion.
+2. **Column 71 is the continuation boundary** — content past col 71 is sequence/ignored; `ContinuationLineHandler` enforces this. Never pass pre-stripped lines.
+3. **`ConditionalBlock.condition` (raw string) is authoritative** — `condition_ast` may be `None` if the expression was unparseable; always use `condition` for display.
+4. **`&&` is an escaped ampersand in JCL** — symbol substitution replaces `&NAME` → value and `&&` → `&`. Handled in `explosion.py`.
+5. **mypy strict is not yet clean** — known violations in `profiling.py`, `explosion.py`, `parser.py`. Add annotations when touching a file; never widen the config.
+6. **Coverage floor is 90%** — every `pytest` run enforces it. Add tests alongside any new module.
+
+Full list (14 invariants): **OKF §11**.
 
 ## Test Structure
 
 ```
 tests/
-  unit/        # Individual component tests (parser API, models, validators, explosion)
-  integration/ # End-to-end JCL parsing with realistic job streams
+  unit/        # ~80 files — individual component tests
+  integration/ # ~15 files — end-to-end JCL parsing with realistic job streams
   benchmarks/  # pytest-benchmark perf tests (excluded from default runs via norecursedirs)
 ```
 
-Markers (enforced via `pyproject.toml`): `unit`, `integration`, `contract`, `performance`, `slow`, `benchmark`. `contract`/`performance` tests are tagged by marker, not housed in their own directories. Coverage minimum: **90%** — enforced on every run.
+Markers (enforced via `pyproject.toml`): `unit`, `integration`, `contract`, `performance`, `slow`, `benchmark`.
 
 ## Code Style
 
-- Python 3.10+ type hints on all new/changed signatures
-- `ruff` for linting + formatting (line-length 88); `black` not used — `ruff format` handles formatting. `ruff check .` is clean.
-- `mypy` strict is the standard (`strict = true` in `pyproject.toml`), but the codebase is **not yet strict-clean** — there's a backlog of known violations (mostly missing annotations and generic type args, plus a few real type issues in `profiling.py`/`explosion.py`/`parser.py`). Run `mypy jclparser/` for the current list. Add the missing types when you touch a file; keep new code fully annotated rather than widening the config.
-- No runtime dependencies; dev tools (pytest, ruff, mypy) live in the `[dev]` extra
+- Python 3.10+ type hints on all new/changed signatures.
+- `ruff` for linting + formatting (line-length 88). `black` is not used — `ruff format` handles formatting.
+- No runtime dependencies; dev tools live in the `[dev]` extra.

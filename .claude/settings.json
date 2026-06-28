@@ -7,6 +7,12 @@
           {
             "type": "command",
             "command": "ruff format \"$CLAUDE_TOOL_INPUT_FILE_PATH\" 2>/dev/null; ruff check --fix --silent \"$CLAUDE_TOOL_INPUT_FILE_PATH\" 2>/dev/null; exit 0"
+          },
+          {
+            "type": "command",
+            "command": "python scripts/okf_staleness_check.py",
+            "timeout": 10,
+            "statusMessage": "Checking OKF freshness..."
           }
         ]
       }
