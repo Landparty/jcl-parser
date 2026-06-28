@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > **Docs hooks:** Run `git config core.hooksPath .githooks` once after cloning to enable the pre-commit staleness check. A Claude Code `PostToolUse` hook also fires inline on Edit/Write. See `.claude/settings.json`.
 >
-> **Documentation index:** [`docs/index.md`](docs/index.md) — start here for all reference topics (pipeline, API tiers, PROC chain, invariants, task → file map, backend contract).
+> **Documentation index:** [`index.md`](index.md) — start here for all reference topics (pipeline, API tiers, PROC chain, invariants, task → file map, backend contract).
 
 ## Project Overview
 
@@ -66,7 +66,7 @@ Input (string / file / IO)
   → Job object
 ```
 
-See [`docs/core/parsing-pipeline.md`](docs/core/parsing-pipeline.md) for the full step-by-step data flow, [`docs/api/public-api.md`](docs/api/public-api.md) for all API tier tables, [`docs/advanced/proc-expansion.md`](docs/advanced/proc-expansion.md) for the PROC loader chain, and [`docs/development/development-workflow.md`](docs/development/development-workflow.md) for the common task → file map.
+See [`core/parsing-pipeline.md`](core/parsing-pipeline.md) for the full step-by-step data flow, [`api/public-api.md`](api/public-api.md) for all API tier tables, [`advanced/proc-expansion.md`](advanced/proc-expansion.md) for the PROC loader chain, and [`development/development-workflow.md`](development/development-workflow.md) for the common task → file map.
 
 ### Key modules
 
@@ -87,7 +87,7 @@ See [`docs/core/parsing-pipeline.md`](docs/core/parsing-pipeline.md) for the ful
 | `cli.py` | `jcl-parser` CLI — `steps`, `procs`, `detect`, `metrics`, `lint`, `datasets`, `sql`, `analyze`, `paths` |
 | `builtin_procs.py` | Last-resort IBM utility PROC templates (IMS, DB2, COBOL) |
 
-Full inventory with line counts: [`docs/development/development-workflow.md`](docs/development/development-workflow.md).
+Full inventory with line counts: [`development/development-workflow.md`](development/development-workflow.md).
 
 ### Public API tiers
 
@@ -95,7 +95,7 @@ Full inventory with line counts: [`docs/development/development-workflow.md`](do
 - **Tier 2 (advanced):** `explode_job`, loader classes, `detect_file_type`, `parse_condition`, SQL detection, lint/metrics/RC-analysis APIs, plugin system.
 - **Tier 3 (internal):** `MockSystemSymbolProvider`, individual loader types, `FunctionProfile`/`ProfilingResult`.
 
-Full tables: [`docs/api/public-api.md`](docs/api/public-api.md).
+Full tables: [`api/public-api.md`](api/public-api.md).
 
 ### External PROC loading
 
@@ -110,7 +110,7 @@ Set `JCL_PROCLIB_PATH` env var or pass `proc_base_path` to `parse_jcl()`. Layout
 5. **mypy strict is not yet clean** — known violations in `profiling.py`, `explosion.py`, `parser.py`. Add annotations when touching a file; never widen the config.
 6. **Coverage floor is 90%** — every `pytest` run enforces it. Add tests alongside any new module.
 
-Full list (14 invariants): [`docs/development/invariants.md`](docs/development/invariants.md).
+Full list (14 invariants): [`development/invariants.md`](development/invariants.md).
 
 ## Test Structure
 
