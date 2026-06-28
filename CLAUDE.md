@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > **Docs hooks:** Run `git config core.hooksPath .githooks` once after cloning to enable the pre-commit staleness check. A Claude Code `PostToolUse` hook also fires inline on Edit/Write. See `.claude/settings.json`.
 >
-> **Documentation index:** [`index.md`](index.md) — start here for all reference topics (pipeline, API tiers, PROC chain, invariants, task → file map, backend contract).
+> **Documentation index:** [`.okf/index.md`](.okf/index.md) — OKF knowledge bundle; start here for all reference topics (pipeline, API tiers, PROC chain, invariants, task → file map, backend contract).
 
 ## Project Overview
 

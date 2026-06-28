@@ -1,0 +1,78 @@
+---
+type: Development Workflow
+title: Development Workflow
+description: Install, test, lint, vendor sync, version bump, and task-to-file map for jcl-parser contributors.
+tags: [development, workflow, testing, tooling]
+timestamp: 2026-06-28T00:00:00Z
+---
+
+# Overview
+
+Python 3.10+, no runtime dependencies. Dev toolchain: `pytest`, `ruff`, `mypy`.
+
+# Install
+
+```bash
+pip install -e ".[dev]"
+```
+
+# Testing
+
+```bash
+pytest                                              # full suite; 90% coverage enforced
+pytest -m unit                                      # unit tests only
+pytest -m integration                               # integration tests only
+pytest -m contract                                  # contract tests
+pytest tests/unit/test_parser_api.py::Class::method # single test
+```
+
+Coverage: minimum 90% (`--cov-fail-under=90`), branch coverage enabled, HTML to `htmlcov/`, XML to `coverage.xml`. Benchmarks excluded via `norecursedirs`.
+
+# Lint / Format / Type-check
+
+```bash
+ruff check .      # lint (line-length=88, target=py310)
+ruff format .     # format (do not use black)
+mypy jclparser/   # strict mode — not yet clean (known violations in profiling.py, explosion.py, parser.py)
+```
+
+When touching a file, add type annotations where missing. Do not widen the mypy config.
+
+# Vendor Sync (required after any jclparser/ change)
+
+```bash
+cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser/
+```
+
+There is no automated sync. Forgetting this means the backend runs stale code.
+
+# Version Bump
+
+Update **both** files together:
+1. `pyproject.toml` → `version = "X.Y.Z"`
+2. `jclparser/__init__.py` → `__version__ = "X.Y.Z"`
+
+CLI `--version` reads from `__init__.py`, not package metadata.
+
+# Common Task → File Map
+
+| Task | Files |
+|------|-------|
+| New JCL statement type | `parser.py`, `model.py`, `__init__.py` |
+| New DD parameter | `parameter_ast.py`, `parameter_validators.py` |
+| New validation rule | `validators.py` or `parameter_validators.py` |
+| New lint rule | `lint/rules.py`, `lint/runner.py` |
+| New builtin PROC template | `builtin_procs.py:BUILTIN_UTILITY_PROCS` |
+| New program profile | new file in `program_profiles/`, register in `__init__.py` |
+| New CLI subcommand | `cli.py` |
+| PROC expansion bug | `explosion.py`, `proc_loader.py` |
+| Continuation line bug | `continuation_handler.py` |
+| New condition operator | `condition_parser.py` |
+| Change `parse_jcl()` signature | `parser.py:parse_jcl()`, update `__init__.py` |
+| Version bump | `pyproject.toml`, `jclparser/__init__.py:__version__` |
+
+# Citations
+
+[1] [development/development-workflow.md](../../../development/development-workflow.md) — full workflow doc
+[2] [development/invariants.md](invariants.md) — non-obvious behaviors
+[3] [integration/backend-contract.md](../integration/backend-contract.md) — vendor sync and interface contract
