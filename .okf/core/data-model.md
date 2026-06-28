@@ -83,6 +83,6 @@ timestamp: 2026-06-28T00:00:00Z
 
 # Citations
 
-[1] [core/data-model.md](../../../core/data-model.md) — full data model doc
-[2] [core/parsing-pipeline.md](../../../core/parsing-pipeline.md) — how the Job object is built
-[3] [advanced/proc-expansion.md](../../../advanced/proc-expansion.md) — how `explode_job()` changes Step objects
+[1] [core/data-model.md](data-model.md) — full data model doc
+[2] [core/parsing-pipeline.md](parsing-pipeline.md) — how the Job object is built
+[3] [advanced/proc-expansion.md](../advanced/proc-expansion.md) — how `explode_job()` changes Step objects

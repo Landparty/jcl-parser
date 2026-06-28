@@ -1,7 +1,7 @@
 # Update Log
 
 ## 2026-06-28
-* **Creation**: Initialized OKF bundle from existing documentation — [index](.okf/index.md).
+* **Creation**: Initialized OKF bundle from existing documentation — [index](index.md).
 * **Creation**: Parsing pipeline concept — [core/parsing-pipeline](core/parsing-pipeline.md).
 * **Creation**: Data model concept — [core/data-model](core/data-model.md).
 * **Creation**: Public API concept — [api/public-api](api/public-api.md).

@@ -56,5 +56,5 @@ May be removed without notice: `MockSystemSymbolProvider`, `InlineProcedureLoade
 
 # Citations
 
-[1] [api/public-api.md](../../../api/public-api.md) — full export tables with descriptions
-[2] [api/cli-reference.md](../../../api/cli-reference.md) — CLI subcommands
+[1] [api/public-api.md](public-api.md) — full export tables with descriptions
+[2] [api/cli-reference.md](cli-reference.md) — CLI subcommands

@@ -43,6 +43,6 @@ exploded = jclparser.explode_job(job)  # stage 7 (call separately)
 
 # Citations
 
-[1] [core/parsing-pipeline.md](../../../core/parsing-pipeline.md) — full pipeline doc with per-stage notes
-[2] [advanced/proc-expansion.md](../../../advanced/proc-expansion.md) — stage 7 detail
-[3] [advanced/validation.md](../../../advanced/validation.md) — stage 6 detail
+[1] [core/parsing-pipeline.md](parsing-pipeline.md) — full pipeline doc with per-stage notes
+[2] [advanced/proc-expansion.md](../advanced/proc-expansion.md) — stage 7 detail
+[3] [advanced/validation.md](../advanced/validation.md) — stage 6 detail

@@ -42,7 +42,7 @@ timestamp: 2026-06-28T00:00:00Z
 
 # Citations
 
-[1] [development/invariants.md](../../../development/invariants.md) — full invariant doc with code examples
+[1] [development/invariants.md](invariants.md) — full invariant doc with code examples
 [2] [advanced/proc-expansion.md](../advanced/proc-expansion.md) — invariants 3, 4, 6
 [3] [advanced/validation.md](../advanced/validation.md) — invariants 7, 8
-[4] [development/development-workflow.md](../../../development/development-workflow.md) — invariants 11, 12, 13
+[4] [development/workflow.md](workflow.md) — invariants 11, 12, 13

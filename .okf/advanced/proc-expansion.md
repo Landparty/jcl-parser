@@ -73,6 +73,6 @@ entry.step_name, entry.proc_name, entry.parameters, entry.depth, entry.expanded_
 
 # Citations
 
-[1] [advanced/proc-expansion.md](../../../advanced/proc-expansion.md) — full detail with loader chaining examples
-[2] [core/parsing-pipeline.md](../../../core/parsing-pipeline.md) — stage 7 context
-[3] [integration/backend-contract.md](../../../integration/backend-contract.md) — how the backend chains loaders
+[1] [advanced/proc-expansion.md](proc-expansion.md) — full detail with loader chaining examples
+[2] [core/parsing-pipeline.md](../core/parsing-pipeline.md) — stage 7 context
+[3] [integration/backend-contract.md](../integration/backend-contract.md) — how the backend chains loaders

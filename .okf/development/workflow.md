@@ -73,6 +73,6 @@ CLI `--version` reads from `__init__.py`, not package metadata.
 
 # Citations
 
-[1] [development/development-workflow.md](../../../development/development-workflow.md) — full workflow doc
+[1] [development/workflow.md](workflow.md) — full workflow doc
 [2] [development/invariants.md](invariants.md) — non-obvious behaviors
 [3] [integration/backend-contract.md](../integration/backend-contract.md) — vendor sync and interface contract

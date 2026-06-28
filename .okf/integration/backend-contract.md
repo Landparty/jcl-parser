@@ -96,6 +96,6 @@ The adapter produces this dict for `ParserResult`:
 
 # Citations
 
-[1] [integration/backend-contract.md](../../../integration/backend-contract.md) — full contract doc
+[1] [integration/backend-contract.md](backend-contract.md) — full contract doc
 [2] [advanced/proc-expansion.md](../advanced/proc-expansion.md) — loader chaining detail
 [3] [api/public-api.md](../api/public-api.md) — importable names and tiers

@@ -94,6 +94,6 @@ Built-in rule IDs follow `JCL-LINT-NNN`. Custom rules extend `LintRule` ABC.
 
 # Citations
 
-[1] [advanced/validation.md](../../../advanced/validation.md) — full validation doc with examples
-[2] [api/public-api.md](../../../api/public-api.md) — Tier 1/2 validation export table
-[3] [integration/backend-contract.md](../../../integration/backend-contract.md) — how backend uses `job.validate()`
+[1] [advanced/validation.md](validation.md) — full validation doc with examples
+[2] [api/public-api.md](../api/public-api.md) — Tier 1/2 validation export table
+[3] [integration/backend-contract.md](../integration/backend-contract.md) — how backend uses `job.validate()`
