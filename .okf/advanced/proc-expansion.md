@@ -3,7 +3,7 @@ type: Subsystem
 title: PROC Expansion
 description: explode_job() replaces PROC invocations with their full step content and substitutes &SYMBOL parameters; always a separate call from parse_jcl().
 tags: [proc, explosion, symbol-substitution, advanced]
-timestamp: 2026-06-28T00:00:00Z
+timestamp: 2026-06-29T00:00:00Z
 ---
 
 # Overview
@@ -61,6 +61,7 @@ entry.step_name, entry.proc_name, entry.parameters, entry.depth, entry.expanded_
 - `&&` → literal `&` (escaped ampersand)
 - `&&TEMP` in a DSN means temporary dataset, not an escaped ampersand
 - SET symbols resolve left-to-right
+- With `strict_symbols=False`, an undefined `&SYMBOL` elides to `""`. When that symbol was a PDS member — `DSN=LIB(&MEM)` → `LIB()` — `substitute_dd_statement` strips the empty `()` and collapses to the bare PDS name `LIB` (an empty member is meaningless). Non-empty members (`LIB(MEMBER)`) and GDG generations (`GDG(+1)`) are untouched.
 
 # DD Overrides
 

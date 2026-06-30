@@ -380,6 +380,21 @@ def substitute_parameters_dict(
     return result
 
 
+def _strip_empty_member(dataset_name: str) -> str:
+    """Drop a trailing empty member reference left by an elided symbol.
+
+    ``DSN=LIB(&MEM)`` with ``&MEM`` undefined elides to ``LIB()`` after
+    substitution. An empty member is meaningless and pollutes downstream
+    dataset inventories, so collapse it to the bare PDS name. Non-empty
+    members (``LIB(MEMBER)``) and generations (``GDG(+1)``) are left intact.
+    """
+    if dataset_name.endswith(")"):
+        open_idx = dataset_name.rfind("(")
+        if open_idx != -1 and not dataset_name[open_idx + 1 : -1].strip():
+            return dataset_name[:open_idx]
+    return dataset_name
+
+
 def substitute_dd_statement(
     dd: DDStatement, scope: SymbolScope, strict: bool = False
 ) -> None:
@@ -394,6 +409,7 @@ def substitute_dd_statement(
     # Substitute dataset name
     if dd.dataset_name:
         dd.dataset_name = substitute_symbols(dd.dataset_name, scope, strict=strict)
+        dd.dataset_name = _strip_empty_member(dd.dataset_name)
 
     # Substitute disposition
     if dd.disposition:

@@ -195,6 +195,38 @@ class TestSymbolicParameterSubstitution:
         # &&TEMP stays as &TEMP (escaped ampersand)
         assert dd3.dataset_name == "&TEMP"
 
+    def test_unresolved_member_leaves_no_empty_parens(self):
+        """An unresolved symbolic PDS member must not leave bare () behind.
+
+        ``DSN=LIB(&MEM)`` with ``&MEM`` undefined elides the symbol to an empty
+        string; the leftover ``()`` is a meaningless empty member that pollutes
+        downstream dataset inventories. It should collapse to the bare PDS name.
+        """
+        jcl = """//TESTJOB  JOB (ACCT),'TEST',CLASS=A
+//STEP1    EXEC PGM=IKJEFT01
+//DBRMLIB  DD DSN=BANK.PROD.DBRMLIB(&PROG),DISP=SHR
+//"""
+        job = parse_jcl(jcl, strict_mode=False)
+        exploded = job.explode()
+
+        dd = exploded.steps[0].dd_statements[0]
+        assert dd.dataset_name == "BANK.PROD.DBRMLIB"
+
+    def test_resolved_member_is_preserved(self):
+        """A member that *does* resolve keeps its (MEMBER) suffix intact."""
+        jcl = """//TESTJOB  JOB (ACCT),'TEST',CLASS=A
+//MYPROC   PROC PROG=MYMOD
+//PSTEP    EXEC PGM=IKJEFT01
+//DBRMLIB  DD DSN=BANK.PROD.DBRMLIB(&PROG),DISP=SHR
+//         PEND
+//STEP1    EXEC MYPROC
+//"""
+        job = parse_jcl(jcl, strict_mode=False)
+        exploded = job.explode()
+
+        dd = exploded.steps[0].dd_statements[0]
+        assert dd.dataset_name == "BANK.PROD.DBRMLIB(MYMOD)"
+
 
 class TestNestedProcedures:
     """Test nested procedure expansion"""
