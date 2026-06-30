@@ -456,6 +456,45 @@ def apply_dd_overrides(
                     break
 
 
+def apply_unqualified_dd_overrides(
+    expanded_steps: List[Step],
+    override_dds: List[DDStatement],
+) -> None:
+    """Merge unqualified DD overrides onto the procedure's first step.
+
+    A DD coded directly under an ``EXEC PROC=`` statement *without* a
+    ``PROCSTEP.`` qualifier is, per z/OS semantics, an override/addition to the
+    **first step** of the invoked procedure: a DD whose name matches one already
+    on that step replaces it; a DD with a new name is appended. The parser stores
+    these on the ``EXEC PROC=`` step's own ``dd_statements`` (qualified overrides
+    go to ``dd_overrides`` instead), so without this merge they are silently
+    dropped during explosion.
+
+    Args:
+        expanded_steps: Steps produced by expanding the procedure invocation.
+        override_dds: The ``EXEC PROC=`` step's own (unqualified) DD statements.
+    """
+    if not override_dds:
+        return
+
+    first_step = next((s for s in expanded_steps if isinstance(s, Step)), None)
+    if first_step is None:
+        return
+
+    index_by_name = {
+        dd.name: i for i, dd in enumerate(first_step.dd_statements) if dd.name
+    }
+    for override_dd in override_dds:
+        clone = deepcopy(override_dd)
+        existing = index_by_name.get(override_dd.name) if override_dd.name else None
+        if existing is not None:
+            first_step.dd_statements[existing] = clone
+        else:
+            first_step.dd_statements.append(clone)
+            if override_dd.name:
+                index_by_name[override_dd.name] = len(first_step.dd_statements) - 1
+
+
 def explode_job(
     job: Job,
     proc_loader: Optional[ProcedureLoader] = None,
@@ -700,9 +739,14 @@ def _explode_step(
         strict=strict_symbols,
     )
 
-    # Apply DD overrides if present
+    # Apply qualified DD overrides (PROCSTEP.DDNAME) if present
     if step.dd_overrides:
         apply_dd_overrides(expanded, step.dd_overrides, step.name or "PROC")
+
+    # Merge unqualified DD overrides/additions (coded directly under EXEC PROC=,
+    # stored on the step's own dd_statements) onto the procedure's first step.
+    if step.dd_statements:
+        apply_unqualified_dd_overrides(expanded, step.dd_statements)
 
     # Record audit information
     if audit_records is not None:

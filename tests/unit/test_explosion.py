@@ -311,6 +311,51 @@ class TestDDOverrides:
                 or dd2.dataset_name == "OVERRIDE.DATA.SET"
             )
 
+    def test_unqualified_added_dd_override_merged_onto_proc_step(self):
+        """An unqualified DD coded under EXEC PROC= whose name is NOT in the proc
+        is added to the procedure's first step (z/OS semantics), not dropped.
+
+        Regression for the IMS-BMP case: //LOANRPT DD on EXEC PROC=IMSBTCH must
+        survive explosion so it can be attributed and resolved downstream.
+        """
+        jcl = """
+//TESTJOB  JOB (ACCT),'TEST',CLASS=A
+//MYPROC   PROC
+//STEP1    EXEC PGM=IEFBR14
+//PROCDD   DD DSN=PROC.OWN.DATA,DISP=SHR
+//         PEND
+//CALL     EXEC MYPROC
+//ADDED    DD DSN=JOB.ADDED.DATA,DISP=(NEW,CATLG)
+//"""
+        job = parse_jcl(jcl, strict_mode=False)
+        exploded = job.explode()
+
+        step = next(s for s in exploded.steps if "STEP1" in s.name)
+        names = [dd.name for dd in step.dd_statements]
+        assert "PROCDD" in names, f"proc's own DD lost: {names}"
+        assert "ADDED" in names, f"added override DD dropped during explosion: {names}"
+        added = next(dd for dd in step.dd_statements if dd.name == "ADDED")
+        assert added.dataset_name == "JOB.ADDED.DATA"
+
+    def test_unqualified_dd_override_replaces_matching_proc_dd(self):
+        """An unqualified DD whose name matches a proc DD overrides it (no duplicate)."""
+        jcl = """
+//TESTJOB  JOB (ACCT),'TEST',CLASS=A
+//MYPROC   PROC
+//STEP1    EXEC PGM=IEFBR14
+//PROCDD   DD DSN=PROC.OWN.DATA,DISP=SHR
+//         PEND
+//CALL     EXEC MYPROC
+//PROCDD   DD DSN=JOB.OVERRIDE.DATA,DISP=SHR
+//"""
+        job = parse_jcl(jcl, strict_mode=False)
+        exploded = job.explode()
+
+        step = next(s for s in exploded.steps if "STEP1" in s.name)
+        procdds = [dd for dd in step.dd_statements if dd.name == "PROCDD"]
+        assert len(procdds) == 1, "override should replace, not duplicate"
+        assert procdds[0].dataset_name == "JOB.OVERRIDE.DATA"
+
 
 class TestProcedureLoaders:
     """Test procedure loader implementations"""

@@ -62,6 +62,17 @@ entry.step_name, entry.proc_name, entry.parameters, entry.depth, entry.expanded_
 - `&&TEMP` in a DSN means temporary dataset, not an escaped ampersand
 - SET symbols resolve left-to-right
 
+# DD Overrides
+
+DD statements coded under an `EXEC PROC=` invocation override or add to the procedure's DDs during explosion (z/OS semantics):
+
+| Form | Stored on the EXEC step as | Applied by | Target |
+|------|----------------------------|-----------|--------|
+| Qualified `//PROCSTEP.DDNAME DD …` | `step.dd_overrides[key]` | `apply_dd_overrides` | the named procstep; replaces a matching DD |
+| Unqualified `//DDNAME DD …` | `step.dd_statements` | `apply_unqualified_dd_overrides` | the procedure's **first** step; replaces a same-named DD, else **appends** |
+
+The unqualified path is what carries an *added* DD (a name not present in the proc) onto the step — e.g. `//LOANRPT DD DSN=…` on `EXEC PROC=IMSBTCH`. Both run inside `_explode_step` after the proc is expanded; nested PROC invocations propagate naturally because the merge re-runs at each recursion level.
+
 # Error Types
 
 | Error | When |
