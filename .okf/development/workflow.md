@@ -3,12 +3,24 @@ type: Development Workflow
 title: Development Workflow
 description: Install, test, lint, vendor sync, version bump, and task-to-file map for jcl-parser contributors.
 tags: [development, workflow, testing, tooling]
-timestamp: 2026-06-28T00:00:00Z
+timestamp: 2026-06-30T00:00:00Z
 ---
 
 # Overview
 
 Python 3.10+, no runtime dependencies. Dev toolchain: `pytest`, `ruff`, `mypy`.
+
+# Diagnostic Logging
+
+The package emits INFO/DEBUG diagnostics via the standard `logging` module under the `jclparser` logger (parser, continuation handling, PROC/INCLUDE resolution, explosion, validators, parameter AST). A `NullHandler` is attached by default so consuming applications see no output unless they opt in:
+
+```python
+import logging
+logging.getLogger("jclparser").setLevel(logging.DEBUG)
+logging.basicConfig()
+```
+
+All call sites use lazy `%`-formatting; `parameter_validators.py` is intentionally left quiet (hot path). Covered by `tests/unit/test_logging.py`.
 
 # Install
 

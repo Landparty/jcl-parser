@@ -3,7 +3,7 @@ type: Pipeline
 title: JCL Parsing Pipeline
 description: Seven-stage pipeline that transforms raw JCL text into a structured Job object; stages 1, 2, and 4 are mandatory.
 tags: [parsing, pipeline, core]
-timestamp: 2026-06-28T00:00:00Z
+timestamp: 2026-06-30T00:00:00Z
 ---
 
 # Overview
@@ -12,7 +12,7 @@ timestamp: 2026-06-28T00:00:00Z
 
 ```
 Input (string / file / IO)
-  → [1] read_source()                     utils.py          — encoding fallback EBCDIC→UTF-8
+  → [1] read_source()                     utils.py          — resolves str/Path/file-like to text; file reads fall back utf-8 → latin-1 → cp1252
   → [2] ContinuationLineHandler.process() continuation_handler.py — merges col-71 continuations
   → [3] resolve_includes()                include_loader.py [optional] — expands // INCLUDE
   → [4] parse_jcl() core loop             parser.py         — builds Job/Step/DD/Procedure objects

@@ -1,47 +1,60 @@
 ---
 type: concept
 title: CLI Reference
-description: jcl-parser CLI subcommands and usage
-timestamp: 2026-06-28
+description: jcl-parser CLI usage — a single FILE + positional-query interface (not subcommands), implemented in jclparser/cli.py:main().
+timestamp: 2026-06-30T00:00:00Z
 tags: [cli, api, jcl-parser]
 ---
 
 # CLI Reference
 
-The `jcl-parser` CLI is the command-line interface for the `jclparser` package, installed as the `jcl-parser` entry point.
-
-## Subcommands
-
-| Subcommand | Purpose |
-|------------|---------|
-| `steps` | List all steps in a JCL job |
-| `procs` | List PROC references (inline and external) |
-| `detect` | Detect file type (JCL / PROC / unknown) |
-| `metrics` | Emit job metrics (step count, DD count, symbol count) |
-| `lint` | Run lint rules and emit SARIF output |
-| `datasets` | List all dataset names referenced |
-| `sql` | Detect embedded SQL statements |
-| `analyze` | Full analysis: steps + datasets + metrics |
-| `paths` | Emit dependency paths between steps |
+The `jcl-parser` CLI is the command-line interface for the `jclparser` package, installed as the `jcl-parser` entry point (`jclparser/cli.py:main()`). It is **not** a subcommand-based CLI (no `argparse` subparsers) — the first positional argument is always the JCL `FILE`, and an optional second positional `query` token selects the view.
 
 ## Usage
 
 ```bash
-jcl-parser <subcommand> [options] <file>
-
-# Examples
-jcl-parser steps myjob.jcl
-jcl-parser lint --format sarif myjob.jcl
-jcl-parser detect unknown.txt
+jcl-parser FILE                          # Show job summary
+jcl-parser FILE steps                    # List all steps
+jcl-parser FILE procs [PROCNAME]         # List/detail procedures
+jcl-parser FILE procs --explode          # Show procedure expansion audit
+jcl-parser FILE procs --list-available   # List PROCs in --proc-path libraries
+jcl-parser FILE STEP                     # Show step details
+jcl-parser FILE STEP.DDNAME              # Show a specific DD statement
+jcl-parser FILE DDNAME                   # Show all DDs with that name across steps
+jcl-parser FILE --json                   # Full parse result as JSON
+jcl-parser FILE --validate               # Validate the JCL (structural)
+jcl-parser FILE detect                   # Detect file type (JCL/PROC/UNKNOWN)
+jcl-parser FILE metrics                  # Structural metrics for the job
+jcl-parser FILE lint                     # Run lint rules against the job
+jcl-parser --lint-list                   # List all available lint rule codes (no FILE needed)
+jcl-parser FILE datasets                 # Dataset lifecycle analysis
+jcl-parser FILE sql                      # SQL/DB2 detection
+jcl-parser FILE analyze [STEPNAME]       # Program profile analysis
+jcl-parser FILE paths                    # RC feasibility path analysis
 ```
 
-## Common Flags
+## Query Token (`steps` / `procs` / `detect` / `metrics` / `lint` / `datasets` / `sql` / `analyze` / `paths`)
+
+These are not argparse subcommands — they are matched case-insensitively against the first positional `query` token inside `main()`. `detect` is checked before parsing the file (no parse needed); the rest run after `parse_jcl()` (and after `--explode`, if given).
+
+A bare step name (`jcl-parser FILE PAYSTEP`) or `STEP.DDNAME` falls through to step/DD lookup; an unmatched query token is tried as a step name first, then as a DD name searched across all steps.
+
+## Flags
 
 | Flag | Description |
 |------|-------------|
-| `--proclib PATH` | Base path for external PROC library lookup |
-| `--format {text,json,sarif}` | Output format (subcommand-specific) |
-| `--strict` | Treat warnings as errors |
+| `--json` | Output as JSON instead of text |
+| `--validate` | Validate the JCL and report errors (structural level); exits 1 if errors found |
+| `--explode` | Expand procedure calls (`job.explode()`) before displaying |
+| `--proc-path PATH` | Base path for external PROC libraries (enables `enable_external_procs`) |
+| `--list-available` | With `procs`: list PROCs found under `--proc-path` (requires `--proc-path`) |
+| `--lint-list` | List all registered lint rule codes + descriptions, then exit (no FILE required) |
+| `--profile` | Profile the parse; includes timing/memory metrics in output |
+| `--profile-top-n N` | Number of top functions in profiling output (default 20) |
+| `--profile-output PATH` | Write raw cProfile binary to PATH (`.prof` file) |
+| `--version` | Print `jcl-parser <__version__>` and exit |
+
+There is **no** `--format` flag and **no** `--strict` flag. Lint output format (text vs. SARIF) is a Python-API choice (`lint_to_sarif()`), not exposed as a CLI flag — the CLI's `lint` query only emits plain text or `--json`.
 
 # Citations
 
