@@ -86,6 +86,30 @@ class ContinuationLineHandler:
             return first_keyword
         return ""
 
+    def _looks_like_new_statement(self, line: str) -> bool:
+        """Return True if *line* has a name field followed by a recognized
+        JCL statement keyword (e.g. ``//S2 EXEC PGM=Y``).
+
+        Per z/OS syntax, a true continuation record's name field (columns
+        3-10) is blank, so a line that starts right after ``//`` with a
+        name token and then a known keyword is always a fresh statement —
+        never a continuation — even if the previous line ended with a
+        dangling comma.
+        """
+        if not line.startswith("//"):
+            return False
+        content = line[2:]
+        if not content or content[0].isspace():
+            return False
+        parts = content.split(None, 1)
+        if len(parts) < 2:
+            return False
+        rest_parts = parts[1].split()
+        if not rest_parts:
+            return False
+        second_keyword = rest_parts[0].upper().split("=")[0].split("(")[0]
+        return second_keyword in self.JCL_KEYWORDS
+
     def is_continuation_line(
         self,
         line: str,
@@ -126,7 +150,12 @@ class ContinuationLineHandler:
                 return True
 
         if has_implicit_continuation or has_unclosed_context:
-            if line.strip().startswith("//") and not line.strip().startswith("//*"):
+            stripped_line = line.strip()
+            if (
+                stripped_line.startswith("//")
+                and not stripped_line.startswith("//*")
+                and not self._looks_like_new_statement(line)
+            ):
                 return True
 
         return False
@@ -169,10 +198,28 @@ class ContinuationLineHandler:
             # Look ahead for continuation lines
             while j < len(lines):
                 next_line = lines[j]
+                next_stripped = next_line.strip()
 
-                # Stop merging if we hit a comment or empty line
-                # (Comments break continuation chains)
-                if not next_line.strip() or next_line.strip().startswith("//*"):
+                if next_stripped.startswith("//*"):
+                    # A comment does not terminate a statement that has an
+                    # explicit pending continuation (trailing comma, or an
+                    # unclosed paren/quote) — per z/OS, comments may be
+                    # interspersed within a continued statement. Preserve the
+                    # comment in the output and keep looking for the actual
+                    # continuation line so its operands aren't lost.
+                    pending_continuation = (
+                        merged_line.rstrip().endswith(",")
+                        or cached_ctx.paren_depth > 0
+                        or cached_ctx.in_quotes
+                    )
+                    if pending_continuation:
+                        merged.append((next_line, j + 1))
+                        j += 1
+                        continue
+                    break
+
+                # Stop merging if we hit an empty line
+                if not next_stripped:
                     break
 
                 # Check if next line is a continuation, passing cached context
