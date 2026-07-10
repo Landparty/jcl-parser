@@ -87,28 +87,20 @@ class ContinuationLineHandler:
         return ""
 
     def _looks_like_new_statement(self, line: str) -> bool:
-        """Return True if *line* has a name field followed by a recognized
-        JCL statement keyword (e.g. ``//S2 EXEC PGM=Y``).
+        """Return True if *line* has a non-blank name field (e.g. ``//S2
+        EXEC PGM=Y`` or even ``//S2 UNKNOWNOP FOO=BAR``).
 
         Per z/OS syntax, a true continuation record's name field (columns
-        3-10) is blank, so a line that starts right after ``//`` with a
-        name token and then a known keyword is always a fresh statement —
-        never a continuation — even if the previous line ended with a
-        dangling comma.
+        3-10) is always blank, so a line whose content starts immediately
+        after ``//`` with no leading space is always a fresh statement —
+        never a continuation — regardless of whether its operation keyword
+        is one this parser recognizes, and even if the previous line ended
+        with a dangling comma.
         """
         if not line.startswith("//"):
             return False
         content = line[2:]
-        if not content or content[0].isspace():
-            return False
-        parts = content.split(None, 1)
-        if len(parts) < 2:
-            return False
-        rest_parts = parts[1].split()
-        if not rest_parts:
-            return False
-        second_keyword = rest_parts[0].upper().split("=")[0].split("(")[0]
-        return second_keyword in self.JCL_KEYWORDS
+        return bool(content) and not content[0].isspace()
 
     def is_continuation_line(
         self,
@@ -194,6 +186,11 @@ class ContinuationLineHandler:
             # Compute initial context for this statement line once.
             cached_ctx = self._analyze_line_context(merged_line)
             j = i + 1
+            # Comments encountered mid-continuation are buffered and emitted
+            # right after the statement they interrupted (see below) instead
+            # of immediately, so the statement itself keeps its place in the
+            # output relative to source order.
+            interspersed_comments: List[Tuple[str, int]] = []
 
             # Look ahead for continuation lines
             while j < len(lines):
@@ -213,7 +210,7 @@ class ContinuationLineHandler:
                         or cached_ctx.in_quotes
                     )
                     if pending_continuation:
-                        merged.append((next_line, j + 1))
+                        interspersed_comments.append((next_line, j + 1))
                         j += 1
                         continue
                     break
@@ -261,6 +258,7 @@ class ContinuationLineHandler:
                 )
 
             merged.append((merged_line, original_line_num))
+            merged.extend(interspersed_comments)
             i = j
 
         return merged

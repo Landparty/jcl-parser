@@ -437,11 +437,22 @@ def substitute_dd_statement(
         )
         dd.dataset_name = _strip_empty_member(dd.dataset_name)
 
-    # Substitute disposition
+    # Substitute disposition. DISP=(&STATUS,CATLG,DELETE) parses to a list,
+    # not a plain string, so each element needs its own substitution pass —
+    # substitute_symbols() is a no-op for non-str input and would otherwise
+    # silently skip symbols in list-valued dispositions.
     if dd.disposition:
-        dd.disposition = substitute_symbols(
-            dd.disposition, scope, strict=strict, warnings=local_warnings
-        )
+        if isinstance(dd.disposition, list):
+            dd.disposition = [
+                substitute_symbols(v, scope, strict=strict, warnings=local_warnings)
+                if isinstance(v, str)
+                else v
+                for v in dd.disposition
+            ]
+        else:
+            dd.disposition = substitute_symbols(
+                dd.disposition, scope, strict=strict, warnings=local_warnings
+            )
 
     # Substitute all parameters
     dd.parameters = substitute_parameters_dict(dd.parameters, scope, strict=strict)

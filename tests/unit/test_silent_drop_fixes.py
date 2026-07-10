@@ -7,7 +7,10 @@ fixes route these cases through ``Job.warnings`` instead of vanishing.
 """
 
 from jclparser import parse_jcl
+from jclparser.continuation_handler import ContinuationLineHandler
 from jclparser.errors import JCLStructureError
+from jclparser.explosion import SymbolScope, substitute_dd_statement
+from jclparser.model import DDStatement
 from jclparser.parser import _parse_parameters, validate_jcl
 
 
@@ -66,6 +69,21 @@ class TestCommentInsideContinuation:
         job = parse_jcl(jcl)
         assert job.steps[0].dd_statements[0].dataset_name == "A.B"
 
+    def test_interspersed_comment_does_not_reorder_before_its_statement(self):
+        # The statement must keep its place in the merged output; a comment
+        # discovered mid-continuation is emitted right after it, not before.
+        handler = ContinuationLineHandler()
+        lines = [
+            "//DD1 DD DSN=MY.DATA,",
+            "//* This is a comment",
+            "//             DISP=SHR,",
+            "//             UNIT=SYSDA",
+        ]
+        merged = handler.merge_continuation_lines(lines)
+        assert len(merged) == 2
+        assert merged[0][0].startswith("//DD1")
+        assert merged[1][0] == "//* This is a comment"
+
 
 class TestDanglingCommaDoesNotSwallowNextStatement:
     """A trailing comma with no real continuation must not absorb the next
@@ -84,6 +102,16 @@ class TestDanglingCommaDoesNotSwallowNextStatement:
         names = [dd.name for dd in job.steps[0].dd_statements]
         assert names == ["D1", "D2"]
         assert job.steps[0].get_dd("D2").dataset_name == "C.D"
+
+    def test_next_named_statement_with_unrecognized_keyword_survives(self):
+        # A name field is non-blank regardless of whether the operation
+        # keyword is one this parser recognizes; the name-field rule alone
+        # must exclude it from being swallowed as a continuation.
+        jcl = "//J JOB 1\n//S1 EXEC PGM=X,\n//S2 UNKNOWNOP FOO=BAR\n"
+        job = parse_jcl(jcl)
+        assert [s.name for s in job.steps] == ["S1"]
+        assert job.steps[0].parameters == {}
+        assert any("UNKNOWNOP" in w for w in job.warnings)
 
 
 class TestUnknownStatementWarning:
@@ -113,6 +141,49 @@ class TestUnresolvedSymbolWarning:
         job = parse_jcl(jcl)
         dd = job.steps[0].dd_statements[0]
         assert dd.dataset_name == "BAR.FILE"
+        assert job.warnings == []
+
+
+class TestListValuedDispositionSubstitution:
+    """DISP=(&SYM,CATLG,DELETE) parses to a list; substitute_dd_statement()
+    must substitute each element instead of skipping the whole list because
+    substitute_symbols() no-ops on non-str input."""
+
+    def test_unresolved_symbol_in_list_disposition_warns(self):
+        dd = DDStatement(
+            name="D1",
+            dataset_name="A.B",
+            disposition=["&STATUS", "CATLG", "DELETE"],
+            line_number=4,
+        )
+        warnings: list[str] = []
+        substitute_dd_statement(dd, SymbolScope(), strict=False, warnings=warnings)
+        assert dd.disposition == ["", "CATLG", "DELETE"]
+        assert any("&STATUS" in w and "D1" in w for w in warnings)
+
+    def test_resolved_symbol_in_list_disposition_substitutes(self):
+        dd = DDStatement(
+            name="D1",
+            dataset_name="A.B",
+            disposition=["&STATUS", "CATLG", "DELETE"],
+            line_number=4,
+        )
+        scope = SymbolScope(set_symbols={"STATUS": "NEW"})
+        warnings: list[str] = []
+        substitute_dd_statement(dd, scope, strict=False, warnings=warnings)
+        assert dd.disposition == ["NEW", "CATLG", "DELETE"]
+        assert warnings == []
+
+    def test_full_pipeline_resolves_list_disposition_symbol(self):
+        jcl = (
+            "//J JOB 1\n"
+            "// SET STATUS=NEW\n"
+            "//S EXEC PGM=X\n"
+            "//D1 DD DSN=A.B,DISP=(&STATUS,CATLG,DELETE)\n"
+        )
+        job = parse_jcl(jcl)
+        dd = job.steps[0].dd_statements[0]
+        assert dd.disposition == ["NEW", "CATLG", "DELETE"]
         assert job.warnings == []
 
 
