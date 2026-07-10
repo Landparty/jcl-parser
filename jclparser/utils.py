@@ -114,19 +114,19 @@ def read_source(source: str | Path | Any) -> str:
     if isinstance(source, Path):
         return _require_file(source)
     if isinstance(source, str):
+        # JCL content starts with "//" (a statement) or "/*" (a JES2/JES3
+        # control card, e.g. "/*JOBPARM", which may legally precede the JOB
+        # statement) -- never treat either as a file path.
+        looks_like_jcl_start = source.strip().startswith(("//", "/*"))
         # Treat as a file path when it looks like one by extension or separator.
         if source.endswith(".jcl") or (
-            ("/" in source or "\\" in source) and not source.strip().startswith("//")
+            ("/" in source or "\\" in source) and not looks_like_jcl_start
         ):
             return _require_file(Path(source))
         # For plain strings without path markers (no extension, no separators),
         # check whether the string names an existing file.  JCL content always
-        # starts with "//" or contains newlines, so this fallback is safe.
-        if (
-            "\n" not in source
-            and "\r" not in source
-            and not source.strip().startswith("//")
-        ):
+        # starts with "//" or "/*", or contains newlines, so this fallback is safe.
+        if "\n" not in source and "\r" not in source and not looks_like_jcl_start:
             try:
                 path = Path(source)
                 if path.is_file():
