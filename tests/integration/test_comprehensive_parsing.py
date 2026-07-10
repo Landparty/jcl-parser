@@ -512,9 +512,13 @@ class TestSetValueEdgeCases:
         return parse_jcl(jcl)
 
     def test_double_ampersand_escape(self):
-        """&& in a SET value must become a literal & (not a symbol reference)."""
+        """&& in a SET value is not a symbol reference and is left as-is at
+        parse time -- collapsing "&&" to a literal "&" is explode_job()'s
+        job (Tier 2), not plain parse_jcl(). This keeps a SET value like
+        "&&WORK" usable as a temporary-dataset marker if a DD references it.
+        """
         job = self._parse("//J JOB A\n//  SET VAR=&&PREFIX.DATA\n//S EXEC PGM=P\n")
-        assert job.set_statements["VAR"] == "&PREFIX.DATA"
+        assert job.set_statements["VAR"] == "&&PREFIX.DATA"
 
     def test_undefined_symbol_passthrough(self):
         """An unknown &SYMBOL in a SET value is left unchanged."""
@@ -572,9 +576,10 @@ class TestSetValueEdgeCases:
         assert job.set_statements["A"] == "&A..EXTRA"
 
     def test_double_escape_then_symbol(self):
-        """&&& — first && becomes &, then &SYMBOL is resolved."""
+        """&&& — the leading && is left as a literal escaped pair (not
+        collapsed at parse time), then &A is resolved to its SET value."""
         job = self._parse("//J JOB A\n//  SET A=VAL\n//  SET B=&&&A\n//S EXEC PGM=P\n")
-        assert job.set_statements["B"] == "&VAL"
+        assert job.set_statements["B"] == "&&VAL"
 
     def test_special_char_at_sign_in_symbol(self):
         """Symbol names may contain @; &@SYM must resolve correctly."""

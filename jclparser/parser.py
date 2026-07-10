@@ -52,16 +52,34 @@ def _resolve_set_value(value: str, known_symbols: dict[str, str]) -> str:
     """Resolve &SYMBOL references in a SET value using already-accumulated SET symbols.
 
     Mirrors the mainframe rule: SET values are evaluated left-to-right so a
-    symbol can reference any earlier SET in the same job.
+    symbol can reference any earlier SET in the same job. A literal "&&" is
+    left untouched here -- collapsing it would corrupt a SET value that
+    itself holds a "&&NAME" temporary-dataset marker (e.g. ``SET
+    MYTEMP=&&WORK``) before it ever reaches a DD statement. That collapse is
+    explode_job()'s job (Tier 2), not this Tier-1 SET-value resolution.
     """
 
     def _replacer(m: re.Match) -> str:
         if m.group(0) == "&&":
-            return "&"
+            return "&&"
         sym = m.group(1).upper()
         return known_symbols.get(sym, m.group(0))
 
     return _SET_SYMBOL_PATTERN.sub(_replacer, value)
+
+
+def _has_unresolved_symbol_ref(value: str) -> bool:
+    """True if *value* still contains a genuine (unescaped) &SYMBOL reference,
+    as opposed to only escaped literal "&&" pairs.
+
+    Used to decide whether a resolved SET value is safe to propagate into DD
+    dataset names/EXEC parameters. A value that legitimately contains "&&"
+    (e.g. from ``SET MYTEMP=&&WORK``) must not be excluded the same way a
+    value with a genuinely unresolved reference (e.g. "&B." left over from an
+    unresolvable SET cycle) is -- both contain an "&" character, but only the
+    latter is actually unresolved.
+    """
+    return any(m.group(0) != "&&" for m in _SET_SYMBOL_PATTERN.finditer(value))
 
 
 #: All recognised JCL statement type keywords (single canonical definition).
@@ -781,7 +799,10 @@ def _parse_jcl_core(
                     set_symbols={k: v for k, v in _raw.items() if k != _name}
                 )
                 _new_val = substitute_symbols(
-                    _val, _scope_for_val, allow_undefined=True
+                    _val,
+                    _scope_for_val,
+                    allow_undefined=True,
+                    collapse_double_amp=False,
                 )
                 if _new_val != _val:
                     _raw[_name] = _new_val
@@ -789,12 +810,17 @@ def _parse_jcl_core(
             if not _changed:
                 break  # table has stabilised – no need for more passes
 
-        # Symbols whose values still contain unresolved &-references after all
-        # passes are excluded from the final scope.  Propagating a raw "&B."
-        # value into a DD dataset_name would leave a literal token in the
-        # output; instead, strict=False below will silently elide those
-        # unresolvable references (they become empty string) and warn.
-        _resolved_symbols = {k: v for k, v in _raw.items() if "&" not in v}
+        # Symbols whose values still contain a genuinely unresolved
+        # &-reference after all passes are excluded from the final scope.
+        # Propagating a raw "&B." value into a DD dataset_name would leave a
+        # literal token in the output; instead, strict=False below will
+        # silently elide those unresolvable references (they become empty
+        # string) and warn. A value that legitimately contains "&&" (e.g.
+        # SET MYTEMP=&&WORK) is NOT excluded -- it has nothing left to
+        # resolve, it just happens to contain an escaped literal ampersand.
+        _resolved_symbols = {
+            k: v for k, v in _raw.items() if not _has_unresolved_symbol_ref(v)
+        }
         _set_scope = SymbolScope(set_symbols=_resolved_symbols)
         for _dd in job.get_dd_statements():
             substitute_dd_statement(

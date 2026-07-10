@@ -324,6 +324,40 @@ class TestDoubleAmpersandConsistency:
         assert dd.dataset_name == "&&TEMP"
         assert dd.is_temporary()
 
+    def test_set_value_containing_double_amp_survives_to_referencing_dd(self):
+        # SET MYTEMP=&&WORK must reach a DD referencing &MYTEMP as the
+        # literal "&&WORK" -- not collapsed during SET-value processing, not
+        # collapsed during the post-parse resolution pass, and not excluded
+        # from the resolved-symbol table just because it contains "&".
+        jcl = "//J JOB 1\n// SET MYTEMP=&&WORK\n//S EXEC PGM=X\n//D1 DD DSN=&MYTEMP\n"
+        job = parse_jcl(jcl)
+        dd = job.steps[0].dd_statements[0]
+        assert dd.dataset_name == "&&WORK"
+        assert dd.is_temporary()
+        assert job.warnings == []
+
+    def test_job_set_statements_preserves_double_amp(self):
+        # job.set_statements is a public Tier-1 attribute; it must show the
+        # SET value as written, not with "&&" already collapsed.
+        jcl = "//J JOB 1\n// SET VAR=&&PREFIX.DATA\n//S EXEC PGM=X\n"
+        job = parse_jcl(jcl)
+        assert job.set_statements["VAR"] == "&&PREFIX.DATA"
+
+    def test_genuine_set_cycle_still_excluded_and_warns(self):
+        # A real unresolvable cycle (not just an escaped "&&") must still be
+        # excluded from the resolved scope and reported.
+        jcl = (
+            "//J JOB 1\n"
+            "// SET A=&B.\n"
+            "// SET B=&A.\n"
+            "//S EXEC PGM=X\n"
+            "//D1 DD DSN=&A..FILE\n"
+        )
+        job = parse_jcl(jcl)
+        dd = job.steps[0].dd_statements[0]
+        assert dd.dataset_name == ".FILE"
+        assert any("&A" in w for w in job.warnings)
+
 
 class TestExecParmSymbolResolution:
     """EXEC PARM=&SYM must resolve the same job-level SET symbols that DD
