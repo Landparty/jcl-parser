@@ -343,11 +343,7 @@ class TestExecParmSymbolResolution:
         assert job.warnings == []
 
     def test_unresolved_symbol_in_parm_warns(self):
-        jcl = (
-            "//J JOB 1\n"
-            "// SET FOO=BAR\n"
-            "//STEP1 EXEC PGM=MYPGM,PARM=&UNDEF\n"
-        )
+        jcl = "//J JOB 1\n// SET FOO=BAR\n//STEP1 EXEC PGM=MYPGM,PARM=&UNDEF\n"
         job = parse_jcl(jcl)
         assert job.steps[0].parameters["PARM"] == ""
         assert any("&UNDEF" in w and "STEP1" in w for w in job.warnings)
