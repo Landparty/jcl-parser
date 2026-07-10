@@ -251,6 +251,9 @@ def _parse_jcl_core(
     current_terminates_on_slash = False
     orphaned_dds: list[Any] = []  # Track DDs that appear before first EXEC
     in_joblib_concat = False  # True while accumulating JOBLIB concatenation lines
+    #: Warnings collected before the JOB statement is seen (no job.warnings yet
+    #: to append to); flushed onto job.warnings once the Job object exists.
+    pending_warnings: list[str] = []
 
     for line, line_num in merged_lines:
         try:
@@ -297,6 +300,12 @@ def _parse_jcl_core(
             stmt = parse_statement(line, line_num)
             if not stmt:
                 continue
+
+            if stmt.warnings:
+                if job is not None:
+                    job.warnings.extend(stmt.warnings)
+                else:
+                    pending_warnings.extend(stmt.warnings)
 
             # Process different statement types
             if stmt.type == "JOB":
@@ -538,12 +547,20 @@ def _parse_jcl_core(
 
             elif stmt.type == "UNKNOWN":
                 # Unknown statement type - log but continue processing
-                # Could add to job.warnings list if we create one
+                statement_type_name = stmt.parameters.get("_statement_type", "")
                 logger.debug(
                     "unknown statement type %r at line %d; ignoring",
-                    stmt.parameters.get("_statement_type", ""),
+                    statement_type_name,
                     line_num,
                 )
+                unknown_msg = (
+                    f"Line {line_num}: unrecognized statement type "
+                    f"'{statement_type_name}' ignored"
+                )
+                if job is not None:
+                    job.warnings.append(unknown_msg)
+                else:
+                    pending_warnings.append(unknown_msg)
 
             elif stmt.type == "XMIT":
                 # XMIT statement - similar to DD but for data transmission
@@ -576,6 +593,9 @@ def _parse_jcl_core(
                 job.add_procedure(proc)
         else:
             raise JCLSyntaxError("No JOB statement found", 0)
+
+    if pending_warnings:
+        job.warnings.extend(pending_warnings)
 
     # Create and attach procedure loader for external PROC loading
     if enable_external_procs and job.jcllib_order:
@@ -714,7 +734,9 @@ def _parse_jcl_core(
         _resolved_symbols = {k: v for k, v in _raw.items() if "&" not in v}
         _set_scope = SymbolScope(set_symbols=_resolved_symbols)
         for _dd in job.get_dd_statements():
-            substitute_dd_statement(_dd, _set_scope, strict=False)
+            substitute_dd_statement(
+                _dd, _set_scope, strict=False, warnings=job.warnings
+            )
 
     # Validate the parsed job if in strict mode.  Only ERROR-severity findings
     # are fatal — WARNING/INFO findings (e.g. unresolved OUTPUT back-references,
@@ -899,7 +921,7 @@ def validate_jcl(source: str | Path | IO, level: str = "basic") -> list[ParseErr
 
         return errors
 
-    except (JCLSyntaxError, JCLValidationError):
+    except (JCLSyntaxError, JCLValidationError, JCLStructureError):
         # If parsing failed, do line-by-line validation to collect multiple errors
         pass
 
@@ -924,6 +946,8 @@ def validate_jcl(source: str | Path | IO, level: str = "basic") -> list[ParseErr
     merged_pairs = handler.merge_continuation_lines(raw_lines)
     has_job = False
     in_proc = False
+    has_exec = False
+    has_dd = False
     current_step = None
 
     for line, line_num in merged_pairs:
@@ -983,11 +1007,15 @@ def validate_jcl(source: str | Path | IO, level: str = "basic") -> list[ParseErr
                                 severity=ErrorSeverity.ERROR,
                             )
                         )
+                    has_exec = True
                     current_step = stmt
 
                 elif stmt.type == "DD":
+                    has_dd = True
                     if current_step is None:
-                        # DD before EXEC is allowed
+                        # DD before EXEC is allowed (e.g. JOBLIB before the
+                        # first step) as long as some EXEC exists later in
+                        # the job; checked for the whole job after the loop.
                         pass
 
         except JCLSyntaxError as e:
@@ -1010,6 +1038,20 @@ def validate_jcl(source: str | Path | IO, level: str = "basic") -> list[ParseErr
                     severity=ErrorSeverity.ERROR,
                 )
             )
+
+    # Mirrors the strict-mode structural check in _parse_jcl_core: a DD
+    # statement with no EXEC anywhere in the job is a structural error, not
+    # just a syntax quirk to ignore.
+    if has_job and has_dd and not has_exec:
+        errors.append(
+            ParseError(
+                error_type=ErrorType.STRUCTURE_ERROR,
+                message="DD statement found before any EXEC step. "
+                "Each DD must belong to a step.",
+                line_number=0,
+                severity=ErrorSeverity.ERROR,
+            )
+        )
 
     return errors
 
@@ -1134,8 +1176,11 @@ def parse_statement(line: str, line_number: int = 0) -> Statement | None:
         )
 
     # Parse parameters
+    stmt_warnings: list[str] = []
     parameters = (
-        _parse_parameters(parameters_part, line_number) if parameters_part else {}
+        _parse_parameters(parameters_part, line_number, warnings=stmt_warnings)
+        if parameters_part
+        else {}
     )
 
     return Statement(
@@ -1143,6 +1188,7 @@ def parse_statement(line: str, line_number: int = 0) -> Statement | None:
         name=name_part,
         parameters=parameters,
         line_number=line_number,
+        warnings=stmt_warnings,
     )
 
 
@@ -1219,8 +1265,17 @@ def _check_param_balance(param_string: str, line_number: int) -> None:
         )
 
 
-def _parse_parameters(param_string: str, line_number: int = 0) -> dict[str, Any]:
-    """Parse JCL parameters from parameter string"""
+def _parse_parameters(
+    param_string: str, line_number: int = 0, warnings: list[str] | None = None
+) -> dict[str, Any]:
+    """Parse JCL parameters from parameter string.
+
+    Args:
+        param_string: Raw parameter text (everything after the statement type).
+        line_number: Source line, used to annotate any warnings.
+        warnings: Optional list to receive non-fatal diagnostics, e.g. a
+            repeated keyword silently overwriting its earlier value.
+    """
     parameters: dict[str, Any] = {}
 
     if not param_string.strip():
@@ -1261,6 +1316,12 @@ def _parse_parameters(param_string: str, line_number: int = 0) -> dict[str, Any]
             eq_pos = keyword_eq_pos
             key = part[:eq_pos].strip().upper()  # Uppercase key
             value = part[eq_pos + 1 :].strip()
+
+            if key in parameters and warnings is not None:
+                warnings.append(
+                    f"Line {line_number}: duplicate parameter '{key}' "
+                    f"(previous value {parameters[key]!r} overwritten by '{value}')"
+                )
 
             # Handle parameter lists like DSN=(A,B,C)
             if value.startswith("(") and value.endswith(")"):

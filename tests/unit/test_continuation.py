@@ -142,7 +142,13 @@ class TestContinuationLineHandler:
         assert "BLKSIZE=27920)" in merged_line
 
     def test_merge_with_comments(self):
-        """Test merging continuation lines with interspersed comments."""
+        """Test merging continuation lines with interspersed comments.
+
+        Per z/OS, a //* comment does not terminate a statement that has a
+        pending continuation (trailing comma): the comment is preserved in
+        the output, but the continuation resumes past it so operand data
+        is not lost.
+        """
         handler = ContinuationLineHandler()
 
         lines = [
@@ -154,19 +160,18 @@ class TestContinuationLineHandler:
 
         merged = handler.merge_continuation_lines(lines)
 
-        # Should have 3 results: DD1 (stopped at comment), comment, and new DD continuation
-        assert len(merged) == 3
+        # Two results: the comment, and the fully-merged DD statement.
+        assert len(merged) == 2
 
-        # First is DD1 with just DSN (comment broke the continuation)
-        assert "DSN=MY.DATA" in merged[0][0]
-        assert "DISP" not in merged[0][0]  # Comment broke continuation
+        comment_entries = [m for m in merged if m[0].startswith("//*")]
+        assert len(comment_entries) == 1
+        assert comment_entries[0][0] == "//* This is a comment"
 
-        # Second is the comment
-        assert merged[1][0].startswith("//*")
-
-        # Third is the continuation lines after comment (merged together)
-        assert "DISP=SHR" in merged[2][0]
-        assert "UNIT=SYSDA" in merged[2][0]
+        dd_entries = [m for m in merged if m[0].startswith("//DD1")]
+        assert len(dd_entries) == 1
+        assert "DSN=MY.DATA" in dd_entries[0][0]
+        assert "DISP=SHR" in dd_entries[0][0]
+        assert "UNIT=SYSDA" in dd_entries[0][0]
 
     def test_merge_alternative_continuation_format(self):
         """Test merging alternative continuation format (// ,param)."""

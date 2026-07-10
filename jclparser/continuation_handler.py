@@ -86,6 +86,22 @@ class ContinuationLineHandler:
             return first_keyword
         return ""
 
+    def _looks_like_new_statement(self, line: str) -> bool:
+        """Return True if *line* has a non-blank name field (e.g. ``//S2
+        EXEC PGM=Y`` or even ``//S2 UNKNOWNOP FOO=BAR``).
+
+        Per z/OS syntax, a true continuation record's name field (columns
+        3-10) is always blank, so a line whose content starts immediately
+        after ``//`` with no leading space is always a fresh statement —
+        never a continuation — regardless of whether its operation keyword
+        is one this parser recognizes, and even if the previous line ended
+        with a dangling comma.
+        """
+        if not line.startswith("//"):
+            return False
+        content = line[2:]
+        return bool(content) and not content[0].isspace()
+
     def is_continuation_line(
         self,
         line: str,
@@ -126,7 +142,12 @@ class ContinuationLineHandler:
                 return True
 
         if has_implicit_continuation or has_unclosed_context:
-            if line.strip().startswith("//") and not line.strip().startswith("//*"):
+            stripped_line = line.strip()
+            if (
+                stripped_line.startswith("//")
+                and not stripped_line.startswith("//*")
+                and not self._looks_like_new_statement(line)
+            ):
                 return True
 
         return False
@@ -165,14 +186,37 @@ class ContinuationLineHandler:
             # Compute initial context for this statement line once.
             cached_ctx = self._analyze_line_context(merged_line)
             j = i + 1
+            # Comments encountered mid-continuation are buffered and emitted
+            # right after the statement they interrupted (see below) instead
+            # of immediately, so the statement itself keeps its place in the
+            # output relative to source order.
+            interspersed_comments: List[Tuple[str, int]] = []
 
             # Look ahead for continuation lines
             while j < len(lines):
                 next_line = lines[j]
+                next_stripped = next_line.strip()
 
-                # Stop merging if we hit a comment or empty line
-                # (Comments break continuation chains)
-                if not next_line.strip() or next_line.strip().startswith("//*"):
+                if next_stripped.startswith("//*"):
+                    # A comment does not terminate a statement that has an
+                    # explicit pending continuation (trailing comma, or an
+                    # unclosed paren/quote) — per z/OS, comments may be
+                    # interspersed within a continued statement. Preserve the
+                    # comment in the output and keep looking for the actual
+                    # continuation line so its operands aren't lost.
+                    pending_continuation = (
+                        merged_line.rstrip().endswith(",")
+                        or cached_ctx.paren_depth > 0
+                        or cached_ctx.in_quotes
+                    )
+                    if pending_continuation:
+                        interspersed_comments.append((next_line, j + 1))
+                        j += 1
+                        continue
+                    break
+
+                # Stop merging if we hit an empty line
+                if not next_stripped:
                     break
 
                 # Check if next line is a continuation, passing cached context
@@ -214,6 +258,7 @@ class ContinuationLineHandler:
                 )
 
             merged.append((merged_line, original_line_num))
+            merged.extend(interspersed_comments)
             i = j
 
         return merged

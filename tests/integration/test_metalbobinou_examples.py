@@ -193,17 +193,20 @@ class TestIefbr14Allocate:
         assert job.steps[0].program == "IEFBR14"
 
     def test_dd_allocation_parameters(self):
-        """DD1 continuation is broken by the //* comment on line 00070008.
+        """DD1's continuation spans a //* comment on line 00070008.
 
-        In standard JCL a comment card terminates the preceding DD continuation,
-        so UNIT and SPACE do not merge into DD1.  Only DSN and DISP survive.
+        Per z/OS, a comment card does not terminate a DD statement that has
+        a pending comma continuation — it is transparent to the merge, so
+        UNIT, SPACE, and DCB (all on post-comment lines) still merge into
+        DD1 alongside DSN and DISP.
         """
         job = parse_jcl(FIXTURES / "iefbr14_alloc.jcl")
         dd1 = job.steps[0].get_dd("DD1")
         assert dd1.dataset_name == "STAGE04.ALLOC.PARJCL.DEMO"
         assert dd1.disposition == ["NEW", "CATLG", "DELETE"]
-        # UNIT/SPACE are on post-comment lines; the comment breaks the chain
-        assert "UNIT" not in dd1.parameters
+        assert dd1.parameters.get("UNIT") == "3390"
+        assert dd1.parameters.get("SPACE") == ["TRK", "(2,5,25)"]
+        assert "DCB" in dd1.parameters
 
 
 @pytest.mark.integration

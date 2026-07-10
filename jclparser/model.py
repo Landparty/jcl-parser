@@ -161,6 +161,10 @@ class Statement:
     name: str
     parameters: dict[str, Any] = field(default_factory=dict)
     line_number: int = 0
+    #: Non-fatal issues detected while parsing this single statement (e.g. a
+    #: duplicate keyword parameter that silently overwrote an earlier value).
+    #: Propagated into :attr:`Job.warnings` by the main parse loop.
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -630,6 +634,12 @@ class Job:
     #: Propagated into invoked PROC scopes during explosion.  A literal ``"*"``
     #: exports every SET symbol.
     exported_symbols: set[str] = field(default_factory=set)
+    #: Non-fatal parsing issues collected while building this job — e.g.
+    #: duplicate keyword parameters, unrecognized statement types, or
+    #: symbols that resolved to an empty string because they were never
+    #: defined.  Parsing never fails because of these; they exist so a
+    #: consumer can detect silent data loss without re-scanning the source.
+    warnings: list[str] = field(default_factory=list)
 
     def add_step(self, step: Step | ConditionalBlock) -> None:
         """Add an execution step to this job"""

@@ -193,6 +193,7 @@ def _make_replacer(
     strict: bool,
     allow_undefined: bool,
     source_text: str = "",
+    warnings: Optional[List[str]] = None,
 ):
     """Create a regex replacer function for symbol substitution."""
 
@@ -208,6 +209,11 @@ def _make_replacer(
                 return m.group(0)  # leave as-is
             if strict:
                 raise UndefinedSymbolError(symbol_name, source_text=source_text)
+            if warnings is not None:
+                warnings.append(
+                    f"unresolved symbol &{symbol_name} in '{source_text}' "
+                    "resolved to empty string"
+                )
             return ""
         logger.debug("resolved &%s -> %s", symbol_name, value)
         return value
@@ -216,7 +222,11 @@ def _make_replacer(
 
 
 def substitute_symbols(
-    text: str, scope: "SymbolScope", strict: bool = False, allow_undefined: bool = False
+    text: str,
+    scope: "SymbolScope",
+    strict: bool = False,
+    allow_undefined: bool = False,
+    warnings: Optional[List[str]] = None,
 ) -> str:
     """
     Substitute symbolic parameters in text.
@@ -229,6 +239,9 @@ def substitute_symbols(
         scope: Symbol resolution scope
         strict: If True, raise error for undefined symbols
         allow_undefined: If True, leave undefined symbols as-is
+        warnings: Optional list to receive a message whenever an undefined
+            symbol is silently resolved to an empty string (only relevant
+            when strict=False and allow_undefined=False, the default).
 
     Returns:
         Text with symbols substituted
@@ -239,7 +252,10 @@ def substitute_symbols(
     if not text or not isinstance(text, str):
         return text
     return _SYMBOL_SUB_PATTERN.sub(
-        _make_replacer(scope, strict, allow_undefined, source_text=text), text
+        _make_replacer(
+            scope, strict, allow_undefined, source_text=text, warnings=warnings
+        ),
+        text,
     )
 
 
@@ -396,7 +412,10 @@ def _strip_empty_member(dataset_name: str) -> str:
 
 
 def substitute_dd_statement(
-    dd: DDStatement, scope: SymbolScope, strict: bool = False
+    dd: DDStatement,
+    scope: SymbolScope,
+    strict: bool = False,
+    warnings: Optional[List[str]] = None,
 ) -> None:
     """
     Substitute symbols in DD statement (in-place).
@@ -405,20 +424,46 @@ def substitute_dd_statement(
         dd: DD statement to process
         scope: Symbol resolution scope
         strict: Whether to raise on undefined symbols
+        warnings: Optional list to receive a message (with DD name/line
+            context) whenever an undefined symbol silently resolves to an
+            empty string in this DD's dataset name or disposition.
     """
+    local_warnings: Optional[List[str]] = [] if warnings is not None else None
+
     # Substitute dataset name
     if dd.dataset_name:
-        dd.dataset_name = substitute_symbols(dd.dataset_name, scope, strict=strict)
+        dd.dataset_name = substitute_symbols(
+            dd.dataset_name, scope, strict=strict, warnings=local_warnings
+        )
         dd.dataset_name = _strip_empty_member(dd.dataset_name)
 
-    # Substitute disposition
+    # Substitute disposition. DISP=(&STATUS,CATLG,DELETE) parses to a list,
+    # not a plain string, so each element needs its own substitution pass —
+    # substitute_symbols() is a no-op for non-str input and would otherwise
+    # silently skip symbols in list-valued dispositions.
     if dd.disposition:
-        dd.disposition = substitute_symbols(dd.disposition, scope, strict=strict)
+        if isinstance(dd.disposition, list):
+            dd.disposition = [
+                substitute_symbols(v, scope, strict=strict, warnings=local_warnings)
+                if isinstance(v, str)
+                else v
+                for v in dd.disposition
+            ]
+        else:
+            dd.disposition = substitute_symbols(
+                dd.disposition, scope, strict=strict, warnings=local_warnings
+            )
 
     # Substitute all parameters
     dd.parameters = substitute_parameters_dict(dd.parameters, scope, strict=strict)
 
     # Note: inline_data intentionally NOT substituted (data content preserved)
+
+    if warnings is not None and local_warnings:
+        for msg in local_warnings:
+            warnings.append(
+                f"Line {dd.line_number}: DD {dd.name or '(unnamed)'}: {msg}"
+            )
 
 
 def apply_dd_overrides(
