@@ -110,7 +110,8 @@ def _claude_mode(repo_root: Path) -> int:
 def main():
     result = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         return 0
