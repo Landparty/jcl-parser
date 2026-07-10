@@ -28,6 +28,7 @@ build/
 *.sqlite3
 .cache/
 .pytest_cache/
+.benchmarks/
 
 # IDE/editor files
 .vscode/
