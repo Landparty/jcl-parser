@@ -12,6 +12,7 @@ from jclparser.errors import JCLStructureError
 from jclparser.explosion import SymbolScope, substitute_dd_statement
 from jclparser.model import DDStatement
 from jclparser.parser import _parse_parameters, validate_jcl
+from jclparser.utils import read_source
 
 
 class TestDuplicateParameterWarning:
@@ -203,3 +204,189 @@ class TestValidateJclReturnsStructureErrors:
         jcl = "//J JOB 1\n//DD1 DD DSN=ORPHAN,DISP=SHR\n"
         with pytest.raises(JCLStructureError):
             parse_jcl(jcl, strict_mode=True)
+
+
+class TestReadSourceSlashStarMisrouting:
+    """A JCL string starting with a JES control card (/*JOBPARM, etc.) must
+    not be misrouted through the file-path heuristic."""
+
+    def test_slash_star_start_treated_as_content(self):
+        jcl = "/*JOBPARM SYSAFF=SYS1\n//J JOB\n//S EXEC PGM=A\n"
+        assert read_source(jcl) == jcl
+
+    def test_single_line_slash_star_not_looked_up_as_file(self):
+        # No newline at all -- must still not be treated as a filesystem path.
+        assert read_source("/*JOBPARM SYSAFF=SYS1") == "/*JOBPARM SYSAFF=SYS1"
+
+    def test_full_pipeline_no_longer_raises_file_not_found(self):
+        jcl = "/*JOBPARM SYSAFF=SYS1\n//J JOB\n//S EXEC PGM=A\n"
+        job = parse_jcl(jcl)
+        assert job.name == "J"
+
+
+class TestPreJobJesStatementsPreserved:
+    """JES2/JES3 control cards (e.g. /*JOBPARM) may legally precede the JOB
+    statement; they must not be silently dropped."""
+
+    def test_jes_statement_before_job_recorded(self):
+        jcl = "/*JOBPARM SYSAFF=SYS1\n//J JOB\n//S EXEC PGM=A\n"
+        job = parse_jcl(jcl)
+        assert any("JOBPARM" in s for s in job.jes_statements)
+
+    def test_jes_statement_after_job_still_recorded(self):
+        jcl = "//J JOB\n/*JOBPARM SYSAFF=SYS1\n//S EXEC PGM=A\n"
+        job = parse_jcl(jcl)
+        assert any("JOBPARM" in s for s in job.jes_statements)
+
+
+class TestOrphanedDdWarning:
+    """DDs with no EXEC anywhere in the job are still discarded (by design),
+    but that loss must now be recorded on Job.warnings."""
+
+    def test_orphaned_dd_no_exec_anywhere_warns(self):
+        job = parse_jcl("//J JOB 1\n//DD1 DD DSN=ORPHAN,DISP=SHR\n")
+        assert job.steps == []
+        assert any("DD1" in w and "no EXEC" in w for w in job.warnings)
+
+    def test_orphaned_dd_attached_to_first_exec_does_not_warn(self):
+        # DDs before the first EXEC (e.g. JOBLIB-adjacent) are legitimately
+        # attached once an EXEC does appear -- no warning in that case.
+        jcl = "//J JOB 1\n//DD1 DD DSN=A.B,DISP=SHR\n//S EXEC PGM=X\n"
+        job = parse_jcl(jcl)
+        assert job.steps[0].get_dd("DD1") is not None
+        assert job.warnings == []
+
+
+class TestMalformedConditionalWarnings:
+    """Stray ELSE/ENDIF with no matching IF, and an IF with no matching
+    ENDIF, must be recorded instead of silently ignored."""
+
+    def test_stray_endif_and_else_warn(self):
+        jcl = "//J JOB 1\n//S1 EXEC PGM=A\n// ENDIF\n// ELSE\n//S2 EXEC PGM=B\n"
+        job = parse_jcl(jcl)
+        assert any("ENDIF with no matching IF" in w for w in job.warnings)
+        assert any("ELSE with no matching IF" in w for w in job.warnings)
+        # Steps on either side of the malformed conditionals are unaffected.
+        assert [s.name for s in job.steps] == ["S1", "S2"]
+
+    def test_unclosed_if_warns(self):
+        jcl = "//J JOB 1\n// IF (RC = 0) THEN\n//S1 EXEC PGM=A\n"
+        job = parse_jcl(jcl)
+        assert any("IF block has no matching ENDIF" in w for w in job.warnings)
+
+
+class TestJobLevelXmitInlineData:
+    """A job-level XMIT (no enclosing step) must still consume its inline
+    data block instead of letting the transmitted lines fall through to
+    parse_statement() and raise as invalid JCL."""
+
+    def test_job_level_xmit_data_consumed_without_crash(self):
+        jcl = (
+            "//MYJOB JOB (ACCT)\n"
+            "//XMITST XMIT DEST=NODE\n"
+            "transmitted line 1\n"
+            "transmitted line 2\n"
+            "/*\n"
+            "//STEP1 EXEC PGM=A\n"
+        )
+        job = parse_jcl(jcl)
+        assert [s.name for s in job.steps] == ["STEP1"]
+
+    def test_step_level_xmit_still_attaches_dd(self):
+        jcl = (
+            "//MYJOB JOB (ACCT)\n"
+            "//STEP1 EXEC PGM=A\n"
+            "//XMITST XMIT DEST=NODE\n"
+            "transmitted line 1\n"
+            "/*\n"
+        )
+        job = parse_jcl(jcl)
+        assert job.steps[0].get_dd("XMITST") is not None
+
+
+class TestDoubleAmpersandConsistency:
+    """DSN=&&TEMP must stay a literal "&&TEMP" after parse_jcl() regardless
+    of whether the job has any (unrelated) SET statements -- "&&" collapsing
+    is explode_job()'s job, not plain parsing's."""
+
+    def _dsn(self, jcl):
+        return parse_jcl(jcl).steps[0].dd_statements[0]
+
+    def test_double_amp_literal_with_no_set_statements(self):
+        jcl = "//J JOB 1\n//S EXEC PGM=X\n//D1 DD DSN=&&TEMP\n"
+        dd = self._dsn(jcl)
+        assert dd.dataset_name == "&&TEMP"
+        assert dd.is_temporary()
+
+    def test_double_amp_literal_with_unrelated_set_statement(self):
+        jcl = "//J JOB 1\n// SET FOO=BAR\n//S EXEC PGM=X\n//D1 DD DSN=&&TEMP\n"
+        dd = self._dsn(jcl)
+        assert dd.dataset_name == "&&TEMP"
+        assert dd.is_temporary()
+
+    def test_set_value_containing_double_amp_survives_to_referencing_dd(self):
+        # SET MYTEMP=&&WORK must reach a DD referencing &MYTEMP as the
+        # literal "&&WORK" -- not collapsed during SET-value processing, not
+        # collapsed during the post-parse resolution pass, and not excluded
+        # from the resolved-symbol table just because it contains "&".
+        jcl = "//J JOB 1\n// SET MYTEMP=&&WORK\n//S EXEC PGM=X\n//D1 DD DSN=&MYTEMP\n"
+        job = parse_jcl(jcl)
+        dd = job.steps[0].dd_statements[0]
+        assert dd.dataset_name == "&&WORK"
+        assert dd.is_temporary()
+        assert job.warnings == []
+
+    def test_job_set_statements_preserves_double_amp(self):
+        # job.set_statements is a public Tier-1 attribute; it must show the
+        # SET value as written, not with "&&" already collapsed.
+        jcl = "//J JOB 1\n// SET VAR=&&PREFIX.DATA\n//S EXEC PGM=X\n"
+        job = parse_jcl(jcl)
+        assert job.set_statements["VAR"] == "&&PREFIX.DATA"
+
+    def test_genuine_set_cycle_still_excluded_and_warns(self):
+        # A real unresolvable cycle (not just an escaped "&&") must still be
+        # excluded from the resolved scope and reported.
+        jcl = (
+            "//J JOB 1\n"
+            "// SET A=&B.\n"
+            "// SET B=&A.\n"
+            "//S EXEC PGM=X\n"
+            "//D1 DD DSN=&A..FILE\n"
+        )
+        job = parse_jcl(jcl)
+        dd = job.steps[0].dd_statements[0]
+        assert dd.dataset_name == ".FILE"
+        assert any("&A" in w for w in job.warnings)
+
+
+class TestExecParmSymbolResolution:
+    """EXEC PARM=&SYM must resolve the same job-level SET symbols that DD
+    dataset names already do -- previously only DD DSN= got substituted at
+    parse_jcl() time, leaving PARM= as a literal, unresolved-looking string."""
+
+    def test_parm_and_dsn_resolve_the_same_symbol(self):
+        jcl = (
+            "//J JOB 1\n"
+            "// SET MODE=PROD\n"
+            "//STEP1 EXEC PGM=MYPGM,PARM=&MODE\n"
+            "//DD1 DD DSN=&MODE..FILE\n"
+        )
+        job = parse_jcl(jcl)
+        assert job.steps[0].parameters["PARM"] == "PROD"
+        assert job.steps[0].dd_statements[0].dataset_name == "PROD.FILE"
+        assert job.warnings == []
+
+    def test_unresolved_symbol_in_parm_warns(self):
+        jcl = "//J JOB 1\n// SET FOO=BAR\n//STEP1 EXEC PGM=MYPGM,PARM=&UNDEF\n"
+        job = parse_jcl(jcl)
+        assert job.steps[0].parameters["PARM"] == ""
+        assert any("&UNDEF" in w and "STEP1" in w for w in job.warnings)
+
+    def test_no_set_statements_leaves_parm_literal(self):
+        # Without any job SET statement there is nothing to resolve at parse
+        # time; PARM stays as the literal source text (consistent with how
+        # DD DSN= behaves when the job has no SET statements either).
+        jcl = "//J JOB 1\n//STEP1 EXEC PGM=MYPGM,PARM=&MODE\n"
+        job = parse_jcl(jcl)
+        assert job.steps[0].parameters["PARM"] == "&MODE"
+        assert job.warnings == []

@@ -52,16 +52,34 @@ def _resolve_set_value(value: str, known_symbols: dict[str, str]) -> str:
     """Resolve &SYMBOL references in a SET value using already-accumulated SET symbols.
 
     Mirrors the mainframe rule: SET values are evaluated left-to-right so a
-    symbol can reference any earlier SET in the same job.
+    symbol can reference any earlier SET in the same job. A literal "&&" is
+    left untouched here -- collapsing it would corrupt a SET value that
+    itself holds a "&&NAME" temporary-dataset marker (e.g. ``SET
+    MYTEMP=&&WORK``) before it ever reaches a DD statement. That collapse is
+    explode_job()'s job (Tier 2), not this Tier-1 SET-value resolution.
     """
 
     def _replacer(m: re.Match) -> str:
         if m.group(0) == "&&":
-            return "&"
+            return "&&"
         sym = m.group(1).upper()
         return known_symbols.get(sym, m.group(0))
 
     return _SET_SYMBOL_PATTERN.sub(_replacer, value)
+
+
+def _has_unresolved_symbol_ref(value: str) -> bool:
+    """True if *value* still contains a genuine (unescaped) &SYMBOL reference,
+    as opposed to only escaped literal "&&" pairs.
+
+    Used to decide whether a resolved SET value is safe to propagate into DD
+    dataset names/EXEC parameters. A value that legitimately contains "&&"
+    (e.g. from ``SET MYTEMP=&&WORK``) must not be excluded the same way a
+    value with a genuinely unresolved reference (e.g. "&B." left over from an
+    unresolvable SET cycle) is -- both contain an "&" character, but only the
+    latter is actually unresolved.
+    """
+    return any(m.group(0) != "&&" for m in _SET_SYMBOL_PATTERN.finditer(value))
 
 
 #: All recognised JCL statement type keywords (single canonical definition).
@@ -254,6 +272,10 @@ def _parse_jcl_core(
     #: Warnings collected before the JOB statement is seen (no job.warnings yet
     #: to append to); flushed onto job.warnings once the Job object exists.
     pending_warnings: list[str] = []
+    #: JES2/JES3 control statements (e.g. /*JOBPARM) seen before the JOB
+    #: statement, which is legal per z/OS; flushed once job exists.
+    pending_jes_statements: list[str] = []
+    pending_jes_typed: list[Any] = []
 
     for line, line_num in merged_lines:
         try:
@@ -508,25 +530,46 @@ def _parse_jcl_core(
                     else:
                         job.steps.append(conditional)
                     conditional_stack.append((conditional, "THEN"))
-                elif stmt.type == "THEN" and conditional_stack:
-                    active_cond, _ = conditional_stack.pop()
-                    conditional_stack.append((active_cond, "THEN"))
-                elif stmt.type == "ELSE" and conditional_stack:
-                    active_cond, _ = conditional_stack.pop()
-                    conditional_stack.append((active_cond, "ELSE"))
-                elif stmt.type == "ENDIF" and conditional_stack:
-                    conditional_stack.pop()
+                elif stmt.type == "THEN":
+                    if conditional_stack:
+                        active_cond, _ = conditional_stack.pop()
+                        conditional_stack.append((active_cond, "THEN"))
+                    else:
+                        (job.warnings if job is not None else pending_warnings).append(
+                            f"Line {line_num}: THEN with no matching IF; ignored"
+                        )
+                elif stmt.type == "ELSE":
+                    if conditional_stack:
+                        active_cond, _ = conditional_stack.pop()
+                        conditional_stack.append((active_cond, "ELSE"))
+                    else:
+                        (job.warnings if job is not None else pending_warnings).append(
+                            f"Line {line_num}: ELSE with no matching IF; ignored"
+                        )
+                elif stmt.type == "ENDIF":
+                    if conditional_stack:
+                        conditional_stack.pop()
+                    else:
+                        (job.warnings if job is not None else pending_warnings).append(
+                            f"Line {line_num}: ENDIF with no matching IF; ignored"
+                        )
             elif stmt.type == "JES":
-                if job:
-                    raw_params = stmt.parameters.get("_raw", "")
-                    jes_content = f"/*{stmt.name} {raw_params}".strip()
-                    job.jes_statements.append(jes_content)
-                    # Also try to promote to a typed JES control statement.
-                    from .jes_statements import parse_jes_control
+                raw_params = stmt.parameters.get("_raw", "")
+                jes_content = f"/*{stmt.name} {raw_params}".strip()
+                # Also try to promote to a typed JES control statement.
+                from .jes_statements import parse_jes_control
 
-                    typed = parse_jes_control(stmt.name, raw_params, stmt.line_number)
+                typed = parse_jes_control(stmt.name, raw_params, stmt.line_number)
+                if job is not None:
+                    job.jes_statements.append(jes_content)
                     if typed is not None:
                         job.jes_typed_statements.append(typed)
+                else:
+                    # JES2/JES3 control cards (e.g. /*JOBPARM) may legally
+                    # precede the JOB statement; buffer until job exists.
+                    pending_jes_statements.append(jes_content)
+                    if typed is not None:
+                        pending_jes_typed.append(typed)
 
             elif stmt.type == "OUTPUT":
                 # OUTPUT statement - JES output descriptor; promote to typed model
@@ -574,8 +617,16 @@ def _parse_jcl_core(
                     in_inline_data = True
                     inline_data_lines = []
                 else:
-                    # Treat job-level XMIT as ignored/comment
-                    pass
+                    # Job-level XMIT has no step to attach a DD to, but the
+                    # transmitted data block that follows must still be
+                    # consumed as inline data -- otherwise those lines fall
+                    # through to parse_statement() and raise as invalid
+                    # JCL. There is nowhere to store this data, so discard
+                    # it; clear current_dd so the inline-data-end handler
+                    # doesn't misattach it to an unrelated earlier DD.
+                    current_dd = None
+                    in_inline_data = True
+                    inline_data_lines = []
 
         except (JCLSyntaxError, JCLValidationError):
             raise
@@ -596,6 +647,28 @@ def _parse_jcl_core(
 
     if pending_warnings:
         job.warnings.extend(pending_warnings)
+
+    if pending_jes_statements:
+        job.jes_statements.extend(pending_jes_statements)
+    if pending_jes_typed:
+        job.jes_typed_statements.extend(pending_jes_typed)
+
+    # orphaned_dds is only ever non-empty here when the whole job had no EXEC
+    # statement at all (the first EXEC always flushes and clears the list) --
+    # those DD statements have nowhere to attach and are discarded, so record
+    # what was lost instead of vanishing them silently.
+    if orphaned_dds:
+        dd_names = ", ".join(dd.name or "(unnamed)" for dd in orphaned_dds)
+        job.warnings.append(
+            f"{len(orphaned_dds)} DD statement(s) found with no EXEC step "
+            f"anywhere in the job; discarded: {dd_names}"
+        )
+
+    # An IF block left open (no matching ENDIF) at end-of-job is malformed
+    # JCL; the then/else steps collected so far are still attached to the
+    # ConditionalBlock and not lost, but the imbalance itself is worth flagging.
+    for _cond, _branch in conditional_stack:
+        job.warnings.append(f"Line {_cond.line_number}: IF block has no matching ENDIF")
 
     # Create and attach procedure loader for external PROC loading
     if enable_external_procs and job.jcllib_order:
@@ -690,6 +763,13 @@ def _parse_jcl_core(
     # the literal string "&A." and are left unresolved after the parse loop.
     # We fix those here by iteratively pre-resolving the symbol table until it
     # stabilises (up to 10 passes, which also bounds any accidental cycle).
+    # This pass must never collapse "&&" to a literal "&":
+    # DDStatement.is_temporary() detects temporary datasets by their raw
+    # "&&NAME" prefix, and parse_jcl() output must keep that detectable --
+    # "&&" collapsing is explode_job()'s job (Tier 2), not this Tier-1 pass.
+    # It also covers EXEC step parameters (e.g. PARM=&SYM), not just DD
+    # dataset names/dispositions, so a job-level SET symbol resolves the same
+    # way regardless of which kind of statement references it.
     if job.set_statements:
         logger.debug(
             "resolving %d SET symbol(s) across DD statements",
@@ -697,6 +777,7 @@ def _parse_jcl_core(
         )
         from .explosion import (  # noqa: PLC0415
             substitute_dd_statement,
+            substitute_parameters_dict,
             substitute_symbols,
             SymbolScope,
         )
@@ -718,7 +799,10 @@ def _parse_jcl_core(
                     set_symbols={k: v for k, v in _raw.items() if k != _name}
                 )
                 _new_val = substitute_symbols(
-                    _val, _scope_for_val, allow_undefined=True
+                    _val,
+                    _scope_for_val,
+                    allow_undefined=True,
+                    collapse_double_amp=False,
                 )
                 if _new_val != _val:
                     _raw[_name] = _new_val
@@ -726,17 +810,43 @@ def _parse_jcl_core(
             if not _changed:
                 break  # table has stabilised – no need for more passes
 
-        # Symbols whose values still contain unresolved &-references after all
-        # passes are excluded from the final scope.  Propagating a raw "&B."
-        # value into a DD dataset_name would leave a literal token in the
-        # output; instead, strict=False in substitute_dd_statement will silently
-        # elide those unresolvable references (they become empty string).
-        _resolved_symbols = {k: v for k, v in _raw.items() if "&" not in v}
+        # Symbols whose values still contain a genuinely unresolved
+        # &-reference after all passes are excluded from the final scope.
+        # Propagating a raw "&B." value into a DD dataset_name would leave a
+        # literal token in the output; instead, strict=False below will
+        # silently elide those unresolvable references (they become empty
+        # string) and warn. A value that legitimately contains "&&" (e.g.
+        # SET MYTEMP=&&WORK) is NOT excluded -- it has nothing left to
+        # resolve, it just happens to contain an escaped literal ampersand.
+        _resolved_symbols = {
+            k: v for k, v in _raw.items() if not _has_unresolved_symbol_ref(v)
+        }
         _set_scope = SymbolScope(set_symbols=_resolved_symbols)
         for _dd in job.get_dd_statements():
             substitute_dd_statement(
-                _dd, _set_scope, strict=False, warnings=job.warnings
+                _dd,
+                _set_scope,
+                strict=False,
+                warnings=job.warnings,
+                collapse_double_amp=False,
             )
+
+        from .model import iter_execution_steps  # noqa: PLC0415
+
+        for _step in iter_execution_steps(job.steps):
+            _step_warnings: list[str] = []
+            _step.parameters = substitute_parameters_dict(
+                _step.parameters,
+                _set_scope,
+                strict=False,
+                warnings=_step_warnings,
+                collapse_double_amp=False,
+            )
+            for _msg in _step_warnings:
+                job.warnings.append(
+                    f"Line {_step.line_number}: Step "
+                    f"{_step.name or '(unnamed)'}: {_msg}"
+                )
 
     # Validate the parsed job if in strict mode.  Only ERROR-severity findings
     # are fatal — WARNING/INFO findings (e.g. unresolved OUTPUT back-references,

@@ -194,12 +194,13 @@ def _make_replacer(
     allow_undefined: bool,
     source_text: str = "",
     warnings: Optional[List[str]] = None,
+    collapse_double_amp: bool = True,
 ):
     """Create a regex replacer function for symbol substitution."""
 
     def _replacer(m: re.Match) -> str:
         if m.group(0) == "&&":
-            return "&"
+            return "&" if collapse_double_amp else "&&"
         symbol_name = m.group(1)
         # Always resolve with strict=False so that UndefinedSymbolError is raised
         # here (with full source context) rather than inside scope.resolve().
@@ -227,6 +228,7 @@ def substitute_symbols(
     strict: bool = False,
     allow_undefined: bool = False,
     warnings: Optional[List[str]] = None,
+    collapse_double_amp: bool = True,
 ) -> str:
     """
     Substitute symbolic parameters in text.
@@ -242,6 +244,11 @@ def substitute_symbols(
         warnings: Optional list to receive a message whenever an undefined
             symbol is silently resolved to an empty string (only relevant
             when strict=False and allow_undefined=False, the default).
+        collapse_double_amp: If False, leave a literal "&&" untouched instead
+            of collapsing it to "&". Callers that only want to resolve named
+            symbols without touching temporary-dataset names (which use the
+            "&&NAME" idiom, detected via ``DDStatement.is_temporary()``) should
+            pass False here.
 
     Returns:
         Text with symbols substituted
@@ -253,7 +260,12 @@ def substitute_symbols(
         return text
     return _SYMBOL_SUB_PATTERN.sub(
         _make_replacer(
-            scope, strict, allow_undefined, source_text=text, warnings=warnings
+            scope,
+            strict,
+            allow_undefined,
+            source_text=text,
+            warnings=warnings,
+            collapse_double_amp=collapse_double_amp,
         ),
         text,
     )
@@ -363,7 +375,12 @@ def expand_proc_invocation(
 
 
 def substitute_parameters_dict(
-    parameters: Dict[str, Any], scope: SymbolScope, strict: bool = False
+    parameters: Dict[str, Any],
+    scope: SymbolScope,
+    strict: bool = False,
+    allow_undefined: bool = False,
+    warnings: Optional[List[str]] = None,
+    collapse_double_amp: bool = True,
 ) -> Dict[str, Any]:
     """
     Substitute symbols in parameter dictionary.
@@ -372,6 +389,13 @@ def substitute_parameters_dict(
         parameters: Parameter dictionary
         scope: Symbol resolution scope
         strict: Whether to raise on undefined symbols
+        allow_undefined: If True, leave undefined symbols as-is instead of
+            blanking them to an empty string
+        warnings: Optional list to receive a message whenever an undefined
+            symbol is silently resolved to an empty string (ignored when
+            allow_undefined=True, since nothing is blanked in that mode)
+        collapse_double_amp: If False, leave a literal "&&" untouched instead
+            of collapsing it to "&" (see substitute_symbols()).
 
     Returns:
         Dictionary with substituted values
@@ -380,16 +404,37 @@ def substitute_parameters_dict(
 
     for key, value in parameters.items():
         if isinstance(value, str):
-            result[key] = substitute_symbols(value, scope, strict=strict)
+            result[key] = substitute_symbols(
+                value,
+                scope,
+                strict=strict,
+                allow_undefined=allow_undefined,
+                warnings=warnings,
+                collapse_double_amp=collapse_double_amp,
+            )
         elif isinstance(value, (list, tuple)):
             result[key] = [
-                substitute_symbols(str(v), scope, strict=strict)
+                substitute_symbols(
+                    str(v),
+                    scope,
+                    strict=strict,
+                    allow_undefined=allow_undefined,
+                    warnings=warnings,
+                    collapse_double_amp=collapse_double_amp,
+                )
                 if isinstance(v, str)
                 else v
                 for v in value
             ]
         elif isinstance(value, dict):
-            result[key] = substitute_parameters_dict(value, scope, strict=strict)
+            result[key] = substitute_parameters_dict(
+                value,
+                scope,
+                strict=strict,
+                allow_undefined=allow_undefined,
+                warnings=warnings,
+                collapse_double_amp=collapse_double_amp,
+            )
         else:
             result[key] = value
 
@@ -415,7 +460,9 @@ def substitute_dd_statement(
     dd: DDStatement,
     scope: SymbolScope,
     strict: bool = False,
+    allow_undefined: bool = False,
     warnings: Optional[List[str]] = None,
+    collapse_double_amp: bool = True,
 ) -> None:
     """
     Substitute symbols in DD statement (in-place).
@@ -424,16 +471,29 @@ def substitute_dd_statement(
         dd: DD statement to process
         scope: Symbol resolution scope
         strict: Whether to raise on undefined symbols
+        allow_undefined: If True, leave undefined symbols as-is instead of
+            blanking them to an empty string.
         warnings: Optional list to receive a message (with DD name/line
             context) whenever an undefined symbol silently resolves to an
-            empty string in this DD's dataset name or disposition.
+            empty string in this DD's dataset name or disposition. Ignored
+            when allow_undefined=True, since nothing is blanked in that mode.
+        collapse_double_amp: If False, leave a literal "&&" untouched instead
+            of collapsing it to "&". Callers that must preserve the
+            "&&NAME" temporary-dataset idiom (see
+            ``DDStatement.is_temporary()``) ahead of full PROC explosion
+            should pass False here.
     """
     local_warnings: Optional[List[str]] = [] if warnings is not None else None
 
     # Substitute dataset name
     if dd.dataset_name:
         dd.dataset_name = substitute_symbols(
-            dd.dataset_name, scope, strict=strict, warnings=local_warnings
+            dd.dataset_name,
+            scope,
+            strict=strict,
+            allow_undefined=allow_undefined,
+            warnings=local_warnings,
+            collapse_double_amp=collapse_double_amp,
         )
         dd.dataset_name = _strip_empty_member(dd.dataset_name)
 
@@ -444,18 +504,36 @@ def substitute_dd_statement(
     if dd.disposition:
         if isinstance(dd.disposition, list):
             dd.disposition = [
-                substitute_symbols(v, scope, strict=strict, warnings=local_warnings)
+                substitute_symbols(
+                    v,
+                    scope,
+                    strict=strict,
+                    allow_undefined=allow_undefined,
+                    warnings=local_warnings,
+                    collapse_double_amp=collapse_double_amp,
+                )
                 if isinstance(v, str)
                 else v
                 for v in dd.disposition
             ]
         else:
             dd.disposition = substitute_symbols(
-                dd.disposition, scope, strict=strict, warnings=local_warnings
+                dd.disposition,
+                scope,
+                strict=strict,
+                allow_undefined=allow_undefined,
+                warnings=local_warnings,
+                collapse_double_amp=collapse_double_amp,
             )
 
     # Substitute all parameters
-    dd.parameters = substitute_parameters_dict(dd.parameters, scope, strict=strict)
+    dd.parameters = substitute_parameters_dict(
+        dd.parameters,
+        scope,
+        strict=strict,
+        allow_undefined=allow_undefined,
+        collapse_double_amp=collapse_double_amp,
+    )
 
     # Note: inline_data intentionally NOT substituted (data content preserved)
 
