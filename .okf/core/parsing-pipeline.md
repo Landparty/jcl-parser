@@ -15,7 +15,7 @@ Input (string / file / IO)
   → [1] read_source()                     utils.py          — resolves str/Path/file-like to text; file reads fall back utf-8 → latin-1 → cp1252
   → [2] ContinuationLineHandler.process() continuation_handler.py — merges col-71 continuations
   → [3] resolve_includes()                include_loader.py [optional] — expands // INCLUDE
-  → [4] parse_jcl() core loop             parser.py         — builds Job/Step/DD/Procedure objects
+  → [4] parse_jcl() core loop             parser.py         — orchestrates; statement-line parsing lives in _statement_parser.py, model assembly + post-parse passes in _job_builder.py (JobBuilder)
   → [5] ParameterParser                   parameter_ast.py  — typed param ASTs per statement
   → [6] validate_jcl()                    validators.py     [optional] — structural checks
   → [7] explode_job()                     explosion.py      [optional] — PROC + symbol expansion
@@ -30,6 +30,7 @@ Input (string / file / IO)
 - `validate_jcl()` returns `(Job, list[ParseError])` — not a boolean. Always unpack.
 - SET symbols resolve left-to-right; a SET cannot reference a later SET.
 - Column 71 is the continuation column. Never pass pre-stripped lines.
+- Stage 4 is split across three modules (behavior unchanged, layout only): `parser.py` holds the public API (`parse_jcl`, `validate_jcl`, `parse_statement` re-export) and the core loop; `_statement_parser.py` holds single-line statement/parameter parsing; `_job_builder.py` holds `JobBuilder` (per-statement-type handlers) plus the post-parse passes (external PROC loading, `OUTPUT=*.name` refs, SET substitution). All historical `jclparser.parser` imports still work via re-exports.
 
 # Quick Start
 

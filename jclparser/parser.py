@@ -1,177 +1,103 @@
 """
 Core JCL parsing logic.
 
-This module contains the main parsing functions for converting JCL scripts
+This module contains the main parsing entry points for converting JCL scripts
 into structured Python objects with full support for syntax validation
 and plugin extensibility.
+
+The implementation is split across three modules:
+
+* :mod:`jclparser._statement_parser` — single-statement line parsing
+  (``parse_statement``, parameter tokenization, INCLUDE/JCLLIB pre-scans).
+* :mod:`jclparser._job_builder` — ``Statement`` → model assembly
+  (:class:`~jclparser._job_builder.JobBuilder` per-statement handlers) and
+  the post-parse passes (external PROCs, OUTPUT refs, SET substitution).
+* this module — the public API (``parse_jcl``, ``validate_jcl``,
+  ``parse_statement``) and the core loop orchestration.
+
+For backward compatibility every helper that historically lived here is still
+importable from ``jclparser.parser``.
 """
 
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
-from typing import Any, IO, Literal, TYPE_CHECKING, overload
-from .model import (
-    Job,
-    Step,
-    DDStatement,
-    Statement,
-    ConditionalBlock,
-    Procedure,
-    OutputStatement,
+from typing import IO, TYPE_CHECKING, Literal, overload
+
+from ._job_builder import (
+    JobBuilder,
+    _resolve_output_refs,
+    enforce_strict_dd_structure,
+    load_external_procedures,
+    resolve_set_symbols,
 )
-from .errors import (
-    JCLSyntaxError,
-    JCLValidationError,
-    JCLStructureError,
-    ParseError,
-    ErrorType,
-    ErrorSeverity,
-)
-from .plugins import get_plugin_registry, ParserConfig
-from .utils import (
-    normalize_jcl_line,
-    read_source,
-    POSITIONAL_PARAM_PREFIX,
-    is_positional_key,
+from ._statement_parser import (
+    _extract_jcllib_order,
+    _has_include_statement,
+    parse_statement,
 )
 from .continuation_handler import ContinuationLineHandler
-from .condition_parser import parse_condition
+from .errors import (
+    ErrorSeverity,
+    ErrorType,
+    JCLStructureError,
+    JCLSyntaxError,
+    JCLValidationError,
+    ParseError,
+)
+from .model import Job
+from .plugins import ParserConfig, get_plugin_registry
 from .profiling import ProfilerContext, ProfilingResult
+from .utils import is_positional_key, normalize_jcl_line, read_source
+
+# Backward-compatible re-exports: these helpers historically lived in this
+# module and are imported from ``jclparser.parser`` by tests and downstream
+# code. Keep them importable from here.
+from ._job_builder import (  # noqa: F401
+    _SET_SYMBOL_PATTERN,
+    _create_dd_from_statement,
+    _create_job_from_statement,
+    _create_step_from_statement,
+    _exec_has_program_spec,
+    _extract_output_ref_names,
+    _has_unresolved_symbol_ref,
+    _resolve_set_value,
+)
+from ._statement_parser import (  # noqa: F401
+    _OPERATOR_PREFIXES,
+    _RE_HAS_INCLUDE,
+    _STATEMENT_TYPES,
+    _check_param_balance,
+    _find_keyword_eq,
+    _parse_list_parameter,
+    _parse_parameters,
+)
+from .model import (  # noqa: F401
+    ConditionalBlock,
+    DDStatement,
+    OutputStatement,
+    Procedure,
+    Statement,
+    Step,
+)
+from .utils import POSITIONAL_PARAM_PREFIX  # noqa: F401
 
 if TYPE_CHECKING:
     from .include_loader import IncludeMemberLoader
 
 logger = logging.getLogger(__name__)
 
-_SET_SYMBOL_PATTERN = re.compile(r"&&|&([A-Z0-9@#$]+)\.?")
 
+def _merge_source_lines(content: str) -> tuple[list[tuple[str, int]], set[int]]:
+    """Normalize, mark in-stream data, and merge continuation lines.
 
-def _resolve_set_value(value: str, known_symbols: dict[str, str]) -> str:
-    """Resolve &SYMBOL references in a SET value using already-accumulated SET symbols.
-
-    Mirrors the mainframe rule: SET values are evaluated left-to-right so a
-    symbol can reference any earlier SET in the same job. A literal "&&" is
-    left untouched here -- collapsing it would corrupt a SET value that
-    itself holds a "&&NAME" temporary-dataset marker (e.g. ``SET
-    MYTEMP=&&WORK``) before it ever reaches a DD statement. That collapse is
-    explode_job()'s job (Tier 2), not this Tier-1 SET-value resolution.
+    Returns ``(merged_lines, inline_data_indices)`` where *merged_lines* is a
+    list of ``(line, 1-based line number)`` pairs ready for the parse loop and
+    *inline_data_indices* is the set of 0-based original indices that belong
+    to in-stream (``DD *`` / ``DD DATA``) data blocks and must never be parsed
+    as JCL statements.
     """
-
-    def _replacer(m: re.Match) -> str:
-        if m.group(0) == "&&":
-            return "&&"
-        sym = m.group(1).upper()
-        return known_symbols.get(sym, m.group(0))
-
-    return _SET_SYMBOL_PATTERN.sub(_replacer, value)
-
-
-def _has_unresolved_symbol_ref(value: str) -> bool:
-    """True if *value* still contains a genuine (unescaped) &SYMBOL reference,
-    as opposed to only escaped literal "&&" pairs.
-
-    Used to decide whether a resolved SET value is safe to propagate into DD
-    dataset names/EXEC parameters. A value that legitimately contains "&&"
-    (e.g. from ``SET MYTEMP=&&WORK``) must not be excluded the same way a
-    value with a genuinely unresolved reference (e.g. "&B." left over from an
-    unresolvable SET cycle) is -- both contain an "&" character, but only the
-    latter is actually unresolved.
-    """
-    return any(m.group(0) != "&&" for m in _SET_SYMBOL_PATTERN.finditer(value))
-
-
-#: All recognised JCL statement type keywords (single canonical definition).
-_STATEMENT_TYPES: frozenset = frozenset(
-    {
-        "JOB",
-        "EXEC",
-        "DD",
-        "PROC",
-        "PEND",
-        "JCLLIB",
-        "INCLUDE",
-        "SET",
-        "EXPORT",
-        "IF",
-        "THEN",
-        "ELSE",
-        "ENDIF",
-        "XMIT",
-        "OUTPUT",
-        "SCHEDULE",
-        "NULL",
-        "COMMAND",
-        "CNTL",
-        "ENDCNTL",
-    }
-)
-
-#: Lazily-initialised ParameterParser instance shared across calls (same pattern as utils.py).
-_PARAMETER_PARSER = None
-
-#: Characters that can precede '=' to form a relational operator (¬=, ^=, ~=, !=, <=, >=).
-#: Defined at module level so the frozenset is built exactly once.
-_OPERATOR_PREFIXES: frozenset = frozenset("¬^~!<>")
-
-
-def _exec_has_program_spec(parameters: dict) -> bool:
-    """Return True if *parameters* specifies a program, procedure, or positional arg.
-
-    An EXEC statement is valid when it names a program (``PGM=``), an explicit
-    procedure (``PROC=``), or uses a bare positional token (no keyword, treated
-    as a proc name by the parser).
-    """
-    return (
-        "PGM" in parameters
-        or "PROC" in parameters
-        or any(is_positional_key(k) for k in parameters)
-    )
-
-
-def _parse_jcl_core(
-    source: str | Path | IO,
-    strict_mode: bool = False,
-    config: ParserConfig | None = None,
-    proc_base_path: str | Path | None = None,
-    enable_external_procs: bool = True,
-    include_loader: "IncludeMemberLoader | None" = None,
-) -> Job:
-    """Core parsing implementation. See parse_jcl() for full documentation."""
-    # Handle different input source types
-    try:
-        content = read_source(source)
-    except FileNotFoundError:
-        raise
-
-    # Expand INCLUDE MEMBER= statements before the main parse loop so that
-    # inlined content participates in continuation-line merging and everything
-    # else that follows.
-    _expanded_includes: list[str] = []
-    if _has_include_statement(content):
-        from .include_loader import resolve_includes, JCLLIBMemberLoader
-
-        if include_loader is None:
-            include_loader = JCLLIBMemberLoader(base_path=proc_base_path)
-        # Pre-scan the raw content for JCLLIB ORDER so the loader can search
-        # the correct libraries.  This is a best-effort single-line scan;
-        # ORDER values spread across continuation lines are not picked up here
-        # (those are rare in practice).
-        jcllib_libs = _extract_jcllib_order(content) or None
-        content = resolve_includes(
-            content,
-            loader=include_loader,
-            libraries=jcllib_libs,
-            _collected=_expanded_includes,
-        )
-        logger.debug(
-            "expanded %d INCLUDE member(s) before parse: %s",
-            len(_expanded_includes),
-            _expanded_includes,
-        )
-
-    # Parse the content
     raw_lines = content.splitlines()
     lines = [normalize_jcl_line(line) for line in raw_lines]
 
@@ -254,488 +180,92 @@ def _parse_jcl_core(
         elif i in merged_start:
             merged_lines.append((merged_start[i], i + 1))
 
-    # Now parse the merged lines
-    job = None
-    conditional_stack: list[Any] = []  # tuples: (ConditionalBlock, active_branch)
-    current_step = None
-    current_dd = None
-    inline_data_lines: list[str] = []
-    in_inline_data = False
-    current_procedure = None  # Track when we're inside a PROC/PEND block
-    pending_procedures: list[
-        Any
-    ] = []  # Procedures collected before any JOB statement (PROC-only files)
-    current_delimiter = "/*"
-    current_terminates_on_slash = False
-    orphaned_dds: list[Any] = []  # Track DDs that appear before first EXEC
-    in_joblib_concat = False  # True while accumulating JOBLIB concatenation lines
-    #: Warnings collected before the JOB statement is seen (no job.warnings yet
-    #: to append to); flushed onto job.warnings once the Job object exists.
-    pending_warnings: list[str] = []
-    #: JES2/JES3 control statements (e.g. /*JOBPARM) seen before the JOB
-    #: statement, which is legal per z/OS; flushed once job exists.
-    pending_jes_statements: list[str] = []
-    pending_jes_typed: list[Any] = []
+    return merged_lines, inline_data_indices
 
-    for line, line_num in merged_lines:
-        try:
-            # Handle inline data continuation
-            if in_inline_data:
-                if line.strip() == current_delimiter or line.strip().startswith(
-                    current_delimiter
-                ):
-                    # End of inline data
-                    if current_dd:
-                        current_dd.inline_data = "\n".join(inline_data_lines)
-                    inline_data_lines = []
-                    in_inline_data = False
-                    continue
-                elif current_terminates_on_slash and line.startswith("//"):
-                    # Unterminated ``DD *`` data: the next JCL statement ends the
-                    # in-stream block.  Flush what we collected and fall through
-                    # so this record is parsed as a normal statement.
-                    if current_dd:
-                        current_dd.inline_data = "\n".join(inline_data_lines)
-                    inline_data_lines = []
-                    in_inline_data = False
-                else:
-                    # Collect inline data
-                    inline_data_lines.append(line)
-                    continue
 
-            # Skip comments and empty lines (but recognise JES3 //*ROUTE XEQ
-            # control statements before dropping the comment).
-            if not line.strip() or line.strip().startswith("//*"):
-                if line.strip().startswith("//*") and job is not None:
-                    from .jes_statements import parse_jes3_route_xeq
+def _parse_jcl_core(
+    source: str | Path | IO,
+    strict_mode: bool = False,
+    config: ParserConfig | None = None,
+    proc_base_path: str | Path | None = None,
+    enable_external_procs: bool = True,
+    include_loader: "IncludeMemberLoader | None" = None,
+) -> Job:
+    """Core parsing implementation. See parse_jcl() for full documentation."""
+    # Handle different input source types
+    try:
+        content = read_source(source)
+    except FileNotFoundError:
+        raise
 
-                    jes3 = parse_jes3_route_xeq(line, line_num)
-                    if jes3 is not None:
-                        job.jes_typed_statements.append(jes3)
-                continue
+    # Expand INCLUDE MEMBER= statements before the main parse loop so that
+    # inlined content participates in continuation-line merging and everything
+    # else that follows.
+    _expanded_includes: list[str] = []
+    if _has_include_statement(content):
+        from .include_loader import resolve_includes, JCLLIBMemberLoader
 
-            # Skip lines marked as inline data (line_num is 1-indexed, markers use 0-indexed)
-            if (line_num - 1) in inline_data_indices:
-                continue
-
-            # Parse the statement
-            stmt = parse_statement(line, line_num)
-            if not stmt:
-                continue
-
-            if stmt.warnings:
-                if job is not None:
-                    job.warnings.extend(stmt.warnings)
-                else:
-                    pending_warnings.extend(stmt.warnings)
-
-            # Process different statement types
-            if stmt.type == "JOB":
-                if job is not None:
-                    raise JCLSyntaxError("Multiple JOB statements found", line_num)
-                job = _create_job_from_statement(stmt)
-
-            elif stmt.type == "EXEC":
-                if job is None and current_procedure is None:
-                    raise JCLSyntaxError(
-                        "EXEC statement before JOB statement", line_num
-                    )
-
-                # Basic syntax check for EXEC - must have program, procedure, or positional parameter
-                if not _exec_has_program_spec(stmt.parameters):
-                    raise JCLSyntaxError(
-                        "EXEC statement missing program or procedure", line_num
-                    )
-
-                current_step = _create_step_from_statement(stmt)
-                in_joblib_concat = False  # JOBLIB concatenation ends at first EXEC
-
-                # Attach any orphaned DDs to this first step
-                if orphaned_dds:
-                    for dd in orphaned_dds:
-                        current_step.add_dd(dd)
-                    orphaned_dds = []
-
-                # Add step to procedure if we're inside PROC/PEND, otherwise to job
-                if conditional_stack:
-                    active_cond, active_branch = conditional_stack[-1]
-                    if active_branch == "THEN":
-                        active_cond.add_then_step(current_step)
-                    else:
-                        active_cond.add_else_step(current_step)
-                elif current_procedure is not None:
-                    current_procedure.steps.append(current_step)
-                else:
-                    assert job is not None
-                    job.add_step(current_step)
-            elif stmt.type == "DD":
-                # Create the DD statement
-                current_dd = _create_dd_from_statement(stmt)
-
-                if current_step is None:
-                    # JOBLIB is a special job-level DD: keep it separate so
-                    # job.joblib and job.get_library_search_order() can expose it.
-                    if stmt.name == "JOBLIB" and job is not None:
-                        job.joblib_dds.append(current_dd)
-                        in_joblib_concat = True
-                    elif not stmt.name and in_joblib_concat and job is not None:
-                        # Empty-name DD concatenating onto the JOBLIB group
-                        job.joblib_dds.append(current_dd)
-                    else:
-                        in_joblib_concat = False
-                        # Store as orphaned DD to be attached to next step
-                        orphaned_dds.append(current_dd)
-                elif stmt.name and "." in stmt.name:
-                    # This is a DD override for a procedure step
-                    parts = stmt.name.split(".", 1)  # Split on first dot only
-                    if len(parts) == 2:
-                        # Store as override on the current step, keeping the
-                        # qualified name for matching during explosion.
-                        current_step.dd_overrides[stmt.name] = current_dd
-                    else:
-                        # Regular DD statement
-                        current_step.add_dd(current_dd)
-                else:
-                    # Regular DD statement
-                    current_step.add_dd(current_dd)
-
-                # Check for inline data marker (only for non-override DDs)
-                has_star_pos = any(
-                    v == "*"
-                    for k, v in current_dd.parameters.items()
-                    if is_positional_key(k)
-                )
-                is_star_dd = bool(current_dd.parameters.get("*") or has_star_pos)
-                if current_dd and (is_star_dd or "DATA" in current_dd.parameters):
-                    logger.debug(
-                        "inline-data block started at DD %s (line %d)",
-                        current_dd.name or "(unnamed)",
-                        line_num,
-                    )
-                    in_inline_data = True
-                    inline_data_lines = []
-                    has_dlm = "DLM" in current_dd.parameters
-                    current_delimiter = current_dd.parameters.get("DLM", "/*")
-                    # Handle quoted delimiter
-                    if current_delimiter.startswith("'") and current_delimiter.endswith(
-                        "'"
-                    ):
-                        current_delimiter = current_delimiter[1:-1]
-                    # ``DD *`` without an explicit ``DLM=`` also terminates at the
-                    # next ``//`` record; ``DD DATA`` does not (so // can be data).
-                    current_terminates_on_slash = is_star_dd and not has_dlm
-
-            elif stmt.type == "PROC":
-                # Inline procedure definition - start tracking procedure
-                current_procedure = Procedure(
-                    name=stmt.name or "UNNAMED",
-                    parameters=stmt.parameters,
-                    line_number=stmt.line_number,
-                )
-                if job:
-                    job.add_procedure(current_procedure)
-                else:
-                    pending_procedures.append(current_procedure)
-                # Reset current_step since we're now inside procedure
-                current_step = None
-
-            elif stmt.type == "PEND":
-                # End of procedure definition - stop tracking
-                current_procedure = None
-                current_step = None
-
-            elif stmt.type == "SET":
-                # SET symbol=value statement
-                if job:
-                    # For SET statements, parameters are in the format SYMBOL=VALUE
-                    for key, value in stmt.parameters.items():
-                        if not is_positional_key(key):
-                            job.add_set(
-                                key, _resolve_set_value(value, job.set_statements)
-                            )
-                        else:
-                            # Positional parameter might be SYMBOL=VALUE without keyword
-                            param_val = value
-                            if "=" in param_val:
-                                sym, val = param_val.split("=", 1)
-                                job.add_set(
-                                    sym.strip(),
-                                    _resolve_set_value(val.strip(), job.set_statements),
-                                )
-
-            elif stmt.type == "EXPORT":
-                # EXPORT SYMLIST=(A,B,...)  or  EXPORT SYMLIST=*
-                if job:
-                    symlist = stmt.parameters.get("SYMLIST")
-                    names: list[str] = []
-                    if isinstance(symlist, list):
-                        names = [str(n).strip().upper() for n in symlist if n]
-                    elif isinstance(symlist, str):
-                        names = [
-                            n.strip().upper()
-                            for n in symlist.strip("()").split(",")
-                            if n.strip()
-                        ]
-                    for n in names:
-                        job.exported_symbols.add(n)
-
-            elif stmt.type == "JCLLIB":
-                # JCLLIB ORDER=(lib1,lib2,...)
-                if job and "ORDER" in stmt.parameters:
-                    order_value = stmt.parameters["ORDER"]
-                    # ORDER parameter might already be parsed as a list
-                    if isinstance(order_value, list):
-                        job.jcllib_order.extend(order_value)
-                    elif isinstance(order_value, str):
-                        libs = order_value.strip("()").split(",")
-                        job.jcllib_order.extend([lib.strip() for lib in libs])
-
-            elif stmt.type == "INCLUDE":
-                # INCLUDE MEMBER=name
-                if job:
-                    member = stmt.parameters.get("MEMBER") or stmt.parameters.get(
-                        f"{POSITIONAL_PARAM_PREFIX}0"
-                    )
-                    if member:
-                        job.includes.append(member)
-
-            elif stmt.type in ["IF", "THEN", "ELSE", "ENDIF"]:
-                # Conditional logic - track conditionals properly
-                if stmt.type == "IF" and job:
-                    condition_parts = []
-                    if stmt.name and stmt.name != "IF":
-                        condition_parts.append(stmt.name)
-                    for key, value in stmt.parameters.items():
-                        if not key.startswith("_"):
-                            condition_parts.append(f"{key}={value}")
-                        else:
-                            condition_parts.append(str(value))
-                    condition = " ".join(condition_parts)
-                    if condition.upper().endswith(" THEN"):
-                        condition = condition[:-5]
-                    conditional = ConditionalBlock(
-                        condition=condition,
-                        condition_ast=parse_condition(condition),
-                        line_number=stmt.line_number,
-                    )
-                    job.add_conditional(conditional)
-                    if conditional_stack:
-                        active_cond, active_branch = conditional_stack[-1]
-                        if active_branch == "THEN":
-                            active_cond.add_then_step(conditional)
-                        else:
-                            active_cond.add_else_step(conditional)
-                    elif current_procedure is not None:
-                        current_procedure.steps.append(conditional)
-                    else:
-                        job.steps.append(conditional)
-                    conditional_stack.append((conditional, "THEN"))
-                elif stmt.type == "THEN":
-                    if conditional_stack:
-                        active_cond, _ = conditional_stack.pop()
-                        conditional_stack.append((active_cond, "THEN"))
-                    else:
-                        (job.warnings if job is not None else pending_warnings).append(
-                            f"Line {line_num}: THEN with no matching IF; ignored"
-                        )
-                elif stmt.type == "ELSE":
-                    if conditional_stack:
-                        active_cond, _ = conditional_stack.pop()
-                        conditional_stack.append((active_cond, "ELSE"))
-                    else:
-                        (job.warnings if job is not None else pending_warnings).append(
-                            f"Line {line_num}: ELSE with no matching IF; ignored"
-                        )
-                elif stmt.type == "ENDIF":
-                    if conditional_stack:
-                        conditional_stack.pop()
-                    else:
-                        (job.warnings if job is not None else pending_warnings).append(
-                            f"Line {line_num}: ENDIF with no matching IF; ignored"
-                        )
-            elif stmt.type == "JES":
-                raw_params = stmt.parameters.get("_raw", "")
-                jes_content = f"/*{stmt.name} {raw_params}".strip()
-                # Also try to promote to a typed JES control statement.
-                from .jes_statements import parse_jes_control
-
-                typed = parse_jes_control(stmt.name, raw_params, stmt.line_number)
-                if job is not None:
-                    job.jes_statements.append(jes_content)
-                    if typed is not None:
-                        job.jes_typed_statements.append(typed)
-                else:
-                    # JES2/JES3 control cards (e.g. /*JOBPARM) may legally
-                    # precede the JOB statement; buffer until job exists.
-                    pending_jes_statements.append(jes_content)
-                    if typed is not None:
-                        pending_jes_typed.append(typed)
-
-            elif stmt.type == "OUTPUT":
-                # OUTPUT statement - JES output descriptor; promote to typed model
-                if job:
-                    job.output_statements.append(OutputStatement.from_statement(stmt))
-
-            elif stmt.type == "NULL":
-                # NULL statement (//) - just ignore, used as delimiter
-                pass
-
-            elif stmt.type == "COMMAND":
-                # COMMAND statement - operator commands, just ignore
-                pass
-
-            elif stmt.type in ["CNTL", "ENDCNTL"]:
-                # CNTL/ENDCNTL statements - utility control, just ignore
-                pass
-
-            elif stmt.type == "UNKNOWN":
-                # Unknown statement type - log but continue processing
-                statement_type_name = stmt.parameters.get("_statement_type", "")
-                logger.debug(
-                    "unknown statement type %r at line %d; ignoring",
-                    statement_type_name,
-                    line_num,
-                )
-                unknown_msg = (
-                    f"Line {line_num}: unrecognized statement type "
-                    f"'{statement_type_name}' ignored"
-                )
-                if job is not None:
-                    job.warnings.append(unknown_msg)
-                else:
-                    pending_warnings.append(unknown_msg)
-
-            elif stmt.type == "XMIT":
-                # XMIT statement - similar to DD but for data transmission
-                if current_step:
-                    current_dd = DDStatement(
-                        name=stmt.name or "XMIT",
-                        parameters=stmt.parameters,
-                        line_number=stmt.line_number,
-                    )
-                    current_step.add_dd(current_dd)
-                    in_inline_data = True
-                    inline_data_lines = []
-                else:
-                    # Job-level XMIT has no step to attach a DD to, but the
-                    # transmitted data block that follows must still be
-                    # consumed as inline data -- otherwise those lines fall
-                    # through to parse_statement() and raise as invalid
-                    # JCL. There is nowhere to store this data, so discard
-                    # it; clear current_dd so the inline-data-end handler
-                    # doesn't misattach it to an unrelated earlier DD.
-                    current_dd = None
-                    in_inline_data = True
-                    inline_data_lines = []
-
-        except (JCLSyntaxError, JCLValidationError):
-            raise
-
-    # In-stream data that runs to end-of-file without a closing delimiter is
-    # still valid: end-of-input terminates it.  Flush whatever was collected
-    # rather than silently discarding it.
-    if in_inline_data and current_dd and inline_data_lines:
-        current_dd.inline_data = "\n".join(inline_data_lines)
-
-    if job is None:
-        if pending_procedures:
-            job = Job(name="", line_number=0)
-            for proc in pending_procedures:
-                job.add_procedure(proc)
-        else:
-            raise JCLSyntaxError("No JOB statement found", 0)
-
-    if pending_warnings:
-        job.warnings.extend(pending_warnings)
-
-    if pending_jes_statements:
-        job.jes_statements.extend(pending_jes_statements)
-    if pending_jes_typed:
-        job.jes_typed_statements.extend(pending_jes_typed)
-
-    # orphaned_dds is only ever non-empty here when the whole job had no EXEC
-    # statement at all (the first EXEC always flushes and clears the list) --
-    # those DD statements have nowhere to attach and are discarded, so record
-    # what was lost instead of vanishing them silently.
-    if orphaned_dds:
-        dd_names = ", ".join(dd.name or "(unnamed)" for dd in orphaned_dds)
-        job.warnings.append(
-            f"{len(orphaned_dds)} DD statement(s) found with no EXEC step "
-            f"anywhere in the job; discarded: {dd_names}"
+        if include_loader is None:
+            include_loader = JCLLIBMemberLoader(base_path=proc_base_path)
+        # Pre-scan the raw content for JCLLIB ORDER so the loader can search
+        # the correct libraries.  This is a best-effort single-line scan;
+        # ORDER values spread across continuation lines are not picked up here
+        # (those are rare in practice).
+        jcllib_libs = _extract_jcllib_order(content) or None
+        content = resolve_includes(
+            content,
+            loader=include_loader,
+            libraries=jcllib_libs,
+            _collected=_expanded_includes,
+        )
+        logger.debug(
+            "expanded %d INCLUDE member(s) before parse: %s",
+            len(_expanded_includes),
+            _expanded_includes,
         )
 
-    # An IF block left open (no matching ENDIF) at end-of-job is malformed
-    # JCL; the then/else steps collected so far are still attached to the
-    # ConditionalBlock and not lost, but the imbalance itself is worth flagging.
-    for _cond, _branch in conditional_stack:
-        job.warnings.append(f"Line {_cond.line_number}: IF block has no matching ENDIF")
+    # Normalize the content and merge continuation lines
+    merged_lines, inline_data_indices = _merge_source_lines(content)
+
+    # Now parse the merged lines; the builder holds all loop state and has
+    # one handler per statement type (see jclparser/_job_builder.py).
+    builder = JobBuilder()
+    for line, line_num in merged_lines:
+        # Handle inline data continuation
+        if builder.consume_inline_data(line):
+            continue
+
+        # Skip comments and empty lines (but recognise JES3 //*ROUTE XEQ
+        # control statements before dropping the comment).
+        if not line.strip() or line.strip().startswith("//*"):
+            builder.handle_comment_line(line, line_num)
+            continue
+
+        # Skip lines marked as inline data (line_num is 1-indexed, markers use 0-indexed)
+        if (line_num - 1) in inline_data_indices:
+            continue
+
+        # Parse the statement
+        stmt = parse_statement(line, line_num)
+        if not stmt:
+            continue
+
+        # Process the statement (dispatches on stmt.type)
+        builder.handle_statement(stmt, line_num)
+
+    job = builder.finish()
 
     # Create and attach procedure loader for external PROC loading
-    if enable_external_procs and job.jcllib_order:
-        logger.debug("loading external PROCs via JCLLIB order: %s", job.jcllib_order)
-        from .proc_loader import create_default_loader
-
-        proc_loader = create_default_loader(
-            inline_procedures=job.procedures,
-            base_path=Path(proc_base_path)
-            if isinstance(proc_base_path, str)
-            else proc_base_path,
-            include_jcllib=True,
-        )
-        # Store loader on job for later use (e.g., in explosion)
-        job._proc_loader = proc_loader
-
-        # Try to load any external PROCs that were referenced but not found inline
-        # This happens when EXEC PROC is used but PROC is not defined inline
-        for step in job.steps:
-            if (
-                isinstance(step, Step)
-                and step.procedure
-                and not job.get_procedure(step.procedure)
-            ):
-                # Try to load external PROC
-                libraries_list = list(job.jcllib_order) if job.jcllib_order else None
-                proc = proc_loader.load_procedure(step.procedure, libraries_list)
-                if proc:
-                    job.add_procedure(proc)
-                elif strict_mode:
-                    raise JCLSyntaxError(
-                        f"Procedure '{step.procedure}' not found. "
-                        f"Searched in: inline={len(job.procedures)} procedures, "
-                        f"libraries={job.jcllib_order}",
-                        step.line_number,
-                    )
-    else:
-        # External loading disabled or no JCLLIB - check for missing PROCs in strict mode
-        if strict_mode:
-            for step in job.steps:
-                if (
-                    isinstance(step, Step)
-                    and step.procedure
-                    and not job.get_procedure(step.procedure)
-                ):
-                    reason = (
-                        "external PROC loading is disabled"
-                        if not enable_external_procs
-                        else "no JCLLIB ORDER specified"
-                    )
-                    raise JCLSyntaxError(
-                        f"Procedure '{step.procedure}' not found ({reason}). "
-                        f"Searched in: inline={len(job.procedures)} procedures",
-                        step.line_number,
-                    )
+    load_external_procedures(
+        job,
+        strict_mode=strict_mode,
+        proc_base_path=proc_base_path,
+        enable_external_procs=enable_external_procs,
+    )
 
     # In strict mode, a DD statement with no preceding EXEC is a structural error
     if strict_mode and not job.steps:
-        for line in content.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("//") and not stripped.startswith("//*"):
-                parts = stripped.split()
-                if len(parts) >= 2 and parts[1].upper() == "DD":
-                    raise JCLStructureError(
-                        "DD statement found before any EXEC step. "
-                        "Each DD must belong to a step."
-                    )
+        enforce_strict_dd_structure(content)
 
     # Record any INCLUDE members that were expanded during pre-processing.
     # Members resolved before the main parse loop never reach the INCLUDE
@@ -747,106 +277,16 @@ def _parse_jcl_core(
     # Resolve OUTPUT=*.name back-references on every DD.
     _resolve_output_refs(job)
 
-    # Resolve SET symbol references in DD dataset names.  SET statements may
-    # appear before or after the DD statements that reference them, so we
-    # perform a substitution pass *after* the main parse loop once all SET
-    # symbols are fully known.
-    #
-    # We also handle chained SET symbols, e.g.:
-    #   // SET HLQ=CORP
-    #   // SET LIB=&HLQ..DATA        ← value contains a symbol reference
-    #   //DD1 DD DSN=&LIB..FILE      ← should resolve to CORP.DATA.FILE
-    #
-    # _resolve_set_value (called during parsing) already handles backward
-    # references (symbol defined before it is used in a SET value).  Forward
-    # references — where SET B=&A. appears before SET A=VALUE — are stored as
-    # the literal string "&A." and are left unresolved after the parse loop.
-    # We fix those here by iteratively pre-resolving the symbol table until it
-    # stabilises (up to 10 passes, which also bounds any accidental cycle).
-    # This pass must never collapse "&&" to a literal "&":
-    # DDStatement.is_temporary() detects temporary datasets by their raw
-    # "&&NAME" prefix, and parse_jcl() output must keep that detectable --
-    # "&&" collapsing is explode_job()'s job (Tier 2), not this Tier-1 pass.
-    # It also covers EXEC step parameters (e.g. PARM=&SYM), not just DD
-    # dataset names/dispositions, so a job-level SET symbol resolves the same
-    # way regardless of which kind of statement references it.
+    # Resolve SET symbol references in DD dataset names and EXEC parameters.
+    # SET statements may appear before or after the DD statements that
+    # reference them, so this substitution pass runs *after* the main parse
+    # loop once all SET symbols are fully known (see resolve_set_symbols).
     if job.set_statements:
         logger.debug(
             "resolving %d SET symbol(s) across DD statements",
             len(job.set_statements),
         )
-        from .explosion import (  # noqa: PLC0415
-            substitute_dd_statement,
-            substitute_parameters_dict,
-            substitute_symbols,
-            SymbolScope,
-        )
-
-        # Pre-resolve the symbol table so every value is fully expanded before
-        # we apply it to DD dataset names.  On each pass we substitute symbols
-        # within each SET value using the *other* symbols in the table
-        # (excluding the symbol itself prevents direct self-reference loops).
-        # We repeat until no value changes or we reach the pass limit.
-        _raw: dict[str, str] = dict(job.set_statements)
-        for _pass in range(10):
-            _changed = False
-            for _name, _val in list(_raw.items()):
-                if "&" not in _val:
-                    continue
-                # Build a temporary scope that excludes this symbol's own name
-                # so "&A." inside SET A's value does not expand to itself.
-                _scope_for_val = SymbolScope(
-                    set_symbols={k: v for k, v in _raw.items() if k != _name}
-                )
-                _new_val = substitute_symbols(
-                    _val,
-                    _scope_for_val,
-                    allow_undefined=True,
-                    collapse_double_amp=False,
-                )
-                if _new_val != _val:
-                    _raw[_name] = _new_val
-                    _changed = True
-            if not _changed:
-                break  # table has stabilised – no need for more passes
-
-        # Symbols whose values still contain a genuinely unresolved
-        # &-reference after all passes are excluded from the final scope.
-        # Propagating a raw "&B." value into a DD dataset_name would leave a
-        # literal token in the output; instead, strict=False below will
-        # silently elide those unresolvable references (they become empty
-        # string) and warn. A value that legitimately contains "&&" (e.g.
-        # SET MYTEMP=&&WORK) is NOT excluded -- it has nothing left to
-        # resolve, it just happens to contain an escaped literal ampersand.
-        _resolved_symbols = {
-            k: v for k, v in _raw.items() if not _has_unresolved_symbol_ref(v)
-        }
-        _set_scope = SymbolScope(set_symbols=_resolved_symbols)
-        for _dd in job.get_dd_statements():
-            substitute_dd_statement(
-                _dd,
-                _set_scope,
-                strict=False,
-                warnings=job.warnings,
-                collapse_double_amp=False,
-            )
-
-        from .model import iter_execution_steps  # noqa: PLC0415
-
-        for _step in iter_execution_steps(job.steps):
-            _step_warnings: list[str] = []
-            _step.parameters = substitute_parameters_dict(
-                _step.parameters,
-                _set_scope,
-                strict=False,
-                warnings=_step_warnings,
-                collapse_double_amp=False,
-            )
-            for _msg in _step_warnings:
-                job.warnings.append(
-                    f"Line {_step.line_number}: Step "
-                    f"{_step.name or '(unnamed)'}: {_msg}"
-                )
+        resolve_set_symbols(job)
 
     # Validate the parsed job if in strict mode.  Only ERROR-severity findings
     # are fatal — WARNING/INFO findings (e.g. unresolved OUTPUT back-references,
@@ -1164,553 +604,3 @@ def validate_jcl(source: str | Path | IO, level: str = "basic") -> list[ParseErr
         )
 
     return errors
-
-
-def parse_statement(line: str, line_number: int = 0) -> Statement | None:
-    """
-    Parse individual JCL statement for syntax analysis.
-
-    Args:
-        line: Single line of JCL text
-        line_number: Line number for error context
-
-    Returns:
-        Parsed statement object or None if comment/empty
-
-    Raises:
-        JCLSyntaxError: If line cannot be parsed
-    """
-    # Check for plugin that can handle this line
-    registry = get_plugin_registry()
-    plugin = registry.get_parser_for_line(line)
-    if plugin:
-        return plugin.parse_statement(line, line_number)
-
-    # Standard JCL parsing
-    line = line.strip()
-
-    # Skip comments and empty lines
-    if not line or line.startswith("//*"):
-        return None
-
-    # JCL statements must start with //
-    if line.startswith("/*"):
-        if len(line) <= 2 or not line[2].strip():
-            # Just '/*' or '/* ' is an EOF delimiter, ignore if treating as stmt
-            return None
-
-        # Parse JES statement
-        # Format: /*COMMAND options
-        parts = line[2:].split(None, 1)
-        command = parts[0]
-        params = parts[1] if len(parts) > 1 else ""
-
-        return Statement(
-            type="JES",
-            name=command,
-            parameters={"_raw": params},
-            line_number=line_number,
-        )
-
-    if not line.startswith("//"):
-        raise JCLSyntaxError(
-            f"Invalid JCL statement (must start with //): {line}", line_number
-        )
-
-    # Remove // prefix
-    content = line[2:]
-
-    # Handle continuation lines - these start with spaces after // BUT check if it's actually a statement without name
-    if content.startswith(" ") and content.strip():
-        # Check if this might be a statement without a name field (like // SET, // IF, // EXEC, // DD, etc.)
-        content_stripped = content.strip()
-        _cs_parts = content_stripped.split()
-        first_token = _cs_parts[0].upper() if _cs_parts else ""
-        # All valid JCL statement types that can appear without a name field
-        if first_token not in _STATEMENT_TYPES:
-            # This is a true continuation line - return None
-            return None
-
-    content = content.strip()
-
-    # Handle empty lines after // (NULL statement)
-    if not content:
-        # This is a NULL statement (//)
-        return Statement(type="NULL", name="", parameters={}, line_number=line_number)
-
-    # Parse statement name and type
-    # Handle cases like "//         IF ..." where there's no name
-    content_stripped = content.lstrip()
-
-    if not content_stripped:
-        return None
-
-    # Check if first token is a statement type (no name field)
-    _cs_parts2 = content_stripped.split()
-    first_token = _cs_parts2[0] if _cs_parts2 else ""
-
-    if first_token.upper() in _STATEMENT_TYPES:
-        # No name field - statement starts directly with type
-        name_part = ""
-        rest = content_stripped
-    elif " " not in content_stripped:
-        # Only one token - could be name without operation
-        name_part = content_stripped
-        rest = ""
-    else:
-        # Has name field
-        name_part, rest = content_stripped.split(" ", 1)
-        rest = rest.strip()
-
-    # Determine statement type
-    if " " not in rest:
-        statement_type = rest.upper()
-        parameters_part = ""
-    else:
-        rest_upper = rest.upper()
-        if rest_upper.startswith("SET "):
-            statement_type = "SET"
-            parameters_part = rest[4:].strip()  # Everything after "SET "
-        else:
-            statement_type, parameters_part = rest.split(" ", 1)
-            statement_type = statement_type.upper()
-
-    # Validate statement type
-    if statement_type not in _STATEMENT_TYPES:
-        # Don't crash on unknown statement types - create UNKNOWN type for graceful degradation
-        return Statement(
-            type="UNKNOWN",
-            name=name_part,
-            parameters={"_raw": parameters_part, "_statement_type": statement_type},
-            line_number=line_number,
-        )
-
-    # Parse parameters
-    stmt_warnings: list[str] = []
-    parameters = (
-        _parse_parameters(parameters_part, line_number, warnings=stmt_warnings)
-        if parameters_part
-        else {}
-    )
-
-    return Statement(
-        type=statement_type,
-        name=name_part,
-        parameters=parameters,
-        line_number=line_number,
-        warnings=stmt_warnings,
-    )
-
-
-def _find_keyword_eq(part: str, operator_prefixes: frozenset) -> int | None:
-    """Find the position of '=' that acts as a keyword parameter delimiter.
-
-    Returns None if no keyword '=' is found (i.e., all '=' signs are part of
-    relational operators like ¬=, ^=, ~=, !=, <=, >=).
-    """
-    pos = 0
-    while pos < len(part):
-        eq_pos = part.find("=", pos)
-        if eq_pos == -1:
-            return None
-        # An '=' is a keyword delimiter if it's at position 0 or the preceding
-        # character is NOT an operator prefix (¬, ^, ~, !, <, >)
-        if eq_pos == 0 or part[eq_pos - 1] not in operator_prefixes:
-            return eq_pos
-        pos = eq_pos + 1
-    return None
-
-
-def _check_param_balance(param_string: str, line_number: int) -> None:
-    """Validate that *param_string* has balanced quotes and parentheses.
-
-    Raises JCLSyntaxError with a descriptive message on the first imbalance
-    detected, including the 1-based column position of the offending character.
-    """
-    in_quotes = False
-    paren_depth = 0
-    quote_open_col: int = 0  # 1-based column of the unclosed opening quote
-    paren_open_cols: list = []  # stack of 1-based columns for open parens
-    i = 0
-    while i < len(param_string):
-        c = param_string[i]
-        if c == "'":
-            if in_quotes and i + 1 < len(param_string) and param_string[i + 1] == "'":
-                i += 2
-                continue
-            if not in_quotes:
-                quote_open_col = i + 1  # record where this quote was opened
-            in_quotes = not in_quotes
-        elif c == "(" and not in_quotes:
-            paren_open_cols.append(i + 1)
-            paren_depth += 1
-        elif c == ")" and not in_quotes:
-            paren_depth -= 1
-            if paren_depth < 0:
-                raise JCLSyntaxError(
-                    f"Unmatched parentheses in parameter: {param_string}",
-                    line_number,
-                    column_number=i + 1,
-                )
-            if paren_open_cols:
-                paren_open_cols.pop()
-        i += 1
-    if in_quotes:
-        raise JCLSyntaxError(
-            f"Unclosed quote in parameter: {param_string}",
-            line_number,
-            column_number=quote_open_col,
-        )
-    if paren_depth != 0:
-        hint = (
-            " (statement may have been truncated at column 71 —"
-            " use JCL continuation lines to break long statements"
-            " across multiple records)"
-        )
-        col = paren_open_cols[0] if paren_open_cols else 0
-        raise JCLSyntaxError(
-            f"Unmatched parentheses in parameter: {param_string}{hint}",
-            line_number,
-            column_number=col,
-        )
-
-
-def _parse_parameters(
-    param_string: str, line_number: int = 0, warnings: list[str] | None = None
-) -> dict[str, Any]:
-    """Parse JCL parameters from parameter string.
-
-    Args:
-        param_string: Raw parameter text (everything after the statement type).
-        line_number: Source line, used to annotate any warnings.
-        warnings: Optional list to receive non-fatal diagnostics, e.g. a
-            repeated keyword silently overwriting its earlier value.
-    """
-    parameters: dict[str, Any] = {}
-
-    if not param_string.strip():
-        return parameters
-
-    # Handle special cases like DD * or DD DATA (only if standalone)
-    param_upper = param_string.strip().upper()
-    if param_upper == "*":
-        parameters["*"] = True
-        return parameters
-    elif param_upper == "DATA" or param_upper.startswith("DATA,"):
-        parameters["DATA"] = True
-        # Continue parsing if there are additional parameters after DATA,
-        if "," in param_string:
-            # Parse remaining parameters
-            remaining = param_string[param_string.index(",") + 1 :]
-            # Continue to normal parameter parsing
-            param_string = remaining
-        else:
-            return parameters
-
-    # Validate balance then split using the canonical ParameterParser implementation
-    _check_param_balance(param_string, line_number)
-    global _PARAMETER_PARSER
-    if _PARAMETER_PARSER is None:
-        from .parameter_ast import ParameterParser
-
-        _PARAMETER_PARSER = ParameterParser()
-    parts = _PARAMETER_PARSER._split_parameters(param_string)
-
-    # Parse individual parameters
-    for i, part in enumerate(parts):
-        # Find the first '=' that acts as a keyword parameter delimiter
-        # (not part of a relational operator like ¬=, ^=, ~=, !=, <=, >=)
-        keyword_eq_pos = _find_keyword_eq(part, _OPERATOR_PREFIXES)
-        if keyword_eq_pos is not None and not part.startswith("("):
-            # Keyword parameter
-            eq_pos = keyword_eq_pos
-            key = part[:eq_pos].strip().upper()  # Uppercase key
-            value = part[eq_pos + 1 :].strip()
-
-            if key in parameters and warnings is not None:
-                warnings.append(
-                    f"Line {line_number}: duplicate parameter '{key}' "
-                    f"(previous value {parameters[key]!r} overwritten by '{value}')"
-                )
-
-            # Handle parameter lists like DSN=(A,B,C)
-            if value.startswith("(") and value.endswith(")"):
-                # Parse list value
-                list_content = value[1:-1]
-                list_items = _parse_list_parameter(list_content)
-                parameters[key] = list_items
-            else:
-                # Remove quotes from quoted values
-                if value.startswith("'") and value.endswith("'"):
-                    value = value[1:-1].replace("''", "'")
-                parameters[key] = value
-        else:
-            # Positional parameter
-            value = part
-            if value.startswith("'") and value.endswith("'"):
-                value = value[1:-1].replace("''", "'")
-            parameters[f"{POSITIONAL_PARAM_PREFIX}{i}"] = value
-
-    logger.debug("parsed %d parameter(s) at line %d", len(parameters), line_number)
-    return parameters
-
-
-def _parse_list_parameter(list_content: str) -> list[str]:
-    """Parse parameter list like A,B,C or 'A','B','C'.
-
-    Empty positional subfields are preserved so that omitted DISP subfields
-    such as ``DISP=(,CATLG,DELETE)`` retain their positional meaning.
-    Trailing empty elements are stripped (from trailing commas).
-    """
-    items = []
-    in_quotes = False
-    paren_depth = 0
-    start = 0
-
-    i = 0
-    while i < len(list_content):
-        char = list_content[i]
-        if char == "'":
-            # Handle escaped quotes
-            if in_quotes and i + 1 < len(list_content) and list_content[i + 1] == "'":
-                i += 2
-                continue
-            in_quotes = not in_quotes
-        elif char == "(" and not in_quotes:
-            paren_depth += 1
-        elif char == ")" and not in_quotes:
-            paren_depth -= 1
-        elif char == "," and not in_quotes and paren_depth == 0:
-            item = list_content[start:i].strip()
-            if item.startswith("'") and item.endswith("'"):
-                item = item[1:-1].replace("''", "'")
-            items.append(
-                item
-            )  # preserve empty strings for omitted positional subfields
-            start = i + 1
-        i += 1
-
-    # Append final element
-    item = list_content[start:].strip()
-    if item.startswith("'") and item.endswith("'"):
-        item = item[1:-1].replace("''", "'")
-    items.append(item)
-
-    # Strip trailing empty elements (from trailing commas) but keep internal ones
-    while items and items[-1] == "":
-        items.pop()
-
-    return items
-
-
-# Matches any of:
-#   // INCLUDE ...      (no label, spaces before INCLUDE)
-#   //INCLUDE ...       (no label, no space — INCLUDE starts right after //)
-#   //LABEL INCLUDE ... (label present, INCLUDE is the operation token)
-# The word boundary \b ensures we don't match partial tokens like INCLUDES.
-_RE_HAS_INCLUDE = re.compile(
-    r"^\s*//(?:[^\s*/][^\s]*\s+|\s+)?INCLUDE\b",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-
-def _extract_jcllib_order(content: str) -> list[str]:
-    """Quick pre-scan that extracts JCLLIB ORDER library names from raw JCL.
-
-    Returns an ordered list of library names found in any ``JCLLIB ORDER=``
-    statement in *content*.  Recognises the same syntactic forms as the main
-    parser (no label, ``//JCLLIB``, and ``//LABEL JCLLIB``).
-
-    This is a best-effort single-line scan — ORDER values split across JCL
-    continuation lines are not resolved here.  The result is used to pass a
-    library list to :func:`~jclparser.include_loader.resolve_includes` before
-    the full parse begins.
-    """
-    libraries: list[str] = []
-    for line in content.splitlines():
-        line = line.lstrip()
-        if not line.startswith("//") or line.startswith("//*"):
-            continue
-        # Detect JCLLIB operation token (same token-match approach as INCLUDE)
-        statement = line[2:]
-        stripped = statement.lstrip()
-        parts = stripped.split(None, 1)
-        if not parts:
-            continue
-        first_upper = parts[0].upper()
-        if first_upper == "JCLLIB":
-            params_part = parts[1] if len(parts) > 1 else ""
-        else:
-            # Try label + JCLLIB
-            if len(parts) < 2:
-                continue
-            rest_parts = parts[1].split(None, 1)
-            if not rest_parts or rest_parts[0].upper() != "JCLLIB":
-                continue
-            params_part = rest_parts[1] if len(rest_parts) > 1 else ""
-
-        # Extract ORDER= value
-        upper_params = params_part.upper()
-        order_idx = upper_params.find("ORDER=")
-        if order_idx == -1:
-            continue
-        rest = params_part[order_idx + 6 :].strip()
-        # Strip surrounding parentheses if present
-        if rest.startswith("("):
-            end = rest.find(")")
-            rest = rest[1:end] if end != -1 else rest[1:]
-        for lib in rest.split(","):
-            lib = lib.strip()
-            if lib:
-                libraries.append(lib)
-    return libraries
-
-
-def _has_include_statement(content: str) -> bool:
-    """Return True if *content* contains at least one INCLUDE statement.
-
-    Fast pre-check so the overhead of the include-resolution pass is avoided
-    for the vast majority of JCL that contains no INCLUDEs.  Handles all
-    syntactic forms accepted by :func:`parse_statement`:
-
-    * ``// INCLUDE MEMBER=name``   — no label, space(s) before INCLUDE
-    * ``//INCLUDE MEMBER=name``    — no label, no leading space
-    * ``//LABEL INCLUDE MEMBER=name`` — explicit label
-    """
-    return bool(_RE_HAS_INCLUDE.search(content))
-
-
-def _create_job_from_statement(stmt: Statement) -> Job:
-    """Create Job object from JOB statement"""
-    accounting_info = None
-
-    # Extract accounting information (first positional parameter)
-    if f"{POSITIONAL_PARAM_PREFIX}0" in stmt.parameters:
-        accounting_info = stmt.parameters[f"{POSITIONAL_PARAM_PREFIX}0"].strip("()")
-
-    # Extract other parameters
-    job_params = {k: v for k, v in stmt.parameters.items() if not is_positional_key(k)}
-
-    return Job(
-        name=stmt.name,
-        parameters=job_params,
-        accounting_info=accounting_info,
-        line_number=stmt.line_number,
-    )
-
-
-def _create_step_from_statement(stmt: Statement) -> Step:
-    """Create Step object from EXEC statement"""
-    program = None
-    procedure = None
-
-    # Check if it's a program or procedure call
-    if "PGM" in stmt.parameters:
-        program = stmt.parameters.pop("PGM")
-    elif "PROC" in stmt.parameters:
-        procedure = stmt.parameters.pop("PROC")
-    elif f"{POSITIONAL_PARAM_PREFIX}0" in stmt.parameters:
-        # Might be a procedure call without keyword
-        proc_or_pgm = stmt.parameters.pop(f"{POSITIONAL_PARAM_PREFIX}0")
-        # If it looks like a procedure name (no path separators), treat as procedure
-        if "." not in proc_or_pgm and "/" not in proc_or_pgm:
-            procedure = proc_or_pgm
-        else:
-            program = proc_or_pgm
-
-    return Step(
-        name=stmt.name,
-        program=program,
-        procedure=procedure,
-        parameters=stmt.parameters,
-        line_number=stmt.line_number,
-    )
-
-
-def _create_dd_from_statement(stmt: Statement) -> DDStatement:
-    """Create DDStatement object from DD statement"""
-    dataset_name = stmt.parameters.get("DSN")
-    disposition = stmt.parameters.get("DISP")
-
-    return DDStatement(
-        name=stmt.name,
-        dataset_name=dataset_name,
-        disposition=disposition,
-        parameters=stmt.parameters,
-        line_number=stmt.line_number,
-    )
-
-
-def _extract_output_ref_names(value: Any) -> list[str]:
-    """Return OUTPUT reference names from a DD ``OUTPUT=`` parameter value.
-
-    Supports only the ``*.`` prefix forms — the standard way JCL references
-    an OUTPUT statement from a DD::
-
-        OUTPUT=*.NAME                -> ["NAME"]
-        OUTPUT=(*.NAME)              -> ["NAME"]
-        OUTPUT=(*.N1,*.N2)           -> ["N1", "N2"]
-        OUTPUT=*.STEP.NAME           -> ["NAME"]   (qualified — take tail)
-
-    Values that do not start with ``*.`` (e.g. a bare nodename, a qualified
-    ``STEP.PROCSTEP.N`` form without the leading ``*.``, or ``None``) yield
-    an empty list.  Callers rely on this to distinguish output-statement
-    references from other uses of the OUTPUT= parameter.
-    """
-    names: list[str] = []
-    items: list[str]
-    if isinstance(value, list):
-        items = [str(v) for v in value]
-    elif isinstance(value, str):
-        items = [value]
-    else:
-        return names
-
-    for item in items:
-        token = item.strip().strip("()")
-        if not token.startswith("*."):
-            # Qualified form step.procstep.name uses ".name" — last segment after *
-            if ".*" in token:
-                # Not a back-reference either
-                continue
-            continue
-        ref = token[2:].strip()
-        if not ref:
-            continue
-        # If qualified like STEP.PROCSTEP.NAME, take the final segment.
-        if "." in ref:
-            ref = ref.split(".")[-1]
-        names.append(ref.upper())
-    return names
-
-
-def _resolve_output_refs(job: Job) -> None:
-    """Populate ``DDStatement.output_refs`` for every DD that uses ``OUTPUT=*.X``.
-
-    Unresolved references (no matching :class:`OutputStatement`) are recorded
-    on ``job.unresolved_output_refs`` as ``(step_name, ref_name, line_number)``
-    tuples so :func:`jclparser.validators.validate_job_structure` can emit
-    warnings without re-scanning the parameter string.
-    """
-    if not job:
-        return
-    # Index OUTPUT statements by uppercased name (last wins if duplicated).
-    output_by_name: dict[str, Any] = {
-        out.name.upper(): out for out in job.output_statements if out.name
-    }
-
-    from .model import iter_execution_steps
-
-    for step in iter_execution_steps(job.steps):
-        for dd in step.dd_statements:
-            value = dd.parameters.get("OUTPUT")
-            if value is None:
-                continue
-            for ref in _extract_output_ref_names(value):
-                target = output_by_name.get(ref)
-                if target is not None:
-                    dd.output_refs.append(target)
-                else:
-                    job.unresolved_output_refs.append(
-                        (step.name or "", ref, dd.line_number)
-                    )
