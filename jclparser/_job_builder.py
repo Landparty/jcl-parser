@@ -1,28 +1,37 @@
 """Job model assembly for the JCL parse loop.
 
-Internal module split out of :mod:`jclparser.parser`. It contains:
+Internal module split out of :mod:`jclparser.parser`. It contains
+:class:`JobBuilder` — the per-statement state machine driven by the
+``parse_jcl()`` core loop (one ``_on_<type>`` handler per statement type).
 
-* the ``Statement -> Job/Step/DDStatement`` factory helpers,
-* SET-symbol value resolution helpers,
-* :class:`JobBuilder` — the per-statement state machine driven by the
-  ``parse_jcl()`` core loop (one ``_on_<type>`` handler per statement type),
-* the post-parse passes (external PROC loading, ``OUTPUT=*.name``
-  back-reference resolution, SET-symbol substitution, strict DD structure).
+Its former helpers now live in two sibling modules (behavior unchanged,
+layout only):
 
-Behavior is identical to the pre-split ``parser.py``; only the code layout
-changed. Nothing here is public API — import :func:`~jclparser.parse_jcl`
-from the package instead.
+* :mod:`jclparser._model_factories` — the ``Statement -> Job/Step/DDStatement``
+  factory helpers and SET-symbol value resolution helpers,
+* :mod:`jclparser._post_parse` — the post-parse passes (external PROC
+  loading, ``OUTPUT=*.name`` back-reference resolution, SET-symbol
+  substitution, strict DD structure).
+
+Everything that historically lived here is still importable from this module
+via the re-export block below. Nothing here is public API — import
+:func:`~jclparser.parse_jcl` from the package instead.
 """
 
 from __future__ import annotations
 
 import logging
-import re
-from pathlib import Path
 from typing import Any
 
+from ._model_factories import (
+    _create_dd_from_statement,
+    _create_job_from_statement,
+    _create_step_from_statement,
+    _exec_has_program_spec,
+    _resolve_set_value,
+)
 from .condition_parser import parse_condition
-from .errors import JCLStructureError, JCLSyntaxError
+from .errors import JCLSyntaxError
 from .model import (
     ConditionalBlock,
     DDStatement,
@@ -34,193 +43,43 @@ from .model import (
 )
 from .utils import POSITIONAL_PARAM_PREFIX, is_positional_key
 
+# Backward-compatible re-exports: these helpers historically lived in this
+# module (and before that in ``jclparser.parser``) and are imported from here
+# by ``parser.py`` and downstream code. Keep them importable from this path.
+from ._model_factories import (  # noqa: F401
+    _SET_SYMBOL_PATTERN,
+    _has_unresolved_symbol_ref,
+)
+from ._post_parse import (  # noqa: F401
+    _extract_output_ref_names,
+    _resolve_output_refs,
+    enforce_strict_dd_structure,
+    load_external_procedures,
+    resolve_set_symbols,
+)
+
 logger = logging.getLogger(__name__)
 
-_SET_SYMBOL_PATTERN = re.compile(r"&&|&([A-Z0-9@#$]+)\.?")
-
-
-def _resolve_set_value(value: str, known_symbols: dict[str, str]) -> str:
-    """Resolve &SYMBOL references in a SET value using already-accumulated SET symbols.
-
-    Mirrors the mainframe rule: SET values are evaluated left-to-right so a
-    symbol can reference any earlier SET in the same job. A literal "&&" is
-    left untouched here -- collapsing it would corrupt a SET value that
-    itself holds a "&&NAME" temporary-dataset marker (e.g. ``SET
-    MYTEMP=&&WORK``) before it ever reaches a DD statement. That collapse is
-    explode_job()'s job (Tier 2), not this Tier-1 SET-value resolution.
-    """
-
-    def _replacer(m: re.Match) -> str:
-        if m.group(0) == "&&":
-            return "&&"
-        sym = m.group(1).upper()
-        return known_symbols.get(sym, m.group(0))
-
-    return _SET_SYMBOL_PATTERN.sub(_replacer, value)
-
-
-def _has_unresolved_symbol_ref(value: str) -> bool:
-    """True if *value* still contains a genuine (unescaped) &SYMBOL reference,
-    as opposed to only escaped literal "&&" pairs.
-
-    Used to decide whether a resolved SET value is safe to propagate into DD
-    dataset names/EXEC parameters. A value that legitimately contains "&&"
-    (e.g. from ``SET MYTEMP=&&WORK``) must not be excluded the same way a
-    value with a genuinely unresolved reference (e.g. "&B." left over from an
-    unresolvable SET cycle) is -- both contain an "&" character, but only the
-    latter is actually unresolved.
-    """
-    return any(m.group(0) != "&&" for m in _SET_SYMBOL_PATTERN.finditer(value))
-
-
-def _exec_has_program_spec(parameters: dict) -> bool:
-    """Return True if *parameters* specifies a program, procedure, or positional arg.
-
-    An EXEC statement is valid when it names a program (``PGM=``), an explicit
-    procedure (``PROC=``), or uses a bare positional token (no keyword, treated
-    as a proc name by the parser).
-    """
-    return (
-        "PGM" in parameters
-        or "PROC" in parameters
-        or any(is_positional_key(k) for k in parameters)
-    )
-
-
-def _create_job_from_statement(stmt: Statement) -> Job:
-    """Create Job object from JOB statement"""
-    accounting_info = None
-
-    # Extract accounting information (first positional parameter)
-    if f"{POSITIONAL_PARAM_PREFIX}0" in stmt.parameters:
-        accounting_info = stmt.parameters[f"{POSITIONAL_PARAM_PREFIX}0"].strip("()")
-
-    # Extract other parameters
-    job_params = {k: v for k, v in stmt.parameters.items() if not is_positional_key(k)}
-
-    return Job(
-        name=stmt.name,
-        parameters=job_params,
-        accounting_info=accounting_info,
-        line_number=stmt.line_number,
-    )
-
-
-def _create_step_from_statement(stmt: Statement) -> Step:
-    """Create Step object from EXEC statement"""
-    program = None
-    procedure = None
-
-    # Check if it's a program or procedure call
-    if "PGM" in stmt.parameters:
-        program = stmt.parameters.pop("PGM")
-    elif "PROC" in stmt.parameters:
-        procedure = stmt.parameters.pop("PROC")
-    elif f"{POSITIONAL_PARAM_PREFIX}0" in stmt.parameters:
-        # Might be a procedure call without keyword
-        proc_or_pgm = stmt.parameters.pop(f"{POSITIONAL_PARAM_PREFIX}0")
-        # If it looks like a procedure name (no path separators), treat as procedure
-        if "." not in proc_or_pgm and "/" not in proc_or_pgm:
-            procedure = proc_or_pgm
-        else:
-            program = proc_or_pgm
-
-    return Step(
-        name=stmt.name,
-        program=program,
-        procedure=procedure,
-        parameters=stmt.parameters,
-        line_number=stmt.line_number,
-    )
-
-
-def _create_dd_from_statement(stmt: Statement) -> DDStatement:
-    """Create DDStatement object from DD statement"""
-    dataset_name = stmt.parameters.get("DSN")
-    disposition = stmt.parameters.get("DISP")
-
-    return DDStatement(
-        name=stmt.name,
-        dataset_name=dataset_name,
-        disposition=disposition,
-        parameters=stmt.parameters,
-        line_number=stmt.line_number,
-    )
-
-
-def _extract_output_ref_names(value: Any) -> list[str]:
-    """Return OUTPUT reference names from a DD ``OUTPUT=`` parameter value.
-
-    Supports only the ``*.`` prefix forms — the standard way JCL references
-    an OUTPUT statement from a DD::
-
-        OUTPUT=*.NAME                -> ["NAME"]
-        OUTPUT=(*.NAME)              -> ["NAME"]
-        OUTPUT=(*.N1,*.N2)           -> ["N1", "N2"]
-        OUTPUT=*.STEP.NAME           -> ["NAME"]   (qualified — take tail)
-
-    Values that do not start with ``*.`` (e.g. a bare nodename, a qualified
-    ``STEP.PROCSTEP.N`` form without the leading ``*.``, or ``None``) yield
-    an empty list.  Callers rely on this to distinguish output-statement
-    references from other uses of the OUTPUT= parameter.
-    """
-    names: list[str] = []
-    items: list[str]
-    if isinstance(value, list):
-        items = [str(v) for v in value]
-    elif isinstance(value, str):
-        items = [value]
-    else:
-        return names
-
-    for item in items:
-        token = item.strip().strip("()")
-        if not token.startswith("*."):
-            # Qualified form step.procstep.name uses ".name" — last segment after *
-            if ".*" in token:
-                # Not a back-reference either
-                continue
-            continue
-        ref = token[2:].strip()
-        if not ref:
-            continue
-        # If qualified like STEP.PROCSTEP.NAME, take the final segment.
-        if "." in ref:
-            ref = ref.split(".")[-1]
-        names.append(ref.upper())
-    return names
-
-
-def _resolve_output_refs(job: Job) -> None:
-    """Populate ``DDStatement.output_refs`` for every DD that uses ``OUTPUT=*.X``.
-
-    Unresolved references (no matching :class:`OutputStatement`) are recorded
-    on ``job.unresolved_output_refs`` as ``(step_name, ref_name, line_number)``
-    tuples so :func:`jclparser.validators.validate_job_structure` can emit
-    warnings without re-scanning the parameter string.
-    """
-    if not job:
-        return
-    # Index OUTPUT statements by uppercased name (last wins if duplicated).
-    output_by_name: dict[str, Any] = {
-        out.name.upper(): out for out in job.output_statements if out.name
-    }
-
-    from .model import iter_execution_steps
-
-    for step in iter_execution_steps(job.steps):
-        for dd in step.dd_statements:
-            value = dd.parameters.get("OUTPUT")
-            if value is None:
-                continue
-            for ref in _extract_output_ref_names(value):
-                target = output_by_name.get(ref)
-                if target is not None:
-                    dd.output_refs.append(target)
-                else:
-                    job.unresolved_output_refs.append(
-                        (step.name or "", ref, dd.line_number)
-                    )
+#: Explicit re-export list: mypy strict (``no_implicit_reexport``) would
+#: otherwise reject the historical ``from ._job_builder import ...`` imports
+#: in ``parser.py`` for the helpers that moved to the sibling modules.
+__all__ = [
+    "JobBuilder",
+    # _model_factories re-exports
+    "_SET_SYMBOL_PATTERN",
+    "_create_dd_from_statement",
+    "_create_job_from_statement",
+    "_create_step_from_statement",
+    "_exec_has_program_spec",
+    "_has_unresolved_symbol_ref",
+    "_resolve_set_value",
+    # _post_parse re-exports
+    "_extract_output_ref_names",
+    "_resolve_output_refs",
+    "enforce_strict_dd_structure",
+    "load_external_procedures",
+    "resolve_set_symbols",
+]
 
 
 class JobBuilder:
@@ -694,194 +553,3 @@ class JobBuilder:
             )
 
         return job
-
-
-# ---------------------------------------------------------------------- #
-# Post-parse passes (run by parse_jcl after the core loop)
-# ---------------------------------------------------------------------- #
-
-
-def load_external_procedures(
-    job: Job,
-    strict_mode: bool,
-    proc_base_path: str | Path | None,
-    enable_external_procs: bool,
-) -> None:
-    """Attach a PROC loader and resolve external PROC references on *job*.
-
-    In strict mode a referenced-but-unresolvable procedure raises
-    :class:`JCLSyntaxError`; otherwise unresolved references are left as-is.
-    """
-    if enable_external_procs and job.jcllib_order:
-        logger.debug("loading external PROCs via JCLLIB order: %s", job.jcllib_order)
-        from .proc_loader import create_default_loader
-
-        proc_loader = create_default_loader(
-            inline_procedures=job.procedures,
-            base_path=Path(proc_base_path)
-            if isinstance(proc_base_path, str)
-            else proc_base_path,
-            include_jcllib=True,
-        )
-        # Store loader on job for later use (e.g., in explosion)
-        job._proc_loader = proc_loader
-
-        # Try to load any external PROCs that were referenced but not found inline
-        # This happens when EXEC PROC is used but PROC is not defined inline
-        for step in job.steps:
-            if (
-                isinstance(step, Step)
-                and step.procedure
-                and not job.get_procedure(step.procedure)
-            ):
-                # Try to load external PROC
-                libraries_list = list(job.jcllib_order) if job.jcllib_order else None
-                proc = proc_loader.load_procedure(step.procedure, libraries_list)
-                if proc:
-                    job.add_procedure(proc)
-                elif strict_mode:
-                    raise JCLSyntaxError(
-                        f"Procedure '{step.procedure}' not found. "
-                        f"Searched in: inline={len(job.procedures)} procedures, "
-                        f"libraries={job.jcllib_order}",
-                        step.line_number,
-                    )
-    else:
-        # External loading disabled or no JCLLIB - check for missing PROCs in strict mode
-        if strict_mode:
-            for step in job.steps:
-                if (
-                    isinstance(step, Step)
-                    and step.procedure
-                    and not job.get_procedure(step.procedure)
-                ):
-                    reason = (
-                        "external PROC loading is disabled"
-                        if not enable_external_procs
-                        else "no JCLLIB ORDER specified"
-                    )
-                    raise JCLSyntaxError(
-                        f"Procedure '{step.procedure}' not found ({reason}). "
-                        f"Searched in: inline={len(job.procedures)} procedures",
-                        step.line_number,
-                    )
-
-
-def enforce_strict_dd_structure(content: str) -> None:
-    """Strict mode: a DD statement with no EXEC anywhere is a structural error.
-
-    Called only when the parsed job ended up with no steps; re-scans the raw
-    *content* for any DD statement and raises :class:`JCLStructureError` when
-    one is found.
-    """
-    for line in content.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("//") and not stripped.startswith("//*"):
-            parts = stripped.split()
-            if len(parts) >= 2 and parts[1].upper() == "DD":
-                raise JCLStructureError(
-                    "DD statement found before any EXEC step. "
-                    "Each DD must belong to a step."
-                )
-
-
-def resolve_set_symbols(job: Job) -> None:
-    """Substitute fully-resolved SET symbols into DD and EXEC-step parameters.
-
-    SET statements may appear before or after the DD statements that reference
-    them, so this substitution pass runs *after* the main parse loop once all
-    SET symbols are fully known.
-
-    Chained SET symbols are handled too, e.g.::
-
-        // SET HLQ=CORP
-        // SET LIB=&HLQ..DATA        <- value contains a symbol reference
-        //DD1 DD DSN=&LIB..FILE      <- should resolve to CORP.DATA.FILE
-
-    ``_resolve_set_value`` (called during parsing) already handles backward
-    references (symbol defined before it is used in a SET value).  Forward
-    references — where ``SET B=&A.`` appears before ``SET A=VALUE`` — are
-    stored as the literal string ``"&A."`` and are left unresolved after the
-    parse loop.  We fix those here by iteratively pre-resolving the symbol
-    table until it stabilises (up to 10 passes, which also bounds any
-    accidental cycle).
-
-    This pass must never collapse ``&&`` to a literal ``&``:
-    ``DDStatement.is_temporary()`` detects temporary datasets by their raw
-    ``&&NAME`` prefix, and ``parse_jcl()`` output must keep that detectable —
-    ``&&`` collapsing is ``explode_job()``'s job (Tier 2), not this Tier-1
-    pass.  It also covers EXEC step parameters (e.g. ``PARM=&SYM``), not just
-    DD dataset names/dispositions, so a job-level SET symbol resolves the same
-    way regardless of which kind of statement references it.
-    """
-    from .explosion import (  # noqa: PLC0415
-        substitute_dd_statement,
-        substitute_parameters_dict,
-        substitute_symbols,
-        SymbolScope,
-    )
-
-    # Pre-resolve the symbol table so every value is fully expanded before
-    # we apply it to DD dataset names.  On each pass we substitute symbols
-    # within each SET value using the *other* symbols in the table
-    # (excluding the symbol itself prevents direct self-reference loops).
-    # We repeat until no value changes or we reach the pass limit.
-    _raw: dict[str, str] = dict(job.set_statements)
-    for _pass in range(10):
-        _changed = False
-        for _name, _val in list(_raw.items()):
-            if "&" not in _val:
-                continue
-            # Build a temporary scope that excludes this symbol's own name
-            # so "&A." inside SET A's value does not expand to itself.
-            _scope_for_val = SymbolScope(
-                set_symbols={k: v for k, v in _raw.items() if k != _name}
-            )
-            _new_val = substitute_symbols(
-                _val,
-                _scope_for_val,
-                allow_undefined=True,
-                collapse_double_amp=False,
-            )
-            if _new_val != _val:
-                _raw[_name] = _new_val
-                _changed = True
-        if not _changed:
-            break  # table has stabilised – no need for more passes
-
-    # Symbols whose values still contain a genuinely unresolved
-    # &-reference after all passes are excluded from the final scope.
-    # Propagating a raw "&B." value into a DD dataset_name would leave a
-    # literal token in the output; instead, strict=False below will
-    # silently elide those unresolvable references (they become empty
-    # string) and warn. A value that legitimately contains "&&" (e.g.
-    # SET MYTEMP=&&WORK) is NOT excluded -- it has nothing left to
-    # resolve, it just happens to contain an escaped literal ampersand.
-    _resolved_symbols = {
-        k: v for k, v in _raw.items() if not _has_unresolved_symbol_ref(v)
-    }
-    _set_scope = SymbolScope(set_symbols=_resolved_symbols)
-    for _dd in job.get_dd_statements():
-        substitute_dd_statement(
-            _dd,
-            _set_scope,
-            strict=False,
-            warnings=job.warnings,
-            collapse_double_amp=False,
-        )
-
-    from .model import iter_execution_steps  # noqa: PLC0415
-
-    for _step in iter_execution_steps(job.steps):
-        _step_warnings: list[str] = []
-        _step.parameters = substitute_parameters_dict(
-            _step.parameters,
-            _set_scope,
-            strict=False,
-            warnings=_step_warnings,
-            collapse_double_amp=False,
-        )
-        for _msg in _step_warnings:
-            job.warnings.append(
-                f"Line {_step.line_number}: Step {_step.name or '(unnamed)'}: {_msg}"
-            )

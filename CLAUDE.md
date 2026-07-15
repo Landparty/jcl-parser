@@ -74,7 +74,9 @@ See [`core/parsing-pipeline.md`](core/parsing-pipeline.md) for the full step-by-
 |--------|------|
 | `parser.py` | Core — `parse_jcl()`, `validate_jcl()`, `parse_statement()` (public API + core loop; re-exports all historical `jclparser.parser` helpers) |
 | `_statement_parser.py` | Single-statement line parsing — `parse_statement()`, parameter tokenization, `_STATEMENT_TYPES`, INCLUDE/JCLLIB pre-scans |
-| `_job_builder.py` | `JobBuilder` (per-statement-type handlers for the core loop), `Statement`→model factories, post-parse passes (external PROCs, OUTPUT refs, SET substitution) |
+| `_job_builder.py` | `JobBuilder` — per-statement-type dispatch state machine for the core loop (re-exports the helpers below for backward compatibility) |
+| `_model_factories.py` | `Statement`→model factories (`_create_job/step/dd_from_statement`) and SET-value resolution helpers |
+| `_post_parse.py` | Post-parse passes — external PROC loading, `OUTPUT=*.name` refs, SET substitution, strict DD structure |
 | `model.py` | Data model — `Job`, `Step`, `DDStatement`, `ConditionalBlock`, `Procedure` |
 | `explosion.py` | PROC expansion — `explode_job()`, `SymbolScope` |
 | `proc_loader.py` | External PROC loading — `create_default_loader()`, loader chain |
@@ -109,7 +111,7 @@ Set `JCL_PROCLIB_PATH` env var or pass `proc_base_path` to `parse_jcl()`. Layout
 2. **Column 71 is the continuation boundary** — content past col 71 is sequence/ignored; `ContinuationLineHandler` enforces this. Never pass pre-stripped lines.
 3. **`ConditionalBlock.condition` (raw string) is authoritative** — `condition_ast` may be `None` if the expression was unparseable; always use `condition` for display.
 4. **`&&` is an escaped ampersand in JCL** — symbol substitution replaces `&NAME` → value and `&&` → `&`. Handled in `explosion.py`.
-5. **mypy strict is not yet clean** — known violations in `profiling.py`, `explosion.py`, and the parser modules (`parser.py` / `_statement_parser.py` / `_job_builder.py`). Add annotations when touching a file; never widen the config.
+5. **mypy strict is not yet clean** — known violations in `profiling.py`, `explosion.py`, and the parser modules (`parser.py` / `_statement_parser.py` / `_post_parse.py`). Add annotations when touching a file; never widen the config.
 6. **Coverage floor is 90%** — every `pytest` run enforces it. Add tests alongside any new module.
 
 Full list (14 invariants): [`development/invariants.md`](development/invariants.md).
