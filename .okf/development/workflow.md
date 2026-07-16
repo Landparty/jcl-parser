@@ -45,7 +45,7 @@ Coverage: minimum 90% (`--cov-fail-under=90`), branch coverage enabled, HTML to 
 ```bash
 ruff check .      # lint (line-length=88, target=py310)
 ruff format .     # format (do not use black)
-mypy jclparser/   # strict mode — not yet clean (known violations in profiling.py, explosion.py, and the parser modules parser.py/_statement_parser.py/_job_builder.py)
+mypy jclparser/   # strict mode — not yet clean (known violations in profiling.py, explosion.py, and the parser modules parser.py/_statement_parser.py/_post_parse.py)
 ```
 
 When touching a file, add type annotations where missing. Do not widen the mypy config.
@@ -72,7 +72,8 @@ CLI `--version` reads from `__init__.py`, not package metadata.
 |------|-------|
 | New JCL statement type | `_statement_parser.py` (keyword in `_STATEMENT_TYPES`), `_job_builder.py` (`JobBuilder._on_<type>` handler), `model.py`, `__init__.py` |
 | Statement/parameter tokenization bug | `_statement_parser.py` (`parse_statement`, `_parse_parameters`) |
-| Parse-loop / model-assembly bug | `_job_builder.py` (`JobBuilder`, post-parse passes), `parser.py` (core loop) |
+| Parse-loop / model-assembly bug | `_job_builder.py` (`JobBuilder` dispatch), `_model_factories.py` (`Statement`→model factories), `parser.py` (core loop) |
+| Post-parse pass bug (external PROCs, OUTPUT refs, SET substitution) | `_post_parse.py` |
 | New DD parameter | `parameter_ast.py`, `parameter_validators.py` |
 | New validation rule | `validators.py` or `parameter_validators.py` |
 | New lint rule | `lint/rules.py`, `lint/runner.py` |
