@@ -43,7 +43,9 @@ ruff format .
 mypy jclparser/   # strict mode — currently reports known violations (typing cleanup WIP)
 
 # Vendor sync — run after any change to jclparser/
-cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser/
+# (plain `cp -r jclparser/ dest/jclparser/` nests into dest/jclparser/jclparser/
+# and silently leaves stale files in place when dest already exists)
+rm -rf ../backend/_vendor/jcl-parser/jclparser && cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser
 ```
 
 Coverage always generates HTML to `htmlcov/` and XML to `coverage.xml`.

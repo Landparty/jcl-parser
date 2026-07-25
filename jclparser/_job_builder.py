@@ -209,6 +209,9 @@ class JobBuilder:
         elif stmt.type in ["CNTL", "ENDCNTL"]:
             # CNTL/ENDCNTL statements - utility control, just ignore
             pass
+        elif stmt.type == "SCHEDULE":
+            # SCHEDULE statement - scheduling control, no model representation
+            pass
         elif stmt.type == "UNKNOWN":
             self._on_unknown(stmt, line_num)
         elif stmt.type == "XMIT":

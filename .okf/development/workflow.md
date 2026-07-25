@@ -3,7 +3,7 @@ type: Development Workflow
 title: Development Workflow
 description: Install, test, lint, vendor sync, version bump, and task-to-file map for jcl-parser contributors.
 tags: [development, workflow, testing, tooling]
-timestamp: 2026-06-30T00:00:00Z
+timestamp: 2026-07-24T12:00:00Z
 ---
 
 # Overview
@@ -53,10 +53,10 @@ When touching a file, add type annotations where missing. Do not widen the mypy 
 # Vendor Sync (required after any jclparser/ change)
 
 ```bash
-cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser/
+rm -rf ../backend/_vendor/jcl-parser/jclparser && cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser
 ```
 
-There is no automated sync. Forgetting this means the backend runs stale code.
+There is no automated sync. Forgetting this means the backend runs stale code. Do not use plain `cp -r jclparser/ dest/jclparser/` — when `dest/jclparser` already exists, `cp -r` copies *into* it instead of overwriting it, producing a nested `dest/jclparser/jclparser/` and leaving the old files at `dest/jclparser/*` untouched with no error.
 
 # Version Bump
 

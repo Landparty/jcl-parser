@@ -44,8 +44,9 @@ pytest -m unit
 ruff check . && ruff format .
 mypy jclparser/
 
-# Vendor sync (after changes to jclparser/)
-cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser/
+# Vendor sync (after changes to jclparser/) — rm first: plain `cp -r` nests
+# into dest/jclparser/jclparser/ and leaves stale files when dest exists
+rm -rf ../backend/_vendor/jcl-parser/jclparser && cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser
 ```
 
 ## Documentation

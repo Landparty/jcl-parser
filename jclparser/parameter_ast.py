@@ -309,6 +309,12 @@ class ParameterParser:
         quotes).  Both pairs must be consumed together so the quote-depth
         tracker stays correct.
 
+        Empty positional subfields are preserved (e.g. the omitted accounting
+        info in ``JOB ,'PROGRAMMER',CLASS=A``, or an omitted DCB/SPACE
+        subparameter) so later positionals keep their index -- mirrors
+        ``_parse_list_parameter``'s handling of ``DISP=(,CATLG,DELETE)``.
+        Only trailing empty elements (from a trailing comma) are stripped.
+
         Args:
             param_string: Parameter string to split
 
@@ -349,17 +355,18 @@ class ParameterParser:
                     paren_depth -= 1
                     current_parts.append(char)
                 elif char == "," and paren_depth == 0:
-                    current = "".join(current_parts).strip()
-                    if current:
-                        parts.append(current)
+                    parts.append("".join(current_parts).strip())
                     current_parts = []
                 else:
                     current_parts.append(char)
 
             i += 1
 
-        current = "".join(current_parts).strip()
-        if current:
-            parts.append(current)
+        parts.append("".join(current_parts).strip())
+
+        # Strip trailing empty elements (from a trailing comma) but keep
+        # internal ones -- they are meaningful omitted positional subfields.
+        while parts and parts[-1] == "":
+            parts.pop()
 
         return parts

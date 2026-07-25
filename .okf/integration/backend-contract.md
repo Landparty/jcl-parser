@@ -3,7 +3,7 @@ type: Integration Contract
 title: Backend Adapter Contract
 description: Stability contract between jcl-parser and backend/src/parsers/jcl/parser.py (JCLLegacyParser); changes to listed attributes are breaking changes.
 tags: [integration, backend, contract, vendoring]
-timestamp: 2026-06-28T00:00:00Z
+timestamp: 2026-07-24T12:00:00Z
 ---
 
 # Overview
@@ -11,8 +11,10 @@ timestamp: 2026-06-28T00:00:00Z
 jcl-parser is **not installed from PyPI**. It is vendored into `backend/_vendor/jcl-parser/`. Changes must be manually synced:
 
 ```bash
-cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser/
+rm -rf ../backend/_vendor/jcl-parser/jclparser && cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser
 ```
+
+Do not use plain `cp -r jclparser/ dest/jclparser/` — when the destination already exists, `cp -r` nests into it (`dest/jclparser/jclparser/`) and silently leaves the old files in place.
 
 The backend imports from `backend/_vendor/jcl-parser/`.
 

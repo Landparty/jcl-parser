@@ -306,6 +306,7 @@ def expand_proc_invocation(
     scope: SymbolScope,
     step_prefix: Optional[str] = None,
     strict: bool = False,
+    warnings: Optional[List[str]] = None,
 ) -> List[Step]:
     """
     Expand a single procedure invocation into steps.
@@ -317,6 +318,10 @@ def expand_proc_invocation(
         scope: Symbol resolution scope
         step_prefix: Optional prefix for qualified step names
         strict: Whether to raise on undefined symbols inside the PROC body
+        warnings: List to append symbol-substitution diagnostics to (e.g. an
+                  undefined &SYMBOL only resolvable against PROC defaults /
+                  EXEC overrides / system symbols, inside the PROC body).
+                  None means diagnostics are discarded.
 
     Returns:
         List of expanded steps with substituted parameters
@@ -354,17 +359,25 @@ def expand_proc_invocation(
                 # Substitute symbols in program name
                 if new_step.program:
                     new_step.program = substitute_symbols(
-                        new_step.program, expansion_scope, strict=strict
+                        new_step.program,
+                        expansion_scope,
+                        strict=strict,
+                        warnings=warnings,
                     )
 
                 # Substitute symbols in step parameters
                 new_step.parameters = substitute_parameters_dict(
-                    new_step.parameters, expansion_scope, strict=strict
+                    new_step.parameters,
+                    expansion_scope,
+                    strict=strict,
+                    warnings=warnings,
                 )
 
                 # Substitute symbols in DD statements
                 for dd in new_step.dd_statements:
-                    substitute_dd_statement(dd, expansion_scope, strict=strict)
+                    substitute_dd_statement(
+                        dd, expansion_scope, strict=strict, warnings=warnings
+                    )
 
                 result.append(new_step)
         return result
@@ -571,10 +584,25 @@ def apply_dd_overrides(
 
             for step in expanded_steps:
                 if step.name == qualified_step:
+                    # override_dd.name is the raw statement name field, i.e.
+                    # the *qualified* key ("PROCSTEP.DDNAME") -- normalize it
+                    # to the plain DD name so the resulting DD looks the same
+                    # as one coded directly on the step.
+                    clone = deepcopy(override_dd)
+                    clone.name = target_dd
                     for i, dd in enumerate(step.dd_statements):
                         if dd.name == target_dd:
-                            step.dd_statements[i] = deepcopy(override_dd)
+                            step.dd_statements[i] = clone
                             break
+                    else:
+                        # No DD named target_dd on this step -- per z/OS
+                        # semantics a PROCSTEP.DDNAME override with no
+                        # matching DD *adds* one, same as the unqualified
+                        # form (apply_unqualified_dd_overrides). Without
+                        # this, a fully-parsed override DD was silently
+                        # discarded.
+                        step.dd_statements.append(clone)
+                    break
 
         elif len(parts) == 3:
             # Three-part override: OUTERSTEP.INNERSTEP.DDNAME
@@ -685,6 +713,11 @@ def explode_job(
     # Track explosion metadata
     explosion_audit: List[ExplosionRecord] = []
     explosion_map: Dict[str, ProcExpansionInfo] = {}
+    # Symbol-substitution diagnostics accumulated during explosion (e.g. an
+    # undefined &SYMBOL only resolvable inside a PROC body, against PROC
+    # defaults/EXEC overrides/system symbols -- parse_jcl() never sees these,
+    # since it doesn't expand PROCs). Merged onto exploded_job.warnings below.
+    explosion_warnings: List[str] = []
 
     # Mutable step counter shared across all _process_steps recursions.
     # Using a list (not int) so the nested closure can mutate it.
@@ -721,6 +754,7 @@ def explode_job(
                     expansion_map=explosion_map,
                     strict_symbols=strict_symbols,
                     jcllib_order=job.jcllib_order or None,
+                    warnings=explosion_warnings,
                 )
                 _check_step_limit(len(expanded))
                 result.extend(expanded)
@@ -730,15 +764,25 @@ def explode_job(
 
                 if substituted_step.program:
                     substituted_step.program = substitute_symbols(
-                        substituted_step.program, base_scope, strict=strict_symbols
+                        substituted_step.program,
+                        base_scope,
+                        strict=strict_symbols,
+                        warnings=explosion_warnings,
                     )
 
                 substituted_step.parameters = substitute_parameters_dict(
-                    substituted_step.parameters, base_scope
+                    substituted_step.parameters,
+                    base_scope,
+                    warnings=explosion_warnings,
                 )
 
                 for dd in substituted_step.dd_statements:
-                    substitute_dd_statement(dd, base_scope, strict=strict_symbols)
+                    substitute_dd_statement(
+                        dd,
+                        base_scope,
+                        strict=strict_symbols,
+                        warnings=explosion_warnings,
+                    )
 
                 _check_step_limit(1)
                 result.append(substituted_step)
@@ -773,10 +817,17 @@ def explode_job(
         "jes_statements",
         "output_statements",
         "joblib_dds",
+        "warnings",
     ):
         src_val = getattr(job, _attr, None)
         if src_val is not None:
             setattr(exploded_job, _attr, deepcopy(src_val))
+
+    # Diagnostics raised while substituting symbols during explosion itself
+    # (as opposed to during parse_jcl(), already covered by the warnings
+    # copy above) -- e.g. an undefined &SYMBOL only resolvable inside a
+    # PROC body.
+    exploded_job.warnings.extend(explosion_warnings)
 
     # Attach audit metadata
     if audit:
@@ -805,6 +856,7 @@ def _explode_step(
     strict_symbols: bool,
     jcllib_order: Optional[List[str]] = None,
     call_chain_upper: Optional[frozenset] = None,
+    warnings: Optional[List[str]] = None,
 ) -> List[Step]:
     """
     Recursively explode a single step.
@@ -822,6 +874,9 @@ def _explode_step(
         jcllib_order: JCLLIB library order for external PROC loading
         call_chain_upper: Frozenset of uppercased call chain names (O(1) membership);
                           computed from call_chain if not provided (backward-compat).
+        warnings: List to append symbol-substitution diagnostics to (e.g. an
+                  undefined &SYMBOL referenced inside the PROC body). None
+                  means diagnostics are discarded, matching audit_records.
 
     Returns:
         List of exploded steps
@@ -876,6 +931,7 @@ def _explode_step(
         scope=base_scope,
         step_prefix=step.name,
         strict=strict_symbols,
+        warnings=warnings,
     )
 
     # Apply qualified DD overrides (PROCSTEP.DDNAME) if present
@@ -935,6 +991,7 @@ def _explode_step(
                     expansion_map=expansion_map,
                     strict_symbols=strict_symbols,
                     jcllib_order=jcllib_order,
+                    warnings=warnings,
                 )
                 result.extend(nested)
             else:

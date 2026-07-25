@@ -3,7 +3,7 @@ type: Subsystem
 title: PROC Expansion
 description: explode_job() replaces PROC invocations with their full step content and substitutes &SYMBOL parameters; always a separate call from parse_jcl().
 tags: [proc, explosion, symbol-substitution, advanced]
-timestamp: 2026-06-29T00:00:00Z
+timestamp: 2026-07-24T00:00:00Z
 ---
 
 # Overview
@@ -61,7 +61,8 @@ entry.step_name, entry.proc_name, entry.parameters, entry.depth, entry.expanded_
 - `&&` → literal `&` (escaped ampersand)
 - `&&TEMP` in a DSN means temporary dataset, not an escaped ampersand
 - SET symbols resolve left-to-right
-- With `strict_symbols=False`, an undefined `&SYMBOL` elides to `""`. When that symbol was a PDS member — `DSN=LIB(&MEM)` → `LIB()` — `substitute_dd_statement` strips the empty `()` and collapses to the bare PDS name `LIB` (an empty member is meaningless). Non-empty members (`LIB(MEMBER)`) and GDG generations (`GDG(+1)`) are untouched.
+- With `strict_symbols=False`, an undefined `&SYMBOL` elides to `""` **and is recorded on `exploded_job.warnings`** (not just symbols undefined at `parse_jcl()` time — an `&SYMBOL` that only resolves against PROC defaults/EXEC overrides/system symbols, and is therefore only ever substituted inside `explode_job()`, warns too; fixed 2026-07-24, previously silently discarded). When that symbol was a PDS member — `DSN=LIB(&MEM)` → `LIB()` — `substitute_dd_statement` strips the empty `()` and collapses to the bare PDS name `LIB` (an empty member is meaningless). Non-empty members (`LIB(MEMBER)`) and GDG generations (`GDG(+1)`) are untouched.
+- `exploded_job.warnings` also carries forward everything already on `job.warnings` from `parse_jcl()` — `explode_job()` rebuilds a new `Job`, and prior to 2026-07-24 the rebuild silently dropped this field.
 
 # DD Overrides
 
@@ -69,10 +70,12 @@ DD statements coded under an `EXEC PROC=` invocation override or add to the proc
 
 | Form | Stored on the EXEC step as | Applied by | Target |
 |------|----------------------------|-----------|--------|
-| Qualified `//PROCSTEP.DDNAME DD …` | `step.dd_overrides[key]` | `apply_dd_overrides` | the named procstep; replaces a matching DD |
+| Qualified `//PROCSTEP.DDNAME DD …` | `step.dd_overrides[key]` | `apply_dd_overrides` | the named procstep; replaces a matching DD, else **appends** (fixed 2026-07-24, previously discarded when no DD of that name existed) |
 | Unqualified `//DDNAME DD …` | `step.dd_statements` | `apply_unqualified_dd_overrides` | the procedure's **first** step; replaces a same-named DD, else **appends** |
 
-The unqualified path is what carries an *added* DD (a name not present in the proc) onto the step — e.g. `//LOANRPT DD DSN=…` on `EXEC PROC=IMSBTCH`. Both run inside `_explode_step` after the proc is expanded; nested PROC invocations propagate naturally because the merge re-runs at each recursion level.
+Both paths carry an *added* DD (a name not present in the proc) onto the step — e.g. `//LOANRPT DD DSN=…` on `EXEC PROC=IMSBTCH` (unqualified), or `//PROCSTEP.NEWDD DD DSN=…` (qualified). Both run inside `_explode_step` after the proc is expanded; nested PROC invocations propagate naturally because the merge re-runs at each recursion level. The qualified path normalizes the resulting `DDStatement.name` to the plain `DDNAME` (not the raw `PROCSTEP.DDNAME` key) so `step.get_dd("DDNAME")` finds it either way.
+
+**Known limitation:** `PARM.procstep=value` on an `EXEC PROC=` invocation (a per-step `PARM` override) is tokenized into `step.parameters["PARM.procstep"]` but has no dedicated handling anywhere in explosion — it never overrides the target step's `PARM`, is dropped from the exploded output, and is not warned about. Not a regression; this qualified-keyword-override form was never implemented.
 
 # Error Types
 

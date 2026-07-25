@@ -9,6 +9,8 @@ from dataclasses import dataclass
 import logging
 import re
 
+from ._statement_parser import _STATEMENT_TYPES
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,25 +44,19 @@ class ContinuationLineHandler:
     ALT_CONTINUATION_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^//\s+,")
 
     # Standard JCL statement keywords that start new statements (not continuations)
-    # Only include primary JCL statement types, not parameter keywords
-    JCL_KEYWORDS: ClassVar[Set[str]] = {
-        "JOB",
-        "EXEC",
-        "DD",
-        "PROC",
-        "PEND",
-        "SET",
-        "IF",
-        "ELSE",
-        "ENDIF",
-        "GOTO",
-        "OUTPUT",
-        "JCLLIB",
-        "INCLUDE",
-        "SCHED",
-        "CNTL",
-        "ENDCNTL",
-    }
+    # Only include primary JCL statement types, not parameter keywords.
+    #
+    # Derived from jclparser._statement_parser._STATEMENT_TYPES -- the
+    # parser's own recognized-type allowlist -- so the two can never drift
+    # again. They used to be two independently-maintained copies; a type
+    # recognized by the parser but missing here got misclassified as a
+    # continuation and silently merged into the previous statement,
+    # corrupting it (see test_silent_drop_fixes.py
+    # TestContinuationHandlerKeywordDrift). GOTO/SCHED are unioned in on top
+    # even though they are not real _STATEMENT_TYPES entries -- untested,
+    # likely vestigial, but left alone to avoid changing their existing
+    # behavior.
+    JCL_KEYWORDS: ClassVar[Set[str]] = _STATEMENT_TYPES | {"GOTO", "SCHED"}
 
     def __init__(self):
         self.context = ContinuationContext()

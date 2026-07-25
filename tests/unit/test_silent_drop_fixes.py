@@ -6,13 +6,31 @@ operand) was previously discarded with no error and no diagnostic. The
 fixes route these cases through ``Job.warnings`` instead of vanishing.
 """
 
-from jclparser import parse_jcl
+import inspect
+
+from jclparser import explode_job, parse_jcl
+from jclparser._job_builder import JobBuilder
+from jclparser._statement_parser import _STATEMENT_TYPES
 from jclparser.continuation_handler import ContinuationLineHandler
 from jclparser.errors import JCLStructureError
 from jclparser.explosion import SymbolScope, substitute_dd_statement
 from jclparser.model import DDStatement
 from jclparser.parser import _parse_parameters, validate_jcl
 from jclparser.utils import read_source
+
+
+class TestStatementDispatchCompleteness:
+    """A statement type recognized by ``_STATEMENT_TYPES`` but missing a
+    branch in ``JobBuilder.handle_statement`` falls through with zero trace
+    -- not even the deliberate ``pass`` that NULL/COMMAND/CNTL/ENDCNTL get.
+    ``SCHEDULE`` was in ``_STATEMENT_TYPES`` since the parser's first commit
+    but was never dispatched anywhere; every recognized type must at least
+    reach an explicit (even if intentionally no-op) branch."""
+
+    def test_every_recognized_statement_type_has_a_dispatch_branch(self):
+        source = inspect.getsource(JobBuilder.handle_statement)
+        missing = [t for t in _STATEMENT_TYPES if f'"{t}"' not in source]
+        assert not missing, f"No dispatch branch for statement type(s): {missing}"
 
 
 class TestDuplicateParameterWarning:
@@ -390,3 +408,174 @@ class TestExecParmSymbolResolution:
         job = parse_jcl(jcl)
         assert job.steps[0].parameters["PARM"] == "&MODE"
         assert job.warnings == []
+
+
+class TestExplodeJobPreservesWarnings:
+    """explode_job() rebuilds a new Job from the parsed one; the metadata
+    copy loop forwarded unresolved_output_refs/sql_detections/jes_statements/
+    etc but not warnings, so every diagnostic recorded during parse_jcl()
+    (duplicate params, unresolved symbols, unknown statements, ...) vanished
+    the moment a caller ran the documented parse_jcl() -> explode_job()
+    workflow."""
+
+    def test_warnings_survive_explosion(self):
+        jcl = "//J JOB 1\n// SET FOO=BAR\n//S EXEC PGM=X\n//D1 DD DSN=&UNDEF..FILE\n"
+        job = parse_jcl(jcl)
+        assert job.warnings != []
+        exploded = explode_job(job)
+        assert exploded.warnings == job.warnings
+
+    def test_no_warnings_stays_empty(self):
+        jcl = "//J JOB 1\n//S EXEC PGM=X\n//D1 DD DSN=A.B,DISP=SHR\n"
+        job = parse_jcl(jcl)
+        exploded = explode_job(job)
+        assert exploded.warnings == []
+
+
+class TestExplosionTimeUndefinedSymbolWarns:
+    """Undefined symbols resolved *during* PROC expansion (against PROC
+    defaults/EXEC overrides/system symbols) are a separate code path from
+    parse_jcl()'s own SET-substitution pass -- parse_jcl() never expands
+    PROCs, so it can't see these. None of explode_job()'s internal
+    substitute_symbols/substitute_parameters_dict/substitute_dd_statement
+    call sites passed warnings=, even though all three already supported
+    it, so the undefined symbol silently blanked to '' with no diagnostic
+    of any kind."""
+
+    def test_undefined_symbol_inside_proc_body_warns(self):
+        jcl = (
+            "//J JOB 1\n"
+            "//PR PROC\n"
+            "//S1 EXEC PGM=IEFBR14\n"
+            "//D1 DD DSN=&NOTDEFINED..DATA,DISP=SHR\n"
+            "//PR PEND\n"
+            "//STEP1 EXEC PROC=PR\n"
+        )
+        job = parse_jcl(jcl)
+        exploded = explode_job(job, strict_symbols=False)
+        assert exploded.steps[0].dd_statements[0].dataset_name == ".DATA"
+        assert any("&NOTDEFINED" in w for w in exploded.warnings)
+
+    def test_undefined_symbol_on_regular_non_proc_step_warns(self):
+        # Same code path for a step that isn't a PROC invocation at all --
+        # exercises the non-PROC branch of explode_job()'s own _process_steps.
+        jcl = "//J JOB 1\n//S EXEC PGM=X\n//D1 DD DSN=&NOTDEFINED..DATA,DISP=SHR\n"
+        job = parse_jcl(jcl)
+        exploded = explode_job(job, strict_symbols=False)
+        assert any("&NOTDEFINED" in w for w in exploded.warnings)
+
+
+class TestContinuationHandlerKeywordDrift:
+    """ContinuationLineHandler.JCL_KEYWORDS was an independently-maintained
+    copy of _STATEMENT_TYPES that had drifted: EXPORT/COMMAND/SCHEDULE/XMIT/
+    THEN/NULL were missing. A nameless statement of one of these types,
+    indented after a *complete* previous statement, was misclassified as a
+    continuation and merged into the previous statement's last field --
+    corrupting it and making the new statement disappear entirely, with no
+    warning of any kind."""
+
+    def test_export_statement_after_complete_exec_is_not_merged(self):
+        jcl = (
+            "//MYJOB JOB (ACCT)\n"
+            "//STEP1 EXEC PGM=A\n"
+            "//         EXPORT SYMLIST=(X,Y)\n"
+            "//STEP2 EXEC PGM=B\n"
+        )
+        job = parse_jcl(jcl)
+        assert job.steps[0].program == "A"
+        assert [s.name for s in job.steps] == ["STEP1", "STEP2"]
+
+    def test_schedule_statement_after_complete_exec_is_not_merged(self):
+        jcl = (
+            "//MYJOB JOB (ACCT)\n"
+            "//STEP1 EXEC PGM=A\n"
+            "//         SCHEDULE CLASS=A\n"
+            "//STEP2 EXEC PGM=B\n"
+        )
+        job = parse_jcl(jcl)
+        assert job.steps[0].program == "A"
+        assert [s.name for s in job.steps] == ["STEP1", "STEP2"]
+
+    def test_command_statement_after_complete_exec_is_not_merged(self):
+        jcl = (
+            "//MYJOB JOB (ACCT)\n"
+            "//STEP1 EXEC PGM=A\n"
+            "//         COMMAND 'DISPLAY A'\n"
+            "//STEP2 EXEC PGM=B\n"
+        )
+        job = parse_jcl(jcl)
+        assert job.steps[0].program == "A"
+        assert [s.name for s in job.steps] == ["STEP1", "STEP2"]
+
+
+class TestJobSecondPositionalParameterPreserved:
+    """//job JOB (acct),'programmer-name',keyword=value,... has two legal
+    positional operands. _create_job_from_statement() only ever read _pos_0
+    (into accounting_info); its dict comprehension then stripped *every*
+    positional key -- including _pos_1 -- from job.parameters, discarding
+    the programmer-name operand with no trace anywhere on the Job object."""
+
+    def test_split_parameters_preserves_leading_empty_positional(self):
+        # A leading comma (omitted accounting info) must leave an empty
+        # placeholder, not silently shift every later positional down one
+        # index -- mirrors the existing DISP=(,CATLG,DELETE) fix for
+        # _parse_list_parameter.
+        params = _parse_parameters(",PROGRAMMER1,CLASS=A", line_number=1)
+        assert params.get("_pos_0") == ""
+        assert params.get("_pos_1") == "PROGRAMMER1"
+
+    def test_second_positional_survives_to_job_parameters(self):
+        jcl = "//J JOB (ACCT),'PROGRAMMER NAME',CLASS=A\n//S EXEC PGM=X\n"
+        job = parse_jcl(jcl)
+        assert job.accounting_info == "ACCT"
+        assert "PROGRAMMER NAME" in job.parameters.values()
+
+
+class TestQualifiedDdOverrideAppendsWhenMissing:
+    """apply_unqualified_dd_overrides (2026-06-28) fixed an EXEC PROC= DD
+    override that *adds* a new DD instead of replacing one -- but only for
+    unqualified overrides. The qualified PROCSTEP.DDNAME form went through a
+    different code path in apply_dd_overrides() that only ever replaces an
+    existing same-named DD; if no DD named DDNAME exists on the target step,
+    the override was discarded silently."""
+
+    def test_qualified_override_for_nonexistent_dd_is_appended(self):
+        jcl = (
+            "//J JOB 1\n"
+            "//PR PROC\n"
+            "//S1 EXEC PGM=IEFBR14\n"
+            "//A DD DSN=EXISTING.DSN,DISP=SHR\n"
+            "//PR PEND\n"
+            "//STEP1 EXEC PROC=PR\n"
+            "//S1.NEWDD DD DSN=BRAND.NEW.DSN,DISP=SHR\n"
+        )
+        job = parse_jcl(jcl)
+        exploded = explode_job(job)
+        step = exploded.steps[0]
+        assert step.get_dd("A") is not None
+        new_dd = step.get_dd("NEWDD")
+        assert new_dd is not None
+        assert new_dd.dataset_name == "BRAND.NEW.DSN"
+
+    def test_qualified_override_replace_keeps_unqualified_dd_name(self):
+        # Adjacent bug hit while fixing the append case above: the replaced
+        # DDStatement's .name carried the raw qualified key ("S1.A") instead
+        # of the plain DD name ("A"), so step.get_dd("A") returned None for
+        # any DD that had been overridden via the qualified PROCSTEP.DDNAME
+        # form.
+        jcl = (
+            "//J JOB 1\n"
+            "//PR PROC\n"
+            "//S1 EXEC PGM=IEFBR14\n"
+            "//A DD DSN=EXISTING.DSN,DISP=SHR\n"
+            "//PR PEND\n"
+            "//STEP1 EXEC PROC=PR\n"
+            "//S1.A DD DSN=REPLACED.DSN,DISP=SHR\n"
+        )
+        job = parse_jcl(jcl)
+        exploded = explode_job(job)
+        step = exploded.steps[0]
+        replaced = step.get_dd("A")
+        assert replaced is not None
+        assert replaced.dataset_name == "REPLACED.DSN"
+        assert len(step.dd_statements) == 1

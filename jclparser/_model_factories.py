@@ -78,12 +78,14 @@ def _create_job_from_statement(stmt: Statement) -> Job:
     """Create Job object from JOB statement"""
     accounting_info = None
 
-    # Extract accounting information (first positional parameter)
-    if f"{POSITIONAL_PARAM_PREFIX}0" in stmt.parameters:
-        accounting_info = stmt.parameters[f"{POSITIONAL_PARAM_PREFIX}0"].strip("()")
-
-    # Extract other parameters
-    job_params = {k: v for k, v in stmt.parameters.items() if not is_positional_key(k)}
+    # Extract accounting information (first positional parameter). Any
+    # further positional (e.g. the programmer-name operand in
+    # ``JOB (acct),'programmer-name',...``) is left in job.parameters
+    # rather than discarded -- mirrors _create_step_from_statement, which
+    # only pops _pos_0 and leaves the rest of stmt.parameters intact.
+    job_params = dict(stmt.parameters)
+    if f"{POSITIONAL_PARAM_PREFIX}0" in job_params:
+        accounting_info = job_params.pop(f"{POSITIONAL_PARAM_PREFIX}0").strip("()")
 
     return Job(
         name=stmt.name,
