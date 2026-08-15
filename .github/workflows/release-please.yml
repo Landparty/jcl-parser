@@ -4,6 +4,24 @@ on:
   push:
     branches:
       - main
+  # Manual dry run of the wheel-build + publish path. PyPI filenames are
+  # burned permanently on first upload, so `target: testpypi` exists to
+  # rehearse the whole pipeline against test.pypi.org before the first real
+  # publish. Using it requires a SEPARATE one-time manual step -- registering
+  # a Trusted Publisher for this repo/workflow on test.pypi.org, exactly like
+  # the pypi.org registration noted on publish-pypi below.
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Package index the publish-pypi job uploads to"
+        type: choice
+        options:
+          - pypi
+          - testpypi
+        # Defaults to the safe rehearsal target -- an accidental dispatch
+        # (e.g. clicking "Run workflow" without touching the dropdown) must
+        # not publish to the live index. Choose "pypi" explicitly.
+        default: testpypi
 
 permissions:
   contents: write
@@ -55,3 +73,40 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ steps.tag.outputs.tag }}" dist/* --clobber
+
+  # Publish the sdist and wheel to PyPI via Trusted Publishing (OIDC) -- no
+  # stored API token/secret. Requires a one-time manual step on pypi.org
+  # registering this repo/workflow as a trusted publisher for the
+  # "jclparser" project, plus a "pypi" GitHub Environment configured on the
+  # repo (see the cobol-parser sibling repo's release-please.yml for the
+  # equivalent setup this mirrors).
+  publish-pypi:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    # NOTE: the environment stays "pypi" even for a testpypi dry run -- the
+    # deployment gate/reviewers are the same either way, and splitting it
+    # would need a second environment configured by hand. Only the upload URL
+    # below changes.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/jclparser/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          # Re-running this job after a partial upload would otherwise fail on
+          # the files that already landed. PyPI filenames are immutable, so
+          # skipping them is the only recoverable behavior.
+          skip-existing: true
+          repository-url: ${{ (github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi') && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
