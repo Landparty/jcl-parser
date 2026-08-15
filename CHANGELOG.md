@@ -7,6 +7,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.2.1](https://github.com/Landparty/jcl-parser/compare/v1.2.0...v1.2.1) (2026-08-15)
+
+
+### Bug Fixes
+
+* **workflow:** update job-level permissions for pypi publishing ([6c39f23](https://github.com/Landparty/jcl-parser/commit/6c39f231e2cc008d9553a52c560a8a3e684823ec))
+
 ## [1.2.0](https://github.com/Landparty/jcl-parser/compare/v1.1.0...v1.2.0) (2026-08-15)
 
 
