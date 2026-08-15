@@ -7,6 +7,38 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.2.0](https://github.com/Landparty/jcl-parser/compare/v1.1.0...v1.2.0) (2026-08-15)
+
+
+### Features
+
+* **logging:** add INFO/DEBUG diagnostics across the parse pipeline ([48c7f3f](https://github.com/Landparty/jcl-parser/commit/48c7f3ff7f54c08a9aadc383a23471405a526700))
+* **workflow:** add manual dispatch for testpypi and pypi publishing ([8b1e878](https://github.com/Landparty/jcl-parser/commit/8b1e878412cc9c815de8813b744813bced7c4707))
+
+
+### Bug Fixes
+
+* address Copilot review findings on PR [#32](https://github.com/Landparty/jcl-parser/issues/32) ([cc5f8d7](https://github.com/Landparty/jcl-parser/commit/cc5f8d7876c4483527cb9a28fd5f6be1519de2c1))
+* close remaining silent-drop findings from parser audit ([e74b57c](https://github.com/Landparty/jcl-parser/commit/e74b57c1f39e4216e58d6e23bf18ac5ed0066242))
+* correct project name to "jcl-parser" in configuration files ([3775a2e](https://github.com/Landparty/jcl-parser/commit/3775a2e38895e4adeeb49ce80ef09db2ecdebdcc))
+* eliminate silent data loss in parsing, continuation, and symbol resolution ([c5a5eed](https://github.com/Landparty/jcl-parser/commit/c5a5eed92e23361f43a039b3d9b4e54cf8804259))
+* **parser:** resolve multiple silent data loss and dispatch bugs ([dc8024b](https://github.com/Landparty/jcl-parser/commit/dc8024b20e1ff5c4bb953f4cd2ea5a1187f3ee55))
+* preserve && through SET-value resolution, not just DD substitution ([f73611c](https://github.com/Landparty/jcl-parser/commit/f73611ca8cb80d83db71e6b4c67bd00f1ecacf06))
+
+
+### Documentation
+
+* Add comprehensive documentation for CLI, API, data model, parsing pipeline, and development workflow ([2ed4fc9](https://github.com/Landparty/jcl-parser/commit/2ed4fc9e0812baf7a966eeb8f0099b4456842c9b))
+* Add comprehensive documentation for CLI, public API, data model, parsing pipeline, and development workflow ([7836064](https://github.com/Landparty/jcl-parser/commit/7836064c7a19c6dc4e40dbac4adcf77924003573))
+* add OKF docs, drift-prevention hooks, and homogenize README ([ab47105](https://github.com/Landparty/jcl-parser/commit/ab47105ffb29e7bd53571bbcae9ea4fcc91fbb3d))
+* **changelog:** record removed APIs and correctness fixes ([039da89](https://github.com/Landparty/jcl-parser/commit/039da897ee1bf097cb3e555a20871e073e469323))
+* Enhance documentation for DD overrides in PROC expansion and update log entries ([1cd6461](https://github.com/Landparty/jcl-parser/commit/1cd6461f3e0df6bef660594be6b148eba1a26f91))
+* Initialize OKF knowledge bundle with core concepts, API, validation, and development workflow ([fcca35c](https://github.com/Landparty/jcl-parser/commit/fcca35c60d406a61d80f61bf9db4edf441e77764))
+* **spec:** design for extended INFO/DEBUG parser logging ([68363c4](https://github.com/Landparty/jcl-parser/commit/68363c46998bef8c2f1861e1ae90465147d05f2e))
+* Update citations in documentation files for consistency and accuracy ([0ea5edf](https://github.com/Landparty/jcl-parser/commit/0ea5edf5817d3093e7f3a2bcdffff9bfb38a09f2))
+* Update CLI reference and usage details; correct parsing pipeline description; add diagnostic logging section ([117d43e](https://github.com/Landparty/jcl-parser/commit/117d43ef972692778a16669c8c9e6fa6312b7696))
+* Update log and documentation for symbolic parameter substitution improvements ([d56c3ab](https://github.com/Landparty/jcl-parser/commit/d56c3ab2df72c86de17b013600268033aea85c15))
+
 ## [1.1.0](https://github.com/Landparty/jcl-parser/compare/v1.0.0...v1.1.0) (2026-06-25)
 
 
