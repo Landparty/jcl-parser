@@ -77,7 +77,7 @@ jobs:
   # Publish the sdist and wheel to PyPI via Trusted Publishing (OIDC) -- no
   # stored API token/secret. Requires a one-time manual step on pypi.org
   # registering this repo/workflow as a trusted publisher for the
-  # "jclparser" project, plus a "pypi" GitHub Environment configured on the
+  # "jcl-parser" project, plus a "pypi" GitHub Environment configured on the
   # repo (see the cobol-parser sibling repo's release-please.yml for the
   # equivalent setup this mirrors).
   publish-pypi:
@@ -90,7 +90,7 @@ jobs:
     # below changes.
     environment:
       name: pypi
-      url: https://pypi.org/project/jclparser/
+      url: https://pypi.org/project/jcl-parser/
     permissions:
       id-token: write
     steps:
