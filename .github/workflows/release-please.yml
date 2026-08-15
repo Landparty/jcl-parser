@@ -92,6 +92,11 @@ jobs:
       name: pypi
       url: https://pypi.org/project/jcl-parser/
     permissions:
+      # Job-level `permissions` replaces the workflow-level defaults entirely
+      # for this job, not merges with them -- `contents: read` is required
+      # here (this is a private repo) because this job checks out the repo
+      # and builds the sdist/wheel itself.
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
