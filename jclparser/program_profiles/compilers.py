@@ -12,9 +12,9 @@ dataset dependencies without parsing the source language.
 
 from __future__ import annotations
 
-
 from typing import TYPE_CHECKING
-from .base import ProgramProfile, ProgramAnalysis
+
+from .base import ProgramAnalysis, ProgramProfile
 
 if TYPE_CHECKING:
     from ..model import Step
@@ -30,7 +30,7 @@ _COMPILER_LABELS = {
 class CompilerProfile(ProgramProfile):
     program_names = frozenset(_COMPILER_LABELS)
 
-    def analyze(self, step: "Step") -> ProgramAnalysis:
+    def analyze(self, step: Step) -> ProgramAnalysis:
         program = step.program or ""
         language = _COMPILER_LABELS.get(program.upper(), "")
         notes: list[str] = []

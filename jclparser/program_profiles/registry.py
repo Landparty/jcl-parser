@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .base import ProgramProfile, ProgramAnalysis
+from .base import ProgramAnalysis, ProgramProfile
 
 if TYPE_CHECKING:
     from ..model import Job, Step
@@ -45,7 +45,7 @@ def get_profile(program_name: str | None) -> ProgramProfile | None:
     return None
 
 
-def analyze_step(step: "Step") -> ProgramAnalysis | None:
+def analyze_step(step: Step) -> ProgramAnalysis | None:
     """Run the matching profile (if any) against *step*."""
     profile = get_profile(step.program)
     if profile is None:
@@ -53,7 +53,7 @@ def analyze_step(step: "Step") -> ProgramAnalysis | None:
     return profile.analyze(step)
 
 
-def analyze_job(job: "Job") -> list[ProgramAnalysis]:
+def analyze_job(job: Job) -> list[ProgramAnalysis]:
     """Run all applicable profiles across every step in *job*."""
     from ..model import iter_execution_steps
 
@@ -71,24 +71,24 @@ def analyze_job(job: "Job") -> list[ProgramAnalysis]:
 
 
 def _register_builtins() -> None:
-    from .iefbr14 import IEFBR14Profile
-    from .idcams import IDCAMSProfile
-    from .iebgener import IEBGENERProfile, IEBCOPYProfile, ICEGENERProfile
-    from .sort import SortProfile
-    from .ikjeft01 import IKJEFT01Profile
-    from .db2_batch import DB2BatchProfile
-    from .dfsrrc00 import DFSRRC00Profile
-    from .icetool import ICETOOLProfile
     from .adrdssu import ADRDSSUProfile
-    from .iehlist import IEHLISTProfile
-    from .iehprogm import IEHPROGMProfile
-    from .iebupdte import IEBUPDTEProfile
-    from .iebptpch import IEBPTPCHProfile
-    from .iebdg import IEBDGProfile
     from .binder import BinderProfile
     from .compilers import CompilerProfile
-    from .irxjcl import IRXJCLProfile
+    from .db2_batch import DB2BatchProfile
+    from .dfsrrc00 import DFSRRC00Profile
     from .ftp import FTPProfile
+    from .icetool import ICETOOLProfile
+    from .idcams import IDCAMSProfile
+    from .iebdg import IEBDGProfile
+    from .iebgener import ICEGENERProfile, IEBCOPYProfile, IEBGENERProfile
+    from .iebptpch import IEBPTPCHProfile
+    from .iebupdte import IEBUPDTEProfile
+    from .iefbr14 import IEFBR14Profile
+    from .iehlist import IEHLISTProfile
+    from .iehprogm import IEHPROGMProfile
+    from .ikjeft01 import IKJEFT01Profile
+    from .irxjcl import IRXJCLProfile
+    from .sort import SortProfile
 
     register_profile(IEFBR14Profile())
     register_profile(IDCAMSProfile())
@@ -116,8 +116,8 @@ _register_builtins()
 
 
 __all__ = [
-    "register_profile",
-    "get_profile",
-    "analyze_step",
     "analyze_job",
+    "analyze_step",
+    "get_profile",
+    "register_profile",
 ]

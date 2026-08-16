@@ -10,10 +10,9 @@ statement or the step's SYSUT2 DD.
 from __future__ import annotations
 
 import re
-
 from typing import TYPE_CHECKING
 
-from .base import ProgramProfile, ProgramAnalysis, _sysin_text
+from .base import ProgramAnalysis, ProgramProfile, _sysin_text
 
 if TYPE_CHECKING:
     from ..model import Step
@@ -32,7 +31,7 @@ _RE_CREATE = re.compile(
 class IEBDGProfile(ProgramProfile):
     program_names = frozenset({"IEBDG"})
 
-    def analyze(self, step: "Step") -> ProgramAnalysis:
+    def analyze(self, step: Step) -> ProgramAnalysis:
         text = _sysin_text(step) or ""
         notes: list[str] = []
 

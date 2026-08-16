@@ -11,14 +11,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .base import ProgramProfile, ProgramAnalysis
 from ..dataset_lifecycle import DatasetEvent
+from .base import ProgramAnalysis, ProgramProfile
 
 if TYPE_CHECKING:
     from ..model import Step
 
 
-def _copy_utility_analysis(step: "Step", program: str) -> ProgramAnalysis:
+def _copy_utility_analysis(step: Step, program: str) -> ProgramAnalysis:
     sysut1 = step.get_dd("SYSUT1")
     sysut2 = step.get_dd("SYSUT2")
     events: list[DatasetEvent] = []
@@ -69,19 +69,19 @@ def _copy_utility_analysis(step: "Step", program: str) -> ProgramAnalysis:
 class IEBGENERProfile(ProgramProfile):
     program_names = frozenset({"IEBGENER"})
 
-    def analyze(self, step: "Step") -> ProgramAnalysis:
+    def analyze(self, step: Step) -> ProgramAnalysis:
         return _copy_utility_analysis(step, "IEBGENER")
 
 
 class IEBCOPYProfile(ProgramProfile):
     program_names = frozenset({"IEBCOPY"})
 
-    def analyze(self, step: "Step") -> ProgramAnalysis:
+    def analyze(self, step: Step) -> ProgramAnalysis:
         return _copy_utility_analysis(step, "IEBCOPY")
 
 
 class ICEGENERProfile(ProgramProfile):
     program_names = frozenset({"ICEGENER"})
 
-    def analyze(self, step: "Step") -> ProgramAnalysis:
+    def analyze(self, step: Step) -> ProgramAnalysis:
         return _copy_utility_analysis(step, "ICEGENER")

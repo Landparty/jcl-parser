@@ -8,9 +8,9 @@ exec libraries) rather than SYSIN.
 
 from __future__ import annotations
 
-
 from typing import TYPE_CHECKING
-from .base import ProgramProfile, ProgramAnalysis
+
+from .base import ProgramAnalysis, ProgramProfile
 
 if TYPE_CHECKING:
     from ..model import Step
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 class IRXJCLProfile(ProgramProfile):
     program_names = frozenset({"IRXJCL"})
 
-    def analyze(self, step: "Step") -> ProgramAnalysis:
+    def analyze(self, step: Step) -> ProgramAnalysis:
         notes: list[str] = []
         parm: str = step.parameters.get("PARM") or ""
         parts = parm.split(None, 1)

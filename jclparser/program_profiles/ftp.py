@@ -10,10 +10,9 @@ resolve remote paths.
 from __future__ import annotations
 
 import re
-
 from typing import TYPE_CHECKING
 
-from .base import ProgramProfile, ProgramAnalysis, _sysin_text
+from .base import ProgramAnalysis, ProgramProfile, _sysin_text
 
 if TYPE_CHECKING:
     from ..model import Step
@@ -29,7 +28,7 @@ _RE_MODE = re.compile(r"^\s*(ASCII|BINARY)\b", re.IGNORECASE | re.MULTILINE)
 class FTPProfile(ProgramProfile):
     program_names = frozenset({"FTP"})
 
-    def analyze(self, step: "Step") -> ProgramAnalysis:
+    def analyze(self, step: Step) -> ProgramAnalysis:
         text = _sysin_text(step) or ""
         notes: list[str] = []
 

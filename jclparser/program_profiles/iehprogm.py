@@ -11,11 +11,10 @@ so — like :mod:`jclparser.program_profiles.idcams` — the profile emits
 from __future__ import annotations
 
 import re
-
 from typing import TYPE_CHECKING
 
-from .base import ProgramProfile, ProgramAnalysis, _sysin_text
 from ..dataset_lifecycle import DatasetEvent
+from .base import ProgramAnalysis, ProgramProfile, _sysin_text
 
 if TYPE_CHECKING:
     from ..model import Step
@@ -39,7 +38,7 @@ _RE_CONNECT = re.compile(r"^\s*CONNECT\b", re.IGNORECASE | re.MULTILINE)
 class IEHPROGMProfile(ProgramProfile):
     program_names = frozenset({"IEHPROGM"})
 
-    def analyze(self, step: "Step") -> ProgramAnalysis:
+    def analyze(self, step: Step) -> ProgramAnalysis:
         text = _sysin_text(step) or ""
         events: list[DatasetEvent] = []
         notes: list[str] = []

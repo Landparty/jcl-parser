@@ -15,10 +15,9 @@ field specifications.
 from __future__ import annotations
 
 import re
-
 from typing import TYPE_CHECKING
 
-from .base import ProgramProfile, ProgramAnalysis, _sysin_text
+from .base import ProgramAnalysis, ProgramProfile, _sysin_text
 
 if TYPE_CHECKING:
     from ..model import Step
@@ -52,7 +51,7 @@ _RE_FROM = re.compile(r"\bFROM\s*\(\s*([A-Za-z0-9$#@]+)\s*\)", re.IGNORECASE)
 _RE_TO = re.compile(r"\bTO\s*\(\s*([A-Za-z0-9$#@]+)\s*\)", re.IGNORECASE)
 
 
-def _toolin_text(step: "Step") -> str:
+def _toolin_text(step: Step) -> str:
     dd = step.get_dd("TOOLIN")
     if dd and dd.inline_data:
         return dd.inline_data
@@ -63,7 +62,7 @@ def _toolin_text(step: "Step") -> str:
 class ICETOOLProfile(ProgramProfile):
     program_names = frozenset({"ICETOOL"})
 
-    def analyze(self, step: "Step") -> ProgramAnalysis:
+    def analyze(self, step: Step) -> ProgramAnalysis:
         text = _toolin_text(step)
         notes: list[str] = []
 

@@ -9,10 +9,9 @@ add search libraries and alternate names.  Output lands on ``SYSLMOD``.
 from __future__ import annotations
 
 import re
-
 from typing import TYPE_CHECKING
 
-from .base import ProgramProfile, ProgramAnalysis
+from .base import ProgramAnalysis, ProgramProfile
 
 if TYPE_CHECKING:
     from ..model import Step
@@ -28,7 +27,7 @@ _RE_LIBRARY = re.compile(
 _RE_ALIAS = re.compile(r"^\s*ALIAS\s+([A-Za-z0-9$#@]+)", re.IGNORECASE | re.MULTILINE)
 
 
-def _control_text(step: "Step") -> str:
+def _control_text(step: Step) -> str:
     for dd_name in ("SYSIN", "SYSLIN"):
         dd = step.get_dd(dd_name)
         if dd and dd.inline_data:
@@ -39,7 +38,7 @@ def _control_text(step: "Step") -> str:
 class BinderProfile(ProgramProfile):
     program_names = frozenset({"IEWL", "HEWL"})
 
-    def analyze(self, step: "Step") -> ProgramAnalysis:
+    def analyze(self, step: Step) -> ProgramAnalysis:
         text = _control_text(step)
         notes: list[str] = []
 
