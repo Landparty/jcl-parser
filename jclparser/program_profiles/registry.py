@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .base import ProgramProfile, ProgramAnalysis
+from .base import ProgramAnalysis, ProgramProfile
 
 if TYPE_CHECKING:
     from ..model import Job, Step
@@ -45,7 +45,7 @@ def get_profile(program_name: str | None) -> ProgramProfile | None:
     return None
 
 
-def analyze_step(step: "Step") -> ProgramAnalysis | None:
+def analyze_step(step: Step) -> ProgramAnalysis | None:
     """Run the matching profile (if any) against *step*."""
     profile = get_profile(step.program)
     if profile is None:
@@ -53,7 +53,7 @@ def analyze_step(step: "Step") -> ProgramAnalysis | None:
     return profile.analyze(step)
 
 
-def analyze_job(job: "Job") -> list[ProgramAnalysis]:
+def analyze_job(job: Job) -> list[ProgramAnalysis]:
     """Run all applicable profiles across every step in *job*."""
     from ..model import iter_execution_steps
 
@@ -71,30 +71,53 @@ def analyze_job(job: "Job") -> list[ProgramAnalysis]:
 
 
 def _register_builtins() -> None:
-    from .iefbr14 import IEFBR14Profile
-    from .idcams import IDCAMSProfile
-    from .iebgener import IEBGENERProfile, IEBCOPYProfile
-    from .sort import SortProfile
-    from .ikjeft01 import IKJEFT01Profile
+    from .adrdssu import ADRDSSUProfile
+    from .binder import BinderProfile
+    from .compilers import CompilerProfile
     from .db2_batch import DB2BatchProfile
     from .dfsrrc00 import DFSRRC00Profile
+    from .ftp import FTPProfile
+    from .icetool import ICETOOLProfile
+    from .idcams import IDCAMSProfile
+    from .iebdg import IEBDGProfile
+    from .iebgener import ICEGENERProfile, IEBCOPYProfile, IEBGENERProfile
+    from .iebptpch import IEBPTPCHProfile
+    from .iebupdte import IEBUPDTEProfile
+    from .iefbr14 import IEFBR14Profile
+    from .iehlist import IEHLISTProfile
+    from .iehprogm import IEHPROGMProfile
+    from .ikjeft01 import IKJEFT01Profile
+    from .irxjcl import IRXJCLProfile
+    from .sort import SortProfile
 
     register_profile(IEFBR14Profile())
     register_profile(IDCAMSProfile())
     register_profile(IEBGENERProfile())
     register_profile(IEBCOPYProfile())
+    register_profile(ICEGENERProfile())
     register_profile(SortProfile())
     register_profile(IKJEFT01Profile())
     register_profile(DB2BatchProfile())
     register_profile(DFSRRC00Profile())
+    register_profile(ICETOOLProfile())
+    register_profile(ADRDSSUProfile())
+    register_profile(IEHLISTProfile())
+    register_profile(IEHPROGMProfile())
+    register_profile(IEBUPDTEProfile())
+    register_profile(IEBPTPCHProfile())
+    register_profile(IEBDGProfile())
+    register_profile(BinderProfile())
+    register_profile(CompilerProfile())
+    register_profile(IRXJCLProfile())
+    register_profile(FTPProfile())
 
 
 _register_builtins()
 
 
 __all__ = [
-    "register_profile",
-    "get_profile",
-    "analyze_step",
     "analyze_job",
+    "analyze_step",
+    "get_profile",
+    "register_profile",
 ]
