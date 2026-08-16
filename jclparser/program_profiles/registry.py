@@ -73,20 +73,43 @@ def analyze_job(job: "Job") -> list[ProgramAnalysis]:
 def _register_builtins() -> None:
     from .iefbr14 import IEFBR14Profile
     from .idcams import IDCAMSProfile
-    from .iebgener import IEBGENERProfile, IEBCOPYProfile
+    from .iebgener import IEBGENERProfile, IEBCOPYProfile, ICEGENERProfile
     from .sort import SortProfile
     from .ikjeft01 import IKJEFT01Profile
     from .db2_batch import DB2BatchProfile
     from .dfsrrc00 import DFSRRC00Profile
+    from .icetool import ICETOOLProfile
+    from .adrdssu import ADRDSSUProfile
+    from .iehlist import IEHLISTProfile
+    from .iehprogm import IEHPROGMProfile
+    from .iebupdte import IEBUPDTEProfile
+    from .iebptpch import IEBPTPCHProfile
+    from .iebdg import IEBDGProfile
+    from .binder import BinderProfile
+    from .compilers import CompilerProfile
+    from .irxjcl import IRXJCLProfile
+    from .ftp import FTPProfile
 
     register_profile(IEFBR14Profile())
     register_profile(IDCAMSProfile())
     register_profile(IEBGENERProfile())
     register_profile(IEBCOPYProfile())
+    register_profile(ICEGENERProfile())
     register_profile(SortProfile())
     register_profile(IKJEFT01Profile())
     register_profile(DB2BatchProfile())
     register_profile(DFSRRC00Profile())
+    register_profile(ICETOOLProfile())
+    register_profile(ADRDSSUProfile())
+    register_profile(IEHLISTProfile())
+    register_profile(IEHPROGMProfile())
+    register_profile(IEBUPDTEProfile())
+    register_profile(IEBPTPCHProfile())
+    register_profile(IEBDGProfile())
+    register_profile(BinderProfile())
+    register_profile(CompilerProfile())
+    register_profile(IRXJCLProfile())
+    register_profile(FTPProfile())
 
 
 _register_builtins()

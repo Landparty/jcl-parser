@@ -1,4 +1,5 @@
-"""Profiles for simple IBM copy utilities: ``IEBGENER`` and ``IEBCOPY``.
+"""Profiles for simple IBM copy utilities: ``IEBGENER``, ``IEBCOPY``, and
+``ICEGENER`` (the DFSORT-based drop-in replacement for IEBGENER).
 
 These programs copy data from one dataset to another.  The profile reports
 SYSUT1 (input) and SYSUT2 (output) as the canonical source/destination pair
@@ -8,11 +9,16 @@ dispositions.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from .base import ProgramProfile, ProgramAnalysis
 from ..dataset_lifecycle import DatasetEvent
 
+if TYPE_CHECKING:
+    from ..model import Step
 
-def _copy_utility_analysis(step, program: str) -> ProgramAnalysis:
+
+def _copy_utility_analysis(step: "Step", program: str) -> ProgramAnalysis:
     sysut1 = step.get_dd("SYSUT1")
     sysut2 = step.get_dd("SYSUT2")
     events: list[DatasetEvent] = []
@@ -63,12 +69,19 @@ def _copy_utility_analysis(step, program: str) -> ProgramAnalysis:
 class IEBGENERProfile(ProgramProfile):
     program_names = frozenset({"IEBGENER"})
 
-    def analyze(self, step) -> ProgramAnalysis:
+    def analyze(self, step: "Step") -> ProgramAnalysis:
         return _copy_utility_analysis(step, "IEBGENER")
 
 
 class IEBCOPYProfile(ProgramProfile):
     program_names = frozenset({"IEBCOPY"})
 
-    def analyze(self, step) -> ProgramAnalysis:
+    def analyze(self, step: "Step") -> ProgramAnalysis:
         return _copy_utility_analysis(step, "IEBCOPY")
+
+
+class ICEGENERProfile(ProgramProfile):
+    program_names = frozenset({"ICEGENER"})
+
+    def analyze(self, step: "Step") -> ProgramAnalysis:
+        return _copy_utility_analysis(step, "ICEGENER")

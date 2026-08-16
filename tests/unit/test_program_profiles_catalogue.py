@@ -1,0 +1,295 @@
+"""Unit tests for the extended program-profile catalogue.
+
+Covers the utility/compiler profiles added alongside the original set
+(IEFBR14, IDCAMS, IEBGENER/IEBCOPY, SORT, IKJEFT01, DB2 batch, DFSRRC00):
+ICEGENER, ICETOOL, ADRDSSU, IEHLIST, IEHPROGM, IEBUPDTE, IEBPTPCH, IEBDG,
+IEWL/HEWL (Binder), COBOL/PL/I/Assembler compilers, IRXJCL, and batch FTP.
+"""
+
+from __future__ import annotations
+
+import jclparser as jp
+from jclparser.program_profiles import analyze_job, get_profile
+
+
+class TestICEGENER:
+    def test_detects_sysut1_sysut2_flow(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=ICEGENER\n"
+            "//SYSUT1   DD DSN=INPUT.DATA,DISP=SHR\n"
+            "//SYSUT2   DD DSN=OUTPUT.DATA,DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,\n"
+            "//             SPACE=(CYL,(1,1))\n"
+            "//SYSIN    DD DUMMY\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert results[0].program == "ICEGENER"
+        assert any("reads" in n for n in results[0].notes)
+        assert any("writes" in n for n in results[0].notes)
+
+
+class TestICETOOL:
+    def test_detects_operators_and_dds(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=ICETOOL\n"
+            "//TOOLIN   DD *\n"
+            "  COPY FROM(IN1) TO(OUT1)\n"
+            "  COUNT FROM(IN1)\n"
+            "/*\n"
+            "//IN1      DD DSN=IN.FILE,DISP=SHR\n"
+            "//OUT1     DD DSN=OUT.FILE,DISP=(NEW,CATLG,DELETE)\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert results[0].notes == ["COPY FROM(IN1) TO(OUT1)", "COUNT FROM(IN1)"]
+
+    def test_no_toolin_graceful(self):
+        src = "//MYJOB    JOB  (ACCT)\n//STEP1    EXEC PGM=ICETOOL\n"
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert "no recognised" in results[0].summary
+
+
+class TestADRDSSU:
+    def test_dump_with_dataset_include(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=ADRDSSU\n"
+            "//SYSIN    DD *\n"
+            " DUMP DATASET(INCLUDE(PROD.DATA)) OUTDDNAME(TAPE1)\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert results[0].program == "ADRDSSU"
+        notes = " | ".join(results[0].notes)
+        assert "DUMP" in notes
+        assert "PROD.DATA" in notes
+
+    def test_restore_and_copy_commands(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=ADRDSSU\n"
+            "//SYSIN    DD *\n"
+            " RESTORE INDDNAME(TAPE1)\n"
+            " COPY DATASET(INCLUDE(PROD.A PROD.B))\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        notes = " | ".join(results[0].notes)
+        assert "RESTORE" in notes
+        assert "COPY" in notes
+        assert "PROD.A" in notes and "PROD.B" in notes
+
+
+class TestIEHLIST:
+    def test_listvtoc_and_listpds(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEHLIST\n"
+            "//SYSIN    DD *\n"
+            "  LISTVTOC FORMAT,VOL=SYSDA=VOL001\n"
+            "  LISTPDS DSNAME=PROD.LOADLIB\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        notes = " | ".join(results[0].notes)
+        assert "LISTVTOC" in notes
+        assert "LISTPDS DSNAME=PROD.LOADLIB" in notes
+
+
+class TestIEHPROGM:
+    def test_scratch_catlg_uncatlg(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEHPROGM\n"
+            "//SYSIN    DD *\n"
+            "  SCRATCH DSNAME=PROD.OLD,VOL=SYSDA=VOL001\n"
+            "  CATLG DSNAME=PROD.NEW,VOL=SYSDA=VOL001\n"
+            "  UNCATLG DSNAME=PROD.STALE\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        result = results[0]
+        assert result.program == "IEHPROGM"
+        actions = {e.action for e in result.dataset_events}
+        assert actions == {"DELETE", "ALLOCATE", "UNCATALOG"}
+        notes = " | ".join(result.notes)
+        assert "SCRATCH PROD.OLD" in notes
+        assert "CATLG PROD.NEW" in notes
+        assert "UNCATLG PROD.STALE" in notes
+
+
+class TestIEBUPDTE:
+    def test_add_and_repl_members(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEBUPDTE\n"
+            "//SYSUT2   DD DSN=PROD.SRCLIB,DISP=SHR\n"
+            "//SYSIN    DD *\n"
+            "./ ADD NAME=MEMBER1\n"
+            "SOME DATA\n"
+            "./ REPL NAME=MEMBER2\n"
+            "MORE DATA\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        notes = " | ".join(results[0].notes)
+        assert "ADD NAME=MEMBER1" in notes
+        assert "REPL NAME=MEMBER2" in notes
+        assert any(e.dd_name == "SYSUT2" for e in results[0].dataset_events)
+
+
+class TestIEBPTPCH:
+    def test_print_with_member_and_title(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEBPTPCH\n"
+            "//SYSUT1   DD DSN=PROD.SRCLIB,DISP=SHR\n"
+            "//SYSIN    DD *\n"
+            "  PRINT TYPORG=PO\n"
+            "  TITLE ITEM=1,LIST='REPORT'\n"
+            "  MEMBER NAME=MEMBER1\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        notes = " | ".join(results[0].notes)
+        assert "PRINT" in notes
+        assert "TITLE" in notes
+        assert "MEMBER MEMBER1" in notes
+        assert "reads PROD.SRCLIB" in notes
+
+
+class TestIEBDG:
+    def test_dsd_fd_create(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEBDG\n"
+            "//SYSUT2   DD DSN=&&TEMP,DISP=(NEW,PASS)\n"
+            "//SYSIN    DD *\n"
+            "  DSD OUTPUT=(SYSUT2),DDNAME=SYSUT2\n"
+            "  FD NAME=FLD1,STARTLOC=1,LENGTH=10\n"
+            "  CREATE NAME=(FLD1),QUANTITY=100,REPEAT=100\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        notes = " | ".join(results[0].notes)
+        assert "DSD DDNAME=SYSUT2" in notes
+        assert "FLD1" in notes
+        assert "CREATE REPEAT=100" in notes
+
+
+class TestBinder:
+    def test_iewl_include_entry_name(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEWL\n"
+            "//SYSLMOD  DD DSN=PROD.LOADLIB(MYPROG),DISP=SHR\n"
+            "//SYSIN    DD *\n"
+            "  INCLUDE OBJLIB(MOD1)\n"
+            "  ENTRY MAINEP\n"
+            "  NAME MYPROG(R)\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert results[0].program == "IEWL"
+        notes = " | ".join(results[0].notes)
+        assert "INCLUDE" in notes
+        assert "ENTRY MAINEP" in notes
+        assert "output module: PROD.LOADLIB(MYPROG)" in notes
+
+    def test_hewl_also_matched(self):
+        assert get_profile("HEWL") is not None
+
+
+class TestCompilers:
+    def test_cobol_compile_reports_dds(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IGYCRCTL\n"
+            "//SYSIN    DD DSN=PROD.COBOL.SRC(MYPROG),DISP=SHR\n"
+            "//SYSLIB   DD DSN=PROD.COPYLIB,DISP=SHR\n"
+            "//SYSLIN   DD DSN=&&OBJSET,DISP=(NEW,PASS)\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert results[0].program == "IGYCRCTL"
+        assert "COBOL" in results[0].summary
+        notes = " | ".join(results[0].notes)
+        assert "source: PROD.COBOL.SRC(MYPROG)" in notes
+        assert "copy/include library: PROD.COPYLIB" in notes
+
+    def test_assembler_recognised(self):
+        assert get_profile("ASMA90") is not None
+
+
+class TestIRXJCL:
+    def test_exec_name_and_args_from_parm(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IRXJCL,PARM='MYEXEC ARG1 ARG2'\n"
+            "//SYSEXEC  DD DSN=PROD.EXEC.LIB,DISP=SHR\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        result = results[0]
+        assert result.program == "IRXJCL"
+        assert result.invoked_programs == ["MYEXEC"]
+        notes = " | ".join(result.notes)
+        assert "exec: MYEXEC" in notes
+        assert "args: ARG1 ARG2" in notes
+
+    def test_no_parm_graceful(self):
+        src = "//MYJOB    JOB  (ACCT)\n//STEP1    EXEC PGM=IRXJCL\n"
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert "no exec name" in results[0].summary
+
+
+class TestFTP:
+    def test_open_user_transfer_commands(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=FTP,PARM='REMOTE.HOST.COM (EXIT'\n"
+            "//SYSIN    DD *\n"
+            "  OPEN REMOTE.HOST.COM\n"
+            "  USER FTPUSER FTPPASS\n"
+            "  BINARY\n"
+            "  PUT LOCAL.FILE REMOTE.FILE\n"
+            "  QUIT\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        notes = " | ".join(results[0].notes)
+        assert "OPEN REMOTE.HOST.COM" in notes
+        assert "USER FTPUSER" in notes
+        assert "BINARY" in notes
+        assert "PUT LOCAL.FILE" in notes
+
+
+def test_unknown_program_still_returns_none():
+    assert get_profile("SOMECUSTOMPGM") is None
