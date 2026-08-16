@@ -21,7 +21,14 @@ class IRXJCLProfile(ProgramProfile):
 
     def analyze(self, step: Step) -> ProgramAnalysis:
         notes: list[str] = []
-        parm: str = step.parameters.get("PARM") or ""
+        raw_parm = step.parameters.get("PARM")
+        # PARM=(subparm,...) is parsed into a list of strings; PARM=value or
+        # PARM='value text' stays a plain string. Normalise both to a string
+        # before splitting so a parenthesised PARM can't crash this profile.
+        if isinstance(raw_parm, list):
+            parm = " ".join(str(p) for p in raw_parm)
+        else:
+            parm = str(raw_parm) if raw_parm else ""
         parts = parm.split(None, 1)
         exec_name = parts[0].upper() if parts else ""
         exec_args = parts[1] if len(parts) > 1 else ""

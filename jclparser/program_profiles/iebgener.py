@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..dataset_lifecycle import DatasetEvent
+from ..dataset_lifecycle import DatasetEvent, _parse_disp_tokens
 from .base import ProgramAnalysis, ProgramProfile
 
 if TYPE_CHECKING:
@@ -25,16 +25,13 @@ def _copy_utility_analysis(step: Step, program: str) -> ProgramAnalysis:
     notes: list[str] = []
 
     if sysut1 and sysut1.dataset_name:
+        status, _, _ = _parse_disp_tokens(sysut1.disposition)
         events.append(
             DatasetEvent(
                 step_name=step.name or "",
                 dd_name="SYSUT1",
                 action="OPEN_SHARED",
-                disp_status=(sysut1.disposition or "SHR")
-                .split(",")[0]
-                .strip("()")
-                .upper()
-                or "SHR",
+                disp_status=status or "SHR",
                 line_number=sysut1.line_number,
             )
         )

@@ -42,10 +42,15 @@ class ADRDSSUProfile(ProgramProfile):
         text = _sysin_text(step) or ""
         notes: list[str] = []
 
-        for m in _RE_COMMAND.finditer(text):
+        matches = list(_RE_COMMAND.finditer(text))
+        for i, m in enumerate(matches):
             command = m.group(1).upper()
-            tail = text[m.end() : m.end() + 400]
-            ds_m = _RE_DATASET_INCLUDE.search(tail)
+            # Scope the INCLUDE search to this command's own statement —
+            # up to the next command keyword (or end of text) — so a later
+            # command's DATASET(INCLUDE(...)) can't be misattributed here.
+            segment_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            segment = text[m.end() : segment_end]
+            ds_m = _RE_DATASET_INCLUDE.search(segment)
             if ds_m:
                 names = [n.strip() for n in ds_m.group(1).split() if n.strip()]
                 notes.append(f"{command} DATASET(INCLUDE({' '.join(names)}))")

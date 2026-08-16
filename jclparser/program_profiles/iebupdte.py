@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from ..dataset_lifecycle import DatasetEvent
+from ..dataset_lifecycle import DatasetEvent, _parse_disp_tokens
 from .base import ProgramAnalysis, ProgramProfile, _sysin_text
 
 if TYPE_CHECKING:
@@ -40,16 +40,13 @@ class IEBUPDTEProfile(ProgramProfile):
         sysut1 = step.get_dd("SYSUT1")
         sysut2 = step.get_dd("SYSUT2")
         if sysut1 and sysut1.dataset_name:
+            status, _, _ = _parse_disp_tokens(sysut1.disposition)
             events.append(
                 DatasetEvent(
                     step_name=step.name or "",
                     dd_name="SYSUT1",
                     action="OPEN_SHARED",
-                    disp_status=(sysut1.disposition or "SHR")
-                    .split(",")[0]
-                    .strip("()")
-                    .upper()
-                    or "SHR",
+                    disp_status=status or "SHR",
                     line_number=sysut1.line_number,
                 )
             )

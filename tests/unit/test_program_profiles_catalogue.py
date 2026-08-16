@@ -29,6 +29,23 @@ class TestICEGENER:
         assert any("reads" in n for n in results[0].notes)
         assert any("writes" in n for n in results[0].notes)
 
+    def test_symbolic_list_disposition_does_not_crash(self):
+        """DISP=(&STATUS,CATLG,DELETE) parses disposition as a list, not a
+        string — the shared copy-utility helper must not call .split() on
+        it directly (same underlying issue as IEBUPDTE)."""
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=ICEGENER\n"
+            "//SYSUT1   DD DSN=IN.FILE,DISP=(&STATUS,CATLG,DELETE)\n"
+            "//SYSUT2   DD DSN=OUT.FILE,DISP=(NEW,CATLG,DELETE)\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        sysut1_events = [e for e in results[0].dataset_events if e.dd_name == "SYSUT1"]
+        assert len(sysut1_events) == 1
+        assert sysut1_events[0].disp_status == "&STATUS"
+
 
 class TestICETOOL:
     def test_detects_operators_and_dds(self):
@@ -87,6 +104,26 @@ class TestADRDSSU:
         assert "RESTORE" in notes
         assert "COPY" in notes
         assert "PROD.A" in notes and "PROD.B" in notes
+
+    def test_include_not_misattributed_to_earlier_command(self):
+        """A later command's DATASET(INCLUDE(...)) must not leak onto an
+        earlier command that has none of its own (regression: the search
+        used to scan a fixed 400-char window past the command keyword,
+        which could reach into the next statement)."""
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=ADRDSSU\n"
+            "//SYSIN    DD *\n"
+            " RESTORE INDDNAME(TAPE1)\n"
+            " COPY DATASET(INCLUDE(PROD.A PROD.B))\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert results[0].notes == [
+            "RESTORE",
+            "COPY DATASET(INCLUDE(PROD.A PROD.B))",
+        ]
 
 
 class TestIEHLIST:
@@ -151,6 +188,25 @@ class TestIEBUPDTE:
         assert "ADD NAME=MEMBER1" in notes
         assert "REPL NAME=MEMBER2" in notes
         assert any(e.dd_name == "SYSUT2" for e in results[0].dataset_events)
+
+    def test_symbolic_list_disposition_does_not_crash(self):
+        """DISP=(&STATUS,CATLG,DELETE) parses disposition as a list, not a
+        string — the profile must not call .split() on it directly."""
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEBUPDTE\n"
+            "//SYSUT1   DD DSN=PROD.SRCLIB,DISP=(&STATUS,CATLG,DELETE)\n"
+            "//SYSIN    DD *\n"
+            "./ ADD NAME=MEMBER1\n"
+            "DATA\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        sysut1_events = [e for e in results[0].dataset_events if e.dd_name == "SYSUT1"]
+        assert len(sysut1_events) == 1
+        assert sysut1_events[0].disp_status == "&STATUS"
 
 
 class TestIEBPTPCH:
@@ -266,6 +322,23 @@ class TestIRXJCL:
         results = analyze_job(job)
         assert len(results) == 1
         assert "no exec name" in results[0].summary
+
+    def test_parenthesised_parm_list_does_not_crash(self):
+        """PARM=(sub,parm,...) parses as a list, not a string — the profile
+        must not call .split() on it directly."""
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IRXJCL,PARM=('MYEXEC','ARG1','ARG2')\n"
+            "//SYSEXEC  DD DSN=PROD.EXEC.LIB,DISP=SHR\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        result = results[0]
+        assert result.invoked_programs == ["MYEXEC"]
+        notes = " | ".join(result.notes)
+        assert "exec: MYEXEC" in notes
+        assert "args: ARG1 ARG2" in notes
 
 
 class TestFTP:
