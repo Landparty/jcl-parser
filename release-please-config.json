@@ -4,7 +4,7 @@
   "include-component-in-tag": false,
   "packages": {
     ".": {
-      "package-name": "jclparser"
+      "package-name": "jcl-parser"
     }
   }
 }
