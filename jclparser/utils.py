@@ -7,6 +7,7 @@ main parse path: ``read_source``, ``normalize_jcl_line``, ``is_positional_key``.
 
 from __future__ import annotations
 
+import builtins
 from pathlib import Path
 from typing import Any
 
@@ -63,14 +64,20 @@ def _read_file_with_fallback(path: Path) -> str:
     Returns:
         File content as a string.
     """
+    # Via the `builtins` module rather than a bare `open(...)` call: this
+    # module is cythonized for the closed-source PyPI release build (see
+    # setup.py), and Cython caches a bare builtin name's target at first
+    # use, which is invisible to a `unittest.mock.patch("builtins.open")`
+    # made afterward. Routing through the module object keeps every call a
+    # live attribute lookup, matching plain-Python monkeypatch semantics.
     for encoding in ("utf-8", "latin-1", "cp1252"):
         try:
-            with open(path, "r", encoding=encoding) as fh:
+            with builtins.open(path, "r", encoding=encoding) as fh:
                 return fh.read()
         except (UnicodeDecodeError, UnicodeError):
             continue
     # Last resort: binary decode with replacement
-    with open(path, "rb") as fh:
+    with builtins.open(path, "rb") as fh:
         return fh.read().decode("utf-8", errors="ignore")
 
 

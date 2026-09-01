@@ -14,6 +14,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This library is **vendored** into `backend/_vendor/jcl-parser/` — it is not installed from PyPI. Changes to this standalone repo must be manually copied before they reach the backend.
 
+There is a *separate* PyPI package, `jcl-parser` (`pip install jcl-parser`), published as closed-source compiled wheels only (see "Release & Distribution" below) for external consumers — it does not change or replace the backend's vendoring flow above.
+
 **Interface contract:** [`interface-contract.md`](interface-contract.md) — documents exactly which functions/classes the backend adapter calls, what attributes it reads off the `Job`/`Step`/`DD` objects, and what the `program_structure` dict it produces looks like. Read this before changing public API shapes.
 
 ## Commands
@@ -128,6 +130,20 @@ tests/
 ```
 
 Markers (enforced via `pyproject.toml`): `unit`, `integration`, `contract`, `performance`, `slow`, `benchmark`.
+
+## Release & Distribution
+
+`release-please` (`.github/workflows/release-please.yml`, driven by Conventional Commits, config in `release-please-config.json` / `.release-please-manifest.json`) automates versioning and `CHANGELOG.md` on every push to `main`. When it cuts a release, the same workflow also builds and publishes **closed-source binary wheels** to PyPI as `jcl-parser` (`pip install jcl-parser`) — mirrors the `cobol-parser` sibling repo's setup exactly (see that repo's CLAUDE.md for the original design rationale):
+
+- `setup.py` (`JCLPARSER_CLOSED_SOURCE=1`, set only by this CI job — never by local dev or `pip install -e .`) Cythonizes every `jclparser/**/*.py` module except `__init__.py`/`__main__.py` (thin re-export/runpy stubs with no logic of their own) and `profiling.py` (see below), so the built wheel contains no readable `.py` source for anything else. `_ClosedSourceBuildPy` in `setup.py` handles the *module*-copy path; `[tool.setuptools.exclude-package-data]` in `pyproject.toml` (`"*.py"`, alongside `*.c`/`*.pyx`/`*.h`) is equally load-bearing — `include_package_data=True` drives a separate build_py *data-files* path that independently re-adds every git-tracked `.py` file unless excluded there too. Don't "simplify" that exclude-package-data entry back down to `["*.c", "*.pyx", "*.h"]`.
+- `profiling.py` stays plain Python even in the closed-source build (`_UNCOMPILED_FILENAMES` in `setup.py`, `ALLOWED_PY_NAMES` in `scripts/_closed_source_checks.py`). `ProfilerContext` wraps stdlib `cProfile`, which records calls via `sys.setprofile` — a hook the CPython interpreter loop fires on Python-level call/return events, which a Cython-compiled function's own body does not dispatch through. A compiled `ProfilerContext.__enter__`/`__exit__` silently collects zero samples, and `pstats.Stats` then raises `TypeError: Cannot create ... from <cProfile.Profile ...>` — caught by `tests/unit/test_profiling.py` while building this out, which is why the exclusion exists rather than being assumed unnecessary. The tradeoff is a small amount of source disclosure (a stdlib cProfile/tracemalloc wrapper, not JCL-parsing logic) for a profiler that actually profiles.
+- A stock `pip install .` / `pip install -e .` (no env var set) builds no extensions at all — normal development stays pure Python, unchanged from before this build existed. There is no `[fast]`-style accelerator extra: unlike `cobol-parser`, jclparser has no hand-tuned hot-path modules, only the one closed-source-or-nothing build mode.
+- `cibuildwheel` (`[tool.cibuildwheel]` in `pyproject.toml`) builds one wheel each for manylinux x86_64, macOS arm64, and Windows AMD64, across Python 3.10-3.13 (12 wheels total). Its `test-command` runs against *every* one of those wheels in CI: `scripts/check_installed_no_leaked_source.py` (no `.py`/`.c`/`.pyx`/`.h`/`.pyi` leaked, extension modules present) followed by a closed-source-build import smoke test and a fast pytest subset — all against the installed wheel, not the source tree.
+- No sdist and no pure-Python fallback wheel are published anywhere — both would ship full source of a proprietary-licensed codebase (see `LICENSE`).
+- `scripts/verify_closed_source_wheel.py` builds a wheel locally with the same env var and asserts no `.py` source leaked in (via the same `scripts/_closed_source_checks.py` assertion the CI check uses), then smoke-installs it into a throwaway venv, for manual verification outside CI. Its wheel glob is `*.whl`, not `jclparser-*.whl` — the PyPI distribution name `jcl-parser` normalizes to `jcl_parser-*.whl` in the actual filename, which does not start with `jclparser`.
+- Use `workflow_dispatch` with `target: testpypi` on `.github/workflows/release-please.yml` to rehearse the whole build-all-wheels-and-publish pipeline against test.pypi.org (one-time Trusted Publisher registration required there first) before trusting a real release.
+- This is a wholly separate release artifact from the backend's vendoring flow (see "Backend Integration" above) — publishing to PyPI does not change how `backend/` consumes this library.
+- Cython (unlike mypyc, which `setup.py` briefly attempted before this) does not require the compiled module to pass a full mypy-strict check, which matters here: several modules still have known mypy-strict violations (see "Key Invariants" above) that would otherwise block every closed-source build. One real Cython-specific gotcha did surface and was fixed: Cython caches a bare builtin name's target (e.g. a bare `open(...)` call) at first use, which is invisible to a `unittest.mock.patch("builtins.open", ...)` made afterward — `utils.py`'s `_read_file_with_fallback` now calls `builtins.open(...)` explicitly so the lookup stays a live attribute access, matching plain-Python monkeypatch semantics.
 
 ## Code Style
 

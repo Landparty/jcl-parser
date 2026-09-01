@@ -7,9 +7,13 @@ on:
   # Manual dry run of the wheel-build + publish path. PyPI filenames are
   # burned permanently on first upload, so `target: testpypi` exists to
   # rehearse the whole pipeline against test.pypi.org before the first real
-  # publish. Using it requires a SEPARATE one-time manual step -- registering
-  # a Trusted Publisher for this repo/workflow on test.pypi.org, exactly like
-  # the pypi.org registration noted on publish-pypi below.
+  # publish. Two caveats, both deliberately out of scope here:
+  #   * Using it requires a SEPARATE one-time manual step -- registering a
+  #     Trusted Publisher for this repo/workflow on test.pypi.org, exactly
+  #     like the pypi.org registration noted on publish-pypi below.
+  #   * The `release-please` job still runs on a manual dispatch, so a
+  #     pending "chore: release X" PR can be created/updated by it. Dispatch
+  #     from a state where that is acceptable.
   workflow_dispatch:
     inputs:
       target:
@@ -19,8 +23,8 @@ on:
           - pypi
           - testpypi
         # Defaults to the safe rehearsal target -- an accidental dispatch
-        # (e.g. clicking "Run workflow" without touching the dropdown) must
-        # not publish to the live index. Choose "pypi" explicitly.
+        # (e.g. clicking "Run workflow" without touching the dropdown)
+        # must not publish to the live index. Choose "pypi" explicitly.
         default: testpypi
 
 permissions:
@@ -40,29 +44,75 @@ jobs:
         id: release
         with:
           # GITHUB_TOKEN works out of the box. Releases it creates do NOT
-          # trigger other workflows -- that's why the publish job below lives
+          # trigger other workflows -- that's why the publish jobs below live
           # in THIS same workflow (gated on the output) instead of a separate
           # release-triggered workflow, which would never fire.
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # Build the distributions and attach them to the GitHub Release that
-  # release-please just created. Only runs when a release was actually cut
-  # (release PR merged), not when the release PR is merely opened/updated.
-  publish:
+  # Build binary wheels for Linux, macOS, Windows. cibuildwheel compiles
+  # EVERY jclparser module (JCLPARSER_CLOSED_SOURCE=1, set in
+  # pyproject.toml's [tool.cibuildwheel.environment]) into .so/.pyd files, so
+  # the resulting wheels never contain readable .py source (only thin
+  # __init__.py re-export stubs and the __main__.py runpy shim). No sdist and
+  # no pure-Python fallback wheel are built anywhere -- both would ship full
+  # source. Mirrors the cobol-parser sibling repo's equivalent job.
+  build-binary-wheels:
     needs: release-please
+    if: ${{ needs.release-please.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch' }}
+    # Only reads the repo to build wheels; it needs none of the workflow-level
+    # write scopes that the release-please job requires.
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Only the most common target per OS: manylinux x86_64 (not aarch64
+        # -- no known ARM-Linux consumer, and it'd need slow QEMU emulation),
+        # macOS arm64 (not x86_64 -- Intel Macs are a shrinking minority),
+        # Windows AMD64. See [tool.cibuildwheel.*] in pyproject.toml.
+        #
+        # CIBW_ARCHS overrides the per-platform `archs` in pyproject.toml's
+        # [tool.cibuildwheel.*] sections (which still govern local
+        # `cibuildwheel` runs).
+        include:
+          - os: ubuntu-latest
+            archs: x86_64
+            artifact: linux-x86_64
+          - os: macos-latest
+            archs: arm64
+            artifact: macos-arm64
+          - os: windows-latest
+            archs: AMD64
+            artifact: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pypa/cibuildwheel@v2.21.3
+        env:
+          CIBW_ARCHS: ${{ matrix.archs }}
+      - uses: actions/upload-artifact@v4
+        with:
+          # Must be unique per matrix entry -- upload-artifact@v4 rejects
+          # duplicate names, and two entries now share ubuntu-latest.
+          name: dist-wheels-${{ matrix.artifact }}
+          path: wheelhouse/
+
+  # Attach the closed-source wheels to the GitHub Release for traceability /
+  # manual download. Deliberately NOT run on workflow_dispatch: a manual
+  # dispatch cuts no release, so there is no tag to upload to.
+  publish:
+    needs: [release-please, build-binary-wheels]
     if: ${{ needs.release-please.outputs.releases_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/download-artifact@v4
         with:
-          python-version: "3.12"
-      - name: Build sdist and wheel
-        run: |
-          python -m pip install --upgrade build
-          python -m build
+          pattern: dist-wheels-*
+          path: dist/
+          merge-multiple: true
       - name: Resolve the release tag from the manifest
         id: tag
         # The merge commit that triggered this run already bumped the manifest
@@ -74,14 +124,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ steps.tag.outputs.tag }}" dist/* --clobber
 
-  # Publish the sdist and wheel to PyPI via Trusted Publishing (OIDC) -- no
-  # stored API token/secret. Requires a one-time manual step on pypi.org
-  # registering this repo/workflow as a trusted publisher for the
-  # "jcl-parser" project, plus a "pypi" GitHub Environment configured on the
-  # repo (see the cobol-parser sibling repo's release-please.yml for the
-  # equivalent setup this mirrors).
+  # Publish the same closed-source wheels to PyPI via Trusted Publishing
+  # (OIDC) -- no stored API token/secret. Requires a one-time manual step on
+  # pypi.org registering this repo/workflow as a trusted publisher for the
+  # "jcl-parser" project (must match [project].name in pyproject.toml
+  # exactly -- PyPI does not treat "jclparser" and "jcl-parser" as the same
+  # name); see the cobol-parser sibling repo's
+  # docs/superpowers/specs/2026-08-14-pypi-closed-source-release-design.md,
+  # which this setup mirrors.
   publish-pypi:
-    needs: release-please
+    needs: [release-please, build-binary-wheels]
     if: ${{ needs.release-please.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     # NOTE: the environment stays "pypi" even for a testpypi dry run -- the
@@ -92,21 +144,13 @@ jobs:
       name: pypi
       url: https://pypi.org/project/jcl-parser/
     permissions:
-      # Job-level `permissions` replaces the workflow-level defaults entirely
-      # for this job, not merges with them -- `contents: read` is required
-      # here (this is a private repo) because this job checks out the repo
-      # and builds the sdist/wheel itself.
-      contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/download-artifact@v4
         with:
-          python-version: "3.12"
-      - name: Build sdist and wheel
-        run: |
-          python -m pip install --upgrade build
-          python -m build
+          pattern: dist-wheels-*
+          path: dist/
+          merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
