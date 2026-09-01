@@ -7,6 +7,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.4.0](https://github.com/Landparty/jcl-parser/compare/v1.3.0...v1.4.0) (2026-09-01)
+
+
+### Features
+
+* publish jcl-parser to PyPI as closed-source compiled wheels ([54c0257](https://github.com/Landparty/jcl-parser/commit/54c0257c6a56121c269e693092986aac617b0e45))
+
 ## [1.3.0](https://github.com/Landparty/jcl-parser/compare/v1.2.1...v1.3.0) (2026-08-16)
 
 
