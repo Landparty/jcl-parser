@@ -7,6 +7,18 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.3.0](https://github.com/Landparty/jcl-parser/compare/v1.2.1...v1.3.0) (2026-08-16)
+
+
+### Features
+
+* **program_profiles:** add profiles for the rest of the IBM utility catalogue ([c7cd0dc](https://github.com/Landparty/jcl-parser/commit/c7cd0dc9355777088d072edadb62ca1ca9535d11))
+
+
+### Bug Fixes
+
+* address Copilot review findings on ADRDSSU/IEBUPDTE/IRXJCL profiles ([4e53cf1](https://github.com/Landparty/jcl-parser/commit/4e53cf199833c72925622b5c76d1988fd4d11e00))
+
 ## [1.2.1](https://github.com/Landparty/jcl-parser/compare/v1.2.0...v1.2.1) (2026-08-16)
 
 
