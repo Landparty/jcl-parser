@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=61.0", "wheel", "cython>=3.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -59,6 +59,29 @@ include = ["jclparser*"]
 
 [tool.setuptools.package-data]
 jclparser = ["py.typed"]
+
+# `include_package_data` defaults to True for pyproject.toml-configured
+# setuptools projects, and cythonize() writes each generated .c file next to
+# its .py/.pyx source *inside* the package tree. Cython embeds the original
+# source verbatim in C comments, so without this exclusion every closed-source
+# wheel (see setup.py's JCLPARSER_CLOSED_SOURCE build) would ship a fully
+# readable copy of every module it just compiled. Excluding by pattern
+# (rather than setting include-package-data = false) keeps jclparser/py.typed
+# shipping without having to redeclare it.
+#
+# "*.py" belongs in this same list even though setup.py's _ClosedSourceBuildPy
+# already restricts build_py's *module* copy (find_package_modules) to just
+# __init__.py/__main__.py: include_package_data=True drives a SEPARATE build_py
+# code path (build_package_data -> find_data_files -> manifest_files) that
+# independently re-adds every .py file tracked in the sdist manifest as
+# "package data", regardless of what find_package_modules already excluded.
+# Without "*.py" here, that second path silently ships every stripped module's
+# source right back into the wheel next to its compiled .pyd/.so twin. See the
+# cobol-parser sibling repo, which hit exactly this before adding it.
+# __init__.py/__main__.py are unaffected -- they still ship via the module
+# path, which this setting does not touch.
+[tool.setuptools.exclude-package-data]
+"*" = ["*.c", "*.pyx", "*.h", "*.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -127,3 +150,48 @@ target-version = "py310"
 [tool.mypy]
 python_version = "3.10"
 strict = true
+
+[tool.cibuildwheel]
+# Build CPython 3.10-3.13 only (matches requires-python)
+build = "cp310-* cp311-* cp312-* cp313-*"
+# Skip musllinux (Alpine) -- niche target for this library, and there's no
+# sdist published for it to fall back to source-build from anyway.
+skip = "*-musllinux*"
+# Full closed-source build: every jclparser module compiles. See setup.py.
+environment = { JCLPARSER_CLOSED_SOURCE = "1" }
+test-requires = "pytest pytest-cov"
+# Smoke-test against the INSTALLED wheel (not the source tree): verify
+# ordinary modules loaded as compiled extensions (no .py source backing
+# them), then run a fast subset of the suite. --no-cov disables this repo's
+# default --cov-fail-under=90 gate (see [tool.coverage.report] above), which
+# coverage.py can't evaluate meaningfully against compiled extensions.
+#
+# --import-mode=importlib is load-bearing, not cosmetic: tests/__init__.py
+# exists, so under pytest's default "prepend" mode {project} lands at
+# sys.path[0] and the SOURCE tree shadows the wheel installed in the test
+# venv -- silently testing the wrong thing. importlib mode leaves sys.path
+# alone, so `import jclparser` resolves to the installed extensions.
+#
+# check_installed_no_leaked_source.py runs the same no-leaked-.py/.c/.pyx/.h/
+# .pyi assertion as scripts/verify_closed_source_wheel.py, but against the
+# installed package rather than the wheel zip -- cibuildwheel's test-command
+# has no access to the wheel path itself. It runs on every one of this
+# matrix's built wheels, not just a local/manual one.
+test-command = "python {project}/scripts/check_installed_no_leaked_source.py && python -c \"import jclparser.parser, jclparser.model; assert not jclparser.parser.__file__.endswith('.py'); assert not jclparser.model.__file__.endswith('.py'); print('closed-source build OK')\" && pytest {project}/tests/unit/test_parser_api.py {project}/tests/unit/test_model_api.py --no-cov -q --import-mode=importlib"
+
+# NOTE: release CI overrides these per job via CIBW_ARCHS (see
+# .github/workflows/release-please.yml). These values still apply to local
+# `cibuildwheel` runs.
+#
+# Only the most common targets are covered: manylinux x86_64 (not aarch64 --
+# that would require slow QEMU emulation with no known ARM-Linux consumer)
+# and macOS arm64 (not x86_64 -- Intel Macs are a shrinking minority for this
+# library). Mirrors the cobol-parser sibling repo's [tool.cibuildwheel.*].
+[tool.cibuildwheel.linux]
+archs = ["x86_64"]
+
+[tool.cibuildwheel.macos]
+archs = ["arm64"]
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64"]

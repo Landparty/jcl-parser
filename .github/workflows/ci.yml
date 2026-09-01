@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Manual dispatch: lets CI be run on a branch when an event-triggered run
+  # is unavailable (e.g. app-actor pushes/PRs that org policy doesn't run).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,3 +36,25 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e .[dev]
       - run: pytest
+
+  # Verifies the closed-source PyPI release build (see setup.py and
+  # release-please.yml) actually compiles, without publishing anything.
+  # Runs on PRs (and manual dispatch) only -- not on every push to main,
+  # since a push to main is already-reviewed code landing post-merge.
+  build:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    env:
+      JCLPARSER_CLOSED_SOURCE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install setuptools "cython>=3.0"
+      - run: pip install -e .[dev]
+      - run: python setup.py build_ext --inplace

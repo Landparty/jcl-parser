@@ -66,6 +66,13 @@ coverage.xml
 
 # Ignore package manager files
 pip-wheel-metadata/
+
+# Cython build output from a local JCLPARSER_CLOSED_SOURCE=1 build (see
+# setup.py) -- these .c files embed the full .py source in comments, so they
+# must never be committed; the closed-source wheel is built fresh in CI/CD
+# and by scripts/verify_closed_source_wheel.py, never checked in.
+*.so
+jclparser/**/*.c
 .claude/settings.local.json
 .playwright-mcp/page-2026-06-12T15-58-46-446Z.yml
 .playwright-mcp/page-2026-06-12T15-59-01-911Z.yml

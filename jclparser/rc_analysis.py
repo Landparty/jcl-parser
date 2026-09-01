@@ -157,7 +157,14 @@ def compute_feasible_paths(
     """
     report = FeasibilityReport()
     predecessors = _collect_predecessors(job)
-    abend_values = (False, True) if include_abends else (False,)
+    # Not a ternary: Cython's type inference tries to unify the two
+    # differently-sized tuple literals of a single conditional expression
+    # into one C-level type and rejects it (this module is cythonized for
+    # the closed-source PyPI release build -- see setup.py).
+    if include_abends:
+        abend_values = (False, True)
+    else:
+        abend_values = (False,)
 
     def _walk(steps: list, enclosing_condition_signatures: list[str]) -> None:
         running_preds: list[str] = []
