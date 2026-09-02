@@ -70,7 +70,7 @@ class ContinuationLineHandler:
         #: ``=``).  Populated by :meth:`merge_continuation_lines`; the parser
         #: turns these into job warnings so a truncated or garbled statement
         #: is never dropped without a trace.
-        self.suspect_comments: List[Tuple[int, str]] = []
+        self.suspect_comments: list[tuple[int, str]] = []
 
     def _has_implicit_continuation(self, previous_line: str) -> bool:
         """Check if previous line ends with comma (implicit continuation)."""
