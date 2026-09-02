@@ -2,16 +2,16 @@
 Unit tests for procedure loaders.
 """
 
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
+from jclparser.model import Procedure, Step
 from jclparser.proc_loader import (
+    CompositeProcedureLoader,
     InlineProcedureLoader,
     JCLLIBProcedureLoader,
-    CompositeProcedureLoader,
     create_default_loader,
 )
-from jclparser.model import Procedure, Step
 
 
 class TestInlineProcedureLoader:

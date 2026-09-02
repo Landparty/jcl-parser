@@ -15,14 +15,14 @@ jcl-parser has two independent validation layers: **structural validation** (pos
 ```python
 from jclparser import validate_jcl, ErrorSeverity
 
-job, errors = validate_jcl(source)   # NOT a boolean return — always returns (Job, list)
+job, errors = validate_jcl(source)  # NOT a boolean return — always returns (Job, list)
 hard_errors = [e for e in errors if e.severity == ErrorSeverity.ERROR]
-warnings    = [e for e in errors if e.severity == ErrorSeverity.WARNING]
+warnings = [e for e in errors if e.severity == ErrorSeverity.WARNING]
 ```
 
 Or validate an already-parsed job:
 ```python
-errors = job.validate()   # same list
+errors = job.validate()  # same list
 ```
 
 ### What Structural Validation Checks
@@ -67,9 +67,9 @@ Individual identifier and DSN validation:
 ```python
 from jclparser import validate_jcl_identifier, validate_dataset_name
 
-ok, msg = validate_jcl_identifier("MYJOB")      # True, None
-ok, msg = validate_jcl_identifier("TOOLONGNAME") # False, "max 8 chars"
-ok, msg = validate_dataset_name("SYS1.PARMLIB") # True, None
+ok, msg = validate_jcl_identifier("MYJOB")  # True, None
+ok, msg = validate_jcl_identifier("TOOLONGNAME")  # False, "max 8 chars"
+ok, msg = validate_dataset_name("SYS1.PARMLIB")  # True, None
 ```
 
 ## Error Object
@@ -77,11 +77,11 @@ ok, msg = validate_dataset_name("SYS1.PARMLIB") # True, None
 All validation errors are `ParseError` or `ValidationError` instances.
 
 ```python
-error.severity    # ErrorSeverity.ERROR | WARNING | INFO
-error.type        # ErrorType.SYNTAX | VALIDATION | STRUCTURE | SEMANTIC
-error.message     # str description
-error.line_number # int | None
-error.context     # str | None — the problematic JCL fragment
+error.severity  # ErrorSeverity.ERROR | WARNING | INFO
+error.type  # ErrorType.SYNTAX | VALIDATION | STRUCTURE | SEMANTIC
+error.message  # str description
+error.line_number  # int | None
+error.context  # str | None — the problematic JCL fragment
 ```
 
 Stringifying: `str(error)` produces a human-readable message (used by the backend adapter).
@@ -91,14 +91,14 @@ Stringifying: `str(error)` produces a human-readable message (used by the backen
 ```python
 from jclparser import ErrorType, ErrorSeverity
 
-ErrorType.SYNTAX       # Bad JCL syntax
-ErrorType.VALIDATION   # Structural rule violated
-ErrorType.STRUCTURE    # Missing or misplaced construct
-ErrorType.SEMANTIC     # Logical inconsistency
+ErrorType.SYNTAX  # Bad JCL syntax
+ErrorType.VALIDATION  # Structural rule violated
+ErrorType.STRUCTURE  # Missing or misplaced construct
+ErrorType.SEMANTIC  # Logical inconsistency
 
-ErrorSeverity.ERROR    # Hard failure — job won't run as written
+ErrorSeverity.ERROR  # Hard failure — job won't run as written
 ErrorSeverity.WARNING  # Advisory — job may still run
-ErrorSeverity.INFO     # Informational only
+ErrorSeverity.INFO  # Informational only
 ```
 
 ## Exception Types
@@ -121,7 +121,7 @@ Beyond structural validation, jcl-parser can check dataset lifecycle consistency
 ```python
 from jclparser import validate_dataset_lifecycle, analyze_dataset_lifecycle
 
-events = analyze_dataset_lifecycle(job)   # list[DatasetEvent] — lifecycle events
+events = analyze_dataset_lifecycle(job)  # list[DatasetEvent] — lifecycle events
 issues = validate_dataset_lifecycle(job)  # list[ValidationError] — anomalies
 ```
 
@@ -142,10 +142,12 @@ Custom rules:
 ```python
 from jclparser import register_lint_rule, LintRule
 
+
 class MyRule(LintRule):
     id = "CUSTOM-001"
-    def check(self, job):
-        ...
+
+    def check(self, job): ...
+
 
 register_lint_rule(MyRule())
 ```

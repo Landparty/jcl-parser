@@ -5,17 +5,17 @@ Tests all validation functions for JCL syntax rules, semantic constraints,
 and data integrity checks for parsed JCL structures.
 """
 
+from jclparser.errors import ErrorType
+from jclparser.model import DDStatement, Job, Step
 from jclparser.validators import (
-    validate_jcl_identifier,
+    validate_data_dependencies,
     validate_dataset_name,
-    validate_job_structure,
-    validate_step_structure,
     validate_dd_statement,
     validate_disposition,
-    validate_data_dependencies,
+    validate_jcl_identifier,
+    validate_job_structure,
+    validate_step_structure,
 )
-from jclparser.model import Job, Step, DDStatement
-from jclparser.errors import ErrorType
 
 
 class TestValidateJCLIdentifier:

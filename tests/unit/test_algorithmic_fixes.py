@@ -5,8 +5,9 @@ regression guards ensuring refactored code produces identical output.
 """
 
 import pytest
+
 from jclparser import parse_jcl
-from jclparser.continuation_handler import ContinuationLineHandler, ContinuationContext
+from jclparser.continuation_handler import ContinuationContext, ContinuationLineHandler
 
 
 @pytest.mark.unit

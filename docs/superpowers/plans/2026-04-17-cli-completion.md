@@ -457,7 +457,9 @@ def _cmd_datasets(job: "Job", json_output: bool = False) -> int:
             }
             for e in violations
         ]
-        print(json.dumps({"lifecycle": lifecycle_dict, "violations": viol_list}, indent=2))
+        print(
+            json.dumps({"lifecycle": lifecycle_dict, "violations": viol_list}, indent=2)
+        )
     else:
         _print_datasets(lifecycle, violations)
     return 1 if violations else 0
@@ -543,6 +545,7 @@ class TestCLISQL:
         # Build minimal JCL inline that references DSN (DB2) program
         from jclparser.parser import parse_jcl
         import io
+
         jcl = (
             "//DBJOB  JOB\n"
             "//STEP1  EXEC PGM=DSNUTILB\n"
@@ -554,6 +557,7 @@ class TestCLISQL:
         from jclparser.cli import _cmd_sql
         import io as _io
         import sys
+
         old = sys.stdout
         sys.stdout = _io.StringIO()
         rc = _cmd_sql(job, json_output=False)
@@ -612,7 +616,9 @@ def _print_sql_results(hits: list) -> None:
         db2_tag = " [DB2 program]" if r.is_db2_program else ""
         cats = ", ".join(sorted(r.sql_categories)) if r.sql_categories else ""
         cat_tag = f"  categories={cats}" if cats else ""
-        print(f"  {r.step_name or '(unnamed)':<12} PGM={r.program or '(none)'}{db2_tag}{cat_tag}")
+        print(
+            f"  {r.step_name or '(unnamed)':<12} PGM={r.program or '(none)'}{db2_tag}{cat_tag}"
+        )
         for kw, cat, dd in r.sql_statements:
             print(f"    {kw:<20} [{cat}] in DD={dd}")
 ```

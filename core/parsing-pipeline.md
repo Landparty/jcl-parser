@@ -13,7 +13,7 @@ The jcl-parser pipeline transforms raw JCL text into a structured `Job` object t
 ```python
 import jclparser
 
-job = jclparser.parse_jcl(source)   # stages 1–4 (no validation, no PROC expansion)
+job = jclparser.parse_jcl(source)  # stages 1–4 (no validation, no PROC expansion)
 print(job.name)
 print(job.steps[0].program)
 ```
@@ -118,7 +118,9 @@ hard_errors = [e for e in errors if e.severity == ErrorSeverity.ERROR]
 from jclparser import parse_jcl, explode_job
 
 job = parse_jcl(source)
-exploded = explode_job(job, max_depth=10)   # raises ProcedureNotFoundError if unresolvable
+exploded = explode_job(
+    job, max_depth=10
+)  # raises ProcedureNotFoundError if unresolvable
 ```
 
 ## See Also

@@ -44,7 +44,9 @@ def _get_okf_files(rel_path: str) -> list:
 
 
 def _git(args, cwd):
-    r = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True)
+    r = subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
+    )
     return r.stdout.strip()
 
 
@@ -54,7 +56,7 @@ def _is_okf_modified(okf_file: str, repo_root: Path) -> bool:
 
 def _git_mode(repo_root: Path) -> int:
     staged_raw = _git(["diff", "--cached", "--name-only"], repo_root)
-    staged = set(f.strip() for f in staged_raw.splitlines() if f.strip())
+    staged = {f.strip() for f in staged_raw.splitlines() if f.strip()}
 
     needs_update: dict = {}
     for src in staged:
@@ -112,6 +114,7 @@ def main():
         ["git", "rev-parse", "--show-toplevel"],
         capture_output=True,
         text=True,
+        check=False,
     )
     if result.returncode != 0:
         return 0

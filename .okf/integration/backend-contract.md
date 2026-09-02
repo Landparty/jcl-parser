@@ -29,13 +29,17 @@ job = parse_jcl(content: str)   # returns Job | None; raises JCLSyntaxError | JC
 ## 2. job.validate()
 
 ```python
-validation_errors = job.validate()   # list — stringified with str() for error_message fields
+validation_errors = (
+    job.validate()
+)  # list — stringified with str() for error_message fields
 ```
 
 ## 3. job.explode()
 
 ```python
-exploded_job = job.explode(max_depth=10, audit=True, strict_symbols=False, loader=proc_loader)
+exploded_job = job.explode(
+    max_depth=10, audit=True, strict_symbols=False, loader=proc_loader
+)
 ```
 
 Catches `JCLParseError` (including `ProcedureNotFoundError`) and falls back to un-exploded job.
@@ -43,10 +47,12 @@ Catches `JCLParseError` (including `ProcedureNotFoundError`) and falls back to u
 ## 4. Loader Construction
 
 ```python
-loader = CompositeProcedureLoader([
-    InlineProcedureLoader(job.procedures),  # inline always first
-    external_loader,                        # DB-sourced external loader
-])
+loader = CompositeProcedureLoader(
+    [
+        InlineProcedureLoader(job.procedures),  # inline always first
+        external_loader,  # DB-sourced external loader
+    ]
+)
 ```
 
 # Object Attribute Contract

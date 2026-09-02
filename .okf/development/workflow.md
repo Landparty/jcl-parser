@@ -16,6 +16,7 @@ The package emits INFO/DEBUG diagnostics via the standard `logging` module under
 
 ```python
 import logging
+
 logging.getLogger("jclparser").setLevel(logging.DEBUG)
 logging.basicConfig()
 ```

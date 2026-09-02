@@ -147,6 +147,13 @@ directory = "htmlcov"
 line-length = 88
 target-version = "py310"
 
+[tool.ruff.lint.per-file-ignores]
+# The suite deliberately asserts "this input must not crash the parser" with
+# bare `try: ... except Exception: pass` blocks (BLE001, S110), and exercises
+# the local-time system symbols -- &SYSDATE, &SYSTIME, ExplosionRecord
+# timestamps -- that z/OS itself reports in local time (DTZ001, DTZ005).
+"tests/**" = ["BLE001", "S110", "DTZ001", "DTZ005"]
+
 [tool.mypy]
 python_version = "3.10"
 strict = true

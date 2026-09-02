@@ -1,16 +1,17 @@
 """Tests for jclparser.sql_detector module."""
 
 import pytest
+
 from jclparser import parse_jcl
-from jclparser.model import Step, DDStatement
+from jclparser.model import DDStatement, Step
 from jclparser.sql_detector import (
+    DB2_PROGRAMS,
     SQLDetectionResult,
-    detect_sql_in_step,
-    detect_sql_in_job,
     detect_sql_in_dd,
+    detect_sql_in_job,
+    detect_sql_in_step,
     detect_sql_in_text,
     is_db2_program,
-    DB2_PROGRAMS,
 )
 
 

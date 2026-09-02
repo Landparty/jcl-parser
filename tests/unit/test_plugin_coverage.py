@@ -5,26 +5,25 @@ Covers: disable_plugin no-op, unregister ValidationPlugin,
 unregister nonexistent plugin.
 """
 
+from jclparser.errors import ValidationError
+from jclparser.model import DDStatement, Job, Step
 from jclparser.plugins import (
-    PluginRegistry,
     ParserConfig,
+    PluginRegistry,
     ValidationPlugin,
 )
-from jclparser.model import Job, Step, DDStatement
-from jclparser.errors import ValidationError
-from typing import List
 
 
 class _DummyValidationPlugin(ValidationPlugin):
     """Minimal validation plugin for testing."""
 
-    def validate_job(self, job: Job) -> List[ValidationError]:
+    def validate_job(self, job: Job) -> list[ValidationError]:
         return []
 
-    def validate_step(self, step: Step) -> List[ValidationError]:
+    def validate_step(self, step: Step) -> list[ValidationError]:
         return []
 
-    def validate_dd(self, dd: DDStatement) -> List[ValidationError]:
+    def validate_dd(self, dd: DDStatement) -> list[ValidationError]:
         return []
 
 

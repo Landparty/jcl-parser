@@ -8,18 +8,17 @@ call_chain_upper backward-compat path.
 
 import pytest
 
-from jclparser.model import Job, Step, DDStatement, Procedure, ConditionalBlock
+from jclparser.errors import UndefinedSymbolError
 from jclparser.explosion import (
     SymbolScope,
-    substitute_symbols,
-    substitute_parameters_dict,
+    _explode_step,
     expand_proc_invocation,
     explode_job,
-    _explode_step,
+    substitute_parameters_dict,
+    substitute_symbols,
 )
+from jclparser.model import ConditionalBlock, DDStatement, Job, Procedure, Step
 from jclparser.proc_loader import InlineProcedureLoader
-from jclparser.errors import UndefinedSymbolError
-
 
 # ---------------------------------------------------------------------------
 # substitute_parameters_dict with nested dict — lines 305-308

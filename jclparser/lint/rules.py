@@ -8,9 +8,10 @@ simple and self-contained — add new ones by subclassing
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
-from ..errors import ValidationError, ErrorSeverity
+from ..errors import ErrorSeverity, ValidationError
 from ..model import iter_execution_steps
 from .base import LintRule
 
@@ -24,7 +25,7 @@ class HardcodedHLQRule(LintRule):
     description = "Dataset name should use a symbolic HLQ (&HLQ) rather than a literal."
     default_severity = ErrorSeverity.INFO
 
-    def check(self, job: "Job", config: "LintConfig") -> Iterable[ValidationError]:
+    def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
         for step in iter_execution_steps(job.steps):
             for dd in step.dd_statements:
                 dsn = dd.dataset_name
@@ -49,7 +50,7 @@ class LiteralSysdaUnitRule(LintRule):
     description = "UNIT=SYSDA is a generic device group; prefer site-specific unit."
     default_severity = ErrorSeverity.INFO
 
-    def check(self, job: "Job", config: "LintConfig") -> Iterable[ValidationError]:
+    def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
         for step in iter_execution_steps(job.steps):
             for dd in step.dd_statements:
                 unit = dd.parameters.get("UNIT")
@@ -72,7 +73,7 @@ class CriticalDatasetDeleteRule(LintRule):
     )
     default_severity = ErrorSeverity.WARNING
 
-    def check(self, job: "Job", config: "LintConfig") -> Iterable[ValidationError]:
+    def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
         patterns = [p.upper() for p in config.critical_dataset_patterns]
         if not patterns:
             return
@@ -98,7 +99,7 @@ class MissingJobTimeRule(LintRule):
     description = "JOB card should specify TIME= to cap runaway CPU usage."
     default_severity = ErrorSeverity.INFO
 
-    def check(self, job: "Job", config: "LintConfig") -> Iterable[ValidationError]:
+    def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
         if job.parameters.get("TIME") is None:
             yield self._err(
                 f"JOB '{job.name}' has no TIME= parameter",
@@ -112,7 +113,7 @@ class MissingJobRegionRule(LintRule):
     description = "JOB card should specify REGION= to bound memory usage."
     default_severity = ErrorSeverity.INFO
 
-    def check(self, job: "Job", config: "LintConfig") -> Iterable[ValidationError]:
+    def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
         if job.parameters.get("REGION") is None:
             yield self._err(
                 f"JOB '{job.name}' has no REGION= parameter",
@@ -126,7 +127,7 @@ class DuplicateStepNameRule(LintRule):
     description = "Step names must be unique within a job."
     default_severity = ErrorSeverity.ERROR
 
-    def check(self, job: "Job", config: "LintConfig") -> Iterable[ValidationError]:
+    def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
         seen: set[str] = set()
         for step in iter_execution_steps(job.steps):
             if not step.name:
@@ -146,7 +147,7 @@ class UndefinedOutputRefRule(LintRule):
     description = "DD OUTPUT=*.name references an undefined //X OUTPUT statement."
     default_severity = ErrorSeverity.WARNING
 
-    def check(self, job: "Job", config: "LintConfig") -> Iterable[ValidationError]:
+    def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
         for step_name, ref, line_number in getattr(job, "unresolved_output_refs", []):
             step_label = f" in step '{step_name}'" if step_name else ""
             yield self._err(
@@ -168,12 +169,12 @@ BUILTIN_RULES: list[LintRule] = [
 
 
 __all__ = [
+    "BUILTIN_RULES",
+    "CriticalDatasetDeleteRule",
+    "DuplicateStepNameRule",
     "HardcodedHLQRule",
     "LiteralSysdaUnitRule",
-    "CriticalDatasetDeleteRule",
-    "MissingJobTimeRule",
     "MissingJobRegionRule",
-    "DuplicateStepNameRule",
+    "MissingJobTimeRule",
     "UndefinedOutputRefRule",
-    "BUILTIN_RULES",
 ]

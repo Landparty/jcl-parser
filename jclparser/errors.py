@@ -5,9 +5,8 @@ Provides comprehensive error handling with detailed context information
 for syntax errors, validation errors, and parsing failures.
 """
 
-from enum import Enum
 from dataclasses import dataclass
-from typing import Optional
+from enum import Enum
 
 
 class ErrorType(Enum):
@@ -44,7 +43,7 @@ class ParseError:
     error_type: ErrorType
     message: str
     line_number: int
-    column_number: Optional[int] = None
+    column_number: int | None = None
     context: str = ""
     severity: ErrorSeverity = ErrorSeverity.ERROR
 
@@ -79,19 +78,13 @@ class JCLParseError(Exception):
 class JCLSyntaxError(JCLParseError):
     """Exception raised for JCL syntax errors"""
 
-    pass
-
 
 class JCLValidationError(JCLParseError):
     """Exception raised for JCL validation errors"""
 
-    pass
-
 
 class JCLStructureError(JCLParseError):
     """Exception raised for JCL structure errors"""
-
-    pass
 
 
 class UndefinedSymbolError(JCLParseError):
@@ -149,9 +142,9 @@ class ValidationError:
         self,
         message: str,
         error_type: ErrorType = ErrorType.VALIDATION_ERROR,
-        line_number: Optional[int] = None,
+        line_number: int | None = None,
         severity: ErrorSeverity = ErrorSeverity.ERROR,
-        error_code: Optional[str] = None,
+        error_code: str | None = None,
     ):
         self.message = message
         self.error_type = error_type

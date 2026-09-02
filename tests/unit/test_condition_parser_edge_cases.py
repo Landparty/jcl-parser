@@ -6,6 +6,7 @@ in conditions, and malformed expressions.
 """
 
 import pytest
+
 from jclparser.condition_parser import parse_condition
 
 

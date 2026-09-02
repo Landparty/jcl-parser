@@ -6,8 +6,8 @@ All tests should FAIL initially, then pass as implementation is added.
 """
 
 # Import the model classes we expect to exist
-from jclparser.model import Job, Step, DDStatement
 from jclparser.errors import ValidationError
+from jclparser.model import DDStatement, Job, Step
 
 
 class TestJobClass:

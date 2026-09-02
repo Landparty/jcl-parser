@@ -3,9 +3,9 @@ Tests for parameter AST and complex parameter parsing.
 """
 
 from jclparser.parameter_ast import (
+    NestedParameter,
     ParameterParser,
     SPACEParameter,
-    NestedParameter,
 )
 
 

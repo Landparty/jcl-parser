@@ -2,17 +2,17 @@
 Comprehensive tests for jclparser.validators module.
 """
 
+from jclparser.model import DDStatement, Job, Step
 from jclparser.validators import (
-    validate_jcl_identifier,
+    ErrorType,
+    ValidationError,
+    validate_data_dependencies,
     validate_dataset_name,
+    validate_dd_statement,
+    validate_jcl_identifier,
     validate_job_structure,
     validate_step_structure,
-    validate_dd_statement,
-    validate_data_dependencies,
-    ValidationError,
-    ErrorType,
 )
-from jclparser.model import Job, Step, DDStatement
 
 
 class TestValidateJCLIdentifier:

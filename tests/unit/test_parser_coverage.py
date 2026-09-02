@@ -6,11 +6,11 @@ SET positional params, unknown statement types, program-vs-procedure
 detection, and various parse_statement edge cases.
 """
 
-import pytest
 from pathlib import Path
 
-from jclparser.parser import parse_jcl, validate_jcl, parse_statement, _find_keyword_eq
+import pytest
 
+from jclparser.parser import _find_keyword_eq, parse_jcl, parse_statement, validate_jcl
 
 # ---------------------------------------------------------------------------
 # XMIT statement — lines 408-418

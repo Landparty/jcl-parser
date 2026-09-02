@@ -25,52 +25,47 @@ __author__ = "JCL Parser Team"
 __description__ = "Parse IBM JCL scripts into Python objects"
 
 # Import main API functions
-from .parser import parse_jcl, validate_jcl, parse_statement
-from .model import Job, Step, DDStatement, Parameter, Statement, OutputStatement
-from .errors import (
-    JCLSyntaxError,
-    JCLValidationError,
-    JCLStructureError,
-    ParseError,
-    ErrorType,
-    ErrorSeverity,
-    ValidationError,
-    UndefinedSymbolError,
-    ExplosionDepthError,
-    CircularProcedureError,
-    ProcedureNotFoundError,
-)
-from .plugins import (
-    StatementPlugin,
-    ValidationPlugin,
-    PluginRegistry,
-    ParserConfig,
-    ValidationLevel,
-    get_plugin_registry,
-)
-from .validators import (
-    validate_jcl_identifier,
-    validate_dataset_name,
-    validate_job_structure,
-    validate_step_structure,
-    validate_dd_statement,
-)
-from .explosion import (
-    explode_job,
-    SymbolScope,
-)
-from .proc_loader import (
-    ProcedureLoader,
-    CompositeProcedureLoader,
-    DictProcedureLoader,
-    create_default_loader,
-)
 from .builtin_procs import (
     BUILTIN_UTILITY_PROCS,
     create_builtin_proc_loader,
 )
-from .system_symbols import (
-    SystemSymbolProvider,
+from .condition_parser import (
+    AbendCondition,
+    AndCondition,
+    ConditionNode,
+    NotCondition,
+    OrCondition,
+    ReturnCodeCondition,
+    RunCondition,
+    parse_condition,
+)
+from .dataset_lifecycle import (
+    DatasetEvent,
+    analyze_dataset_lifecycle,
+    validate_dataset_lifecycle,
+)
+from .errors import (
+    CircularProcedureError,
+    ErrorSeverity,
+    ErrorType,
+    ExplosionDepthError,
+    JCLStructureError,
+    JCLSyntaxError,
+    JCLValidationError,
+    ParseError,
+    ProcedureNotFoundError,
+    UndefinedSymbolError,
+    ValidationError,
+)
+from .explosion import (
+    SymbolScope,
+    explode_job,
+)
+from .include_loader import (
+    DictMemberLoader,
+    IncludeMemberLoader,
+    JCLLIBMemberLoader,
+    resolve_includes,
 )
 from .jcl_file_type import (
     FileType,
@@ -79,72 +74,81 @@ from .jcl_file_type import (
     is_jcl_file,
     is_proc_file,
 )
-from .sql_detector import (
-    SQLDetectionResult,
-    detect_sql_in_step,
-    detect_sql_in_job,
-    detect_sql_in_dd,
-    detect_sql_in_text,
-    is_db2_program,
-    DB2_PROGRAMS,
-)
-from .condition_parser import (
-    parse_condition,
-    ConditionNode,
-    ReturnCodeCondition,
-    AbendCondition,
-    RunCondition,
-    NotCondition,
-    AndCondition,
-    OrCondition,
-)
-from .include_loader import (
-    IncludeMemberLoader,
-    DictMemberLoader,
-    JCLLIBMemberLoader,
-    resolve_includes,
-)
-from .dataset_lifecycle import (
-    DatasetEvent,
-    analyze_dataset_lifecycle,
-    validate_dataset_lifecycle,
-)
 from .jes_statements import (
+    Jes3RouteXeqStatement,
     JESControlStatement,
     JobParmStatement,
-    RouteStatement,
-    XmitStatement,
-    SignonStatement,
     MessageStatement,
     NetacctStatement,
     NotifyStatement,
     PriorityStatement,
-    Jes3RouteXeqStatement,
+    RouteStatement,
+    SignonStatement,
+    XmitStatement,
     parse_jes_control,
 )
-from .metrics import JobMetrics, compute_metrics
-from .rc_analysis import (
-    FeasibilityReport,
-    compute_feasible_paths,
-    DEFAULT_RC_DOMAIN,
-)
-from .program_profiles import (
-    ProgramProfile,
-    ProgramAnalysis,
-    register_profile,
-    analyze_step,
-    analyze_job,
+from .lint import (
+    LintConfig,
+    LintRule,
+    lint_job,
 )
 from .lint import (
-    LintRule,
-    LintConfig,
-    lint_job,
-    to_sarif as lint_to_sarif,
     register_rule as register_lint_rule,
+)
+from .lint import (
+    to_sarif as lint_to_sarif,
+)
+from .metrics import JobMetrics, compute_metrics
+from .model import DDStatement, Job, OutputStatement, Parameter, Statement, Step
+from .parser import parse_jcl, parse_statement, validate_jcl
+from .plugins import (
+    ParserConfig,
+    PluginRegistry,
+    StatementPlugin,
+    ValidationLevel,
+    ValidationPlugin,
+    get_plugin_registry,
+)
+from .proc_loader import (
+    CompositeProcedureLoader,
+    DictProcedureLoader,
+    ProcedureLoader,
+    create_default_loader,
 )
 from .profiling import (
     FunctionProfile,
     ProfilingResult,
+)
+from .program_profiles import (
+    ProgramAnalysis,
+    ProgramProfile,
+    analyze_job,
+    analyze_step,
+    register_profile,
+)
+from .rc_analysis import (
+    DEFAULT_RC_DOMAIN,
+    FeasibilityReport,
+    compute_feasible_paths,
+)
+from .sql_detector import (
+    DB2_PROGRAMS,
+    SQLDetectionResult,
+    detect_sql_in_dd,
+    detect_sql_in_job,
+    detect_sql_in_step,
+    detect_sql_in_text,
+    is_db2_program,
+)
+from .system_symbols import (
+    SystemSymbolProvider,
+)
+from .validators import (
+    validate_dataset_name,
+    validate_dd_statement,
+    validate_jcl_identifier,
+    validate_job_structure,
+    validate_step_structure,
 )
 
 # Attach a NullHandler to the package logger so library logging is silent by
@@ -155,7 +159,7 @@ _logging.getLogger(__name__).addHandler(_logging.NullHandler())
 _registry = get_plugin_registry()
 
 # Public API - what gets imported with "from jclparser import *"
-__all__ = [
+__all__ = [  # noqa: RUF022 — grouped by API tier, not alphabetically
     # ── Tier 1: Stable public API ─────────────────────────────────────────────
     "parse_jcl",
     "validate_jcl",

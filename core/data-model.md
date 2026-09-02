@@ -88,13 +88,13 @@ Parameter
 
 ```python
 # All importable from jclparser
-ConditionNode           # abstract base
-ReturnCodeCondition     # RC(step) comparison — RC(STEP1) LT 8
-AbendCondition          # ABEND(step)
-RunCondition            # RUN(step)
-NotCondition            # NOT(condition)
-AndCondition            # condition AND condition
-OrCondition             # condition OR condition
+ConditionNode  # abstract base
+ReturnCodeCondition  # RC(step) comparison — RC(STEP1) LT 8
+AbendCondition  # ABEND(step)
+RunCondition  # RUN(step)
+NotCondition  # NOT(condition)
+AndCondition  # condition AND condition
+OrCondition  # condition OR condition
 ```
 
 ## Source Modules

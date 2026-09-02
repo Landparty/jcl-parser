@@ -23,7 +23,15 @@ The backend imports from `backend/_vendor/jcl-parser/`.
 ## Backend Import Path
 
 ```python
-from ..dependencies import parse_jcl, Job, Step, JCLParseError, JCLSyntaxError, JCLValidationError, JCLStructureError
+from ..dependencies import (
+    parse_jcl,
+    Job,
+    Step,
+    JCLParseError,
+    JCLSyntaxError,
+    JCLValidationError,
+    JCLStructureError,
+)
 ```
 
 All four exception types must be importable. The adapter catches them separately for error classification.
@@ -43,7 +51,7 @@ job = parse_jcl(content: str)   # returns Job | None
 ## Entry Point 2: job.validate()
 
 ```python
-validation_errors = job.validate()   # list of validation error objects
+validation_errors = job.validate()  # list of validation error objects
 ```
 
 - Items are stringified with `str()` for error_message fields.
@@ -56,7 +64,7 @@ exploded_job = job.explode(
     max_depth=10,
     audit=True,
     strict_symbols=False,
-    loader=proc_loader,       # optional, may be None
+    loader=proc_loader,  # optional, may be None
 )
 ```
 
@@ -67,19 +75,21 @@ The adapter catches `JCLParseError` (including `ProcedureNotFoundError`) and fal
 ```python
 from jclparser.proc_loader import CompositeProcedureLoader, InlineProcedureLoader
 
-loader = CompositeProcedureLoader([
-    InlineProcedureLoader(job.procedures),  # inline PROCs always first
-    external_loader,                        # DB-sourced external loader
-])
+loader = CompositeProcedureLoader(
+    [
+        InlineProcedureLoader(job.procedures),  # inline PROCs always first
+        external_loader,  # DB-sourced external loader
+    ]
+)
 ```
 
 ## Adapter Entry Point: parse_content()
 
 ```python
 adapter.parse_content(
-    content,                   # str
-    filename=filename,         # str | None — not passed to jclparser
-    proc_loader=loader,        # optional external PROC loader from backend/src/services/
+    content,  # str
+    filename=filename,  # str | None — not passed to jclparser
+    proc_loader=loader,  # optional external PROC loader from backend/src/services/
 )
 ```
 
@@ -141,7 +151,7 @@ The adapter produces this dict for the backend's `ParserResult`:
 ```python
 {
     "program_info": {
-        "name": str,                  # job.name or "UNNAMED_JOB"
+        "name": str,  # job.name or "UNNAMED_JOB"
         "type": "JCL",
         "language_version": "JCL/MVS",
         "encoding": "utf-8",
@@ -149,17 +159,17 @@ The adapter produces this dict for the backend's `ParserResult`:
         "complexity_score": float,
     },
     "structure": {
-        "sections": [...],            # job sections (from JclStructureExtractor)
-        "variables": [...],           # symbolic parameters / SET variables
-        "procedures": [...],          # PROC invocations
+        "sections": [...],  # job sections (from JclStructureExtractor)
+        "variables": [...],  # symbolic parameters / SET variables
+        "procedures": [...],  # PROC invocations
     },
     "dependencies": {
-        "includes": [dict],           # PROC references — each has "proc_name" key
-        "calls": [str],               # program names from EXEC PGM= steps
-        "databases": [dict],          # DB2 dataset references
+        "includes": [dict],  # PROC references — each has "proc_name" key
+        "calls": [str],  # program names from EXEC PGM= steps
+        "databases": [dict],  # DB2 dataset references
         "procedure_definitions": [...],
     },
-    "execution_details": [...],       # per-step detail with DD statements
+    "execution_details": [...],  # per-step detail with DD statements
     "analysis": {
         "metrics": {...},
         "issues": [...],
@@ -191,9 +201,9 @@ The adapter produces this dict for the backend's `ParserResult`:
 ```python
 ParserResult(
     success=bool,
-    program_structure=dict,          # shape above
-    error_message=str | None,        # prefixed: "JCL_PARSE_ERROR", "SYNTAX_ERROR", etc.
-    metadata=dict,                   # timing, dialect="IBM_JCL", validation_errors count
+    program_structure=dict,  # shape above
+    error_message=str | None,  # prefixed: "JCL_PARSE_ERROR", "SYNTAX_ERROR", etc.
+    metadata=dict,  # timing, dialect="IBM_JCL", validation_errors count
 )
 ```
 

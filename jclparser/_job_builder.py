@@ -23,12 +23,24 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+# Backward-compatible re-exports: these helpers historically lived in this
+# module (and before that in ``jclparser.parser``) and are imported from here
+# by ``parser.py`` and downstream code. Keep them importable from this path.
 from ._model_factories import (
+    _SET_SYMBOL_PATTERN,
     _create_dd_from_statement,
     _create_job_from_statement,
     _create_step_from_statement,
     _exec_has_program_spec,
+    _has_unresolved_symbol_ref,
     _resolve_set_value,
+)
+from ._post_parse import (
+    _extract_output_ref_names,
+    _resolve_output_refs,
+    enforce_strict_dd_structure,
+    load_external_procedures,
+    resolve_set_symbols,
 )
 from .condition_parser import parse_condition
 from .errors import JCLSyntaxError
@@ -43,27 +55,12 @@ from .model import (
 )
 from .utils import POSITIONAL_PARAM_PREFIX, is_positional_key
 
-# Backward-compatible re-exports: these helpers historically lived in this
-# module (and before that in ``jclparser.parser``) and are imported from here
-# by ``parser.py`` and downstream code. Keep them importable from this path.
-from ._model_factories import (  # noqa: F401
-    _SET_SYMBOL_PATTERN,
-    _has_unresolved_symbol_ref,
-)
-from ._post_parse import (  # noqa: F401
-    _extract_output_ref_names,
-    _resolve_output_refs,
-    enforce_strict_dd_structure,
-    load_external_procedures,
-    resolve_set_symbols,
-)
-
 logger = logging.getLogger(__name__)
 
 #: Explicit re-export list: mypy strict (``no_implicit_reexport``) would
 #: otherwise reject the historical ``from ._job_builder import ...`` imports
 #: in ``parser.py`` for the helpers that moved to the sibling modules.
-__all__ = [
+__all__ = [  # noqa: RUF022 — grouped by the module each name comes from
     "JobBuilder",
     # _model_factories re-exports
     "_SET_SYMBOL_PATTERN",

@@ -6,12 +6,12 @@ not just that the registry API works in isolation.
 """
 
 import pytest
-from jclparser.parser import validate_jcl, parse_statement
+
+from jclparser.errors import ValidationError
+from jclparser.model import DDStatement, Job, Statement, Step
+from jclparser.parser import parse_statement, validate_jcl
 from jclparser.plugins import get_plugin_registry
 from jclparser.plugins.base import StatementPlugin, ValidationPlugin
-from jclparser.model import Statement, Job, Step, DDStatement
-from jclparser.errors import ValidationError
-
 
 # ---------------------------------------------------------------------------
 # Concrete plugin implementations for testing

@@ -5,12 +5,13 @@ These tests validate end-to-end behavior against acceptance criteria.
 All tests should FAIL initially, then pass as implementation is added.
 """
 
-import pytest
 import time
 
+import pytest
+
 # Import the main jclparser module and expected classes
-from jclparser import parse_jcl, validate_jcl, get_plugin_registry
-from jclparser.errors import JCLSyntaxError, JCLValidationError, ErrorType
+from jclparser import get_plugin_registry, parse_jcl, validate_jcl
+from jclparser.errors import ErrorType, JCLSyntaxError, JCLValidationError
 from jclparser.plugins import StatementPlugin
 
 
@@ -395,8 +396,9 @@ class TestPerformanceValidation:
     def test_memory_usage_reasonable(self):
         """GIVEN large JCL file WHEN parsed THEN memory usage reasonable"""
         try:
-            import psutil
             import os
+
+            import psutil
         except ImportError:
             pytest.skip("psutil not installed")
 

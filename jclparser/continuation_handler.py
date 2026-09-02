@@ -4,10 +4,10 @@ Enhanced continuation line handling for JCL parsing.
 Handles complex multi-line statements with proper context awareness.
 """
 
-from typing import ClassVar, List, Optional, Set, Tuple
-from dataclasses import dataclass
 import logging
 import re
+from dataclasses import dataclass
+from typing import ClassVar
 
 from ._statement_parser import (
     _STATEMENT_TYPES,
@@ -61,7 +61,7 @@ class ContinuationLineHandler:
     # even though they are not real _STATEMENT_TYPES entries -- untested,
     # likely vestigial, but left alone to avoid changing their existing
     # behavior.
-    JCL_KEYWORDS: ClassVar[Set[str]] = _STATEMENT_TYPES | {"GOTO", "SCHED"}
+    JCL_KEYWORDS: ClassVar[set[str]] = _STATEMENT_TYPES | {"GOTO", "SCHED"}
 
     def __init__(self):
         self.context = ContinuationContext()
@@ -117,7 +117,7 @@ class ContinuationLineHandler:
         self,
         line: str,
         previous_line: str = "",
-        ctx: Optional[ContinuationContext] = None,
+        ctx: ContinuationContext | None = None,
     ) -> bool:
         """
         Determine if a line is a continuation of the previous line.
@@ -178,7 +178,7 @@ class ContinuationLineHandler:
             self.suspect_comments.append((line_num, comment))
         return statement
 
-    def merge_continuation_lines(self, lines: List[str]) -> List[Tuple[str, int]]:
+    def merge_continuation_lines(self, lines: list[str]) -> list[tuple[str, int]]:
         """
         Merge continuation lines into complete statements.
 
@@ -223,7 +223,7 @@ class ContinuationLineHandler:
             # right after the statement they interrupted (see below) instead
             # of immediately, so the statement itself keeps its place in the
             # output relative to source order.
-            interspersed_comments: List[Tuple[str, int]] = []
+            interspersed_comments: list[tuple[str, int]] = []
 
             # Look ahead for continuation lines
             while j < len(lines):
@@ -262,9 +262,7 @@ class ContinuationLineHandler:
                 # Check if next line is a continuation, passing cached context
                 # to avoid re-scanning the full (growing) merged_line.
                 if self.is_continuation_line(next_line, merged_line, ctx=cached_ctx):
-                    raw_after_slashes = (
-                        next_line[2:] if next_line.startswith("//") else next_line
-                    ).lstrip()
+                    raw_after_slashes = (next_line.removeprefix("//")).lstrip()
                     had_leading_comma = raw_after_slashes.startswith(",")
 
                     # Extract continuation content
@@ -329,7 +327,7 @@ class ContinuationLineHandler:
         return content
 
     def _analyze_line_context(
-        self, line: str, starting_ctx: Optional[ContinuationContext] = None
+        self, line: str, starting_ctx: ContinuationContext | None = None
     ) -> ContinuationContext:
         """
         Analyze a line to determine if it has unclosed quotes/parens.

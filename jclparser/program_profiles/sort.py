@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 
-from .base import ProgramProfile, ProgramAnalysis, _sysin_text
+from .base import ProgramAnalysis, ProgramProfile, _sysin_text
 
 _RE_SORT_FIELDS = re.compile(r"\bSORT\s+FIELDS\s*=", re.IGNORECASE)
 _RE_INCLUDE = re.compile(r"\bINCLUDE\b", re.IGNORECASE)

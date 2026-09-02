@@ -6,8 +6,8 @@ import textwrap
 
 from jclparser import parse_jcl
 from jclparser.continuation_handler import (
-    ContinuationLineHandler,
     ContinuationContext,
+    ContinuationLineHandler,
 )
 from jclparser.utils import normalize_jcl_line
 

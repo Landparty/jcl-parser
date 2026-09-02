@@ -14,25 +14,24 @@ Unit tests for the feature-ideas branch additions:
 from __future__ import annotations
 
 import jclparser as jp
-from jclparser.parser import _extract_output_ref_names
 from jclparser.jes_statements import (
-    parse_jes_control,
-    parse_jes3_route_xeq,
+    Jes3RouteXeqStatement,
     JobParmStatement,
-    RouteStatement,
-    XmitStatement,
-    SignonStatement,
     MessageStatement,
     NetacctStatement,
     NotifyStatement,
     PriorityStatement,
-    Jes3RouteXeqStatement,
+    RouteStatement,
+    SignonStatement,
+    XmitStatement,
+    parse_jes3_route_xeq,
+    parse_jes_control,
 )
+from jclparser.lint import LintConfig, lint_job, to_sarif
 from jclparser.metrics import compute_metrics
-from jclparser.rc_analysis import compute_feasible_paths
+from jclparser.parser import _extract_output_ref_names
 from jclparser.program_profiles import analyze_job, get_profile
-from jclparser.lint import lint_job, LintConfig, to_sarif
-
+from jclparser.rc_analysis import compute_feasible_paths
 
 # ---------------------------------------------------------------------------
 # A1: Typed JES control statements
@@ -490,7 +489,7 @@ class TestLintPack:
         assert {r["id"] for r in rules} & {"JCL-LINT-004", "JCL-LINT-005"}
 
     def test_error_code_in_validation_error_str(self):
-        from jclparser.errors import ValidationError, ErrorSeverity
+        from jclparser.errors import ErrorSeverity, ValidationError
 
         err = ValidationError(
             "boom",
@@ -665,9 +664,9 @@ class TestReviewFixes:
     def test_lint_rule_crash_produces_tagged_finding(self):
         """Review #1: a crashing rule should yield a SEMANTIC_ERROR WARNING,
         not a generic ErrorType.VALIDATION_ERROR at severity ERROR."""
-        from jclparser.errors import ErrorType, ErrorSeverity
-        from jclparser.lint.base import LintRule
+        from jclparser.errors import ErrorSeverity, ErrorType
         from jclparser.lint import lint_job as _lint_job
+        from jclparser.lint.base import LintRule
         from jclparser.lint.runner import register_rule, unregister_rule
 
         class BoomRule(LintRule):
@@ -699,7 +698,8 @@ class TestReviewFixes:
 
     def test_lint_rule_crash_severity_overridable(self):
         from jclparser.errors import ErrorSeverity
-        from jclparser.lint import LintConfig, lint_job as _lint_job
+        from jclparser.lint import LintConfig
+        from jclparser.lint import lint_job as _lint_job
         from jclparser.lint.base import LintRule
         from jclparser.lint.runner import register_rule, unregister_rule
 

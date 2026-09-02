@@ -137,7 +137,7 @@ def invoked_and_sql_notes(combined: str) -> tuple[list[InvokedProgram], list[str
 
 __all__ = [
     "InvokedProgram",
-    "extract_invoked_programs",
     "collect_control_text",
+    "extract_invoked_programs",
     "invoked_and_sql_notes",
 ]

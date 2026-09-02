@@ -5,11 +5,12 @@ Following TDD methodology - these tests are written BEFORE implementation.
 Tests cover unit tests, integration tests, edge cases, and E2E scenarios.
 """
 
-import pytest
-from pathlib import Path
-from io import StringIO
-import tempfile
 import os
+import tempfile
+from io import StringIO
+from pathlib import Path
+
+import pytest
 
 # Import will fail initially - this is expected in TDD (Red phase)
 from jclparser.jcl_file_type import (

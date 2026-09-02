@@ -15,13 +15,13 @@ Usage::
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from .model import (
+    ConditionalBlock,
     Job,
     Step,
-    ConditionalBlock,
     iter_execution_steps,
 )
 
@@ -73,8 +73,7 @@ def _walk(steps: list, depth: int = 0) -> tuple[int, int, int]:
                 branch_count += 1
             for branch in (s.then_steps, s.else_steps):
                 sub_depth, sub_cc, sub_bc = _walk(branch, depth + 1)
-                if sub_depth > max_depth:
-                    max_depth = sub_depth
+                max_depth = max(max_depth, sub_depth)
                 cond_count += sub_cc
                 branch_count += sub_bc
     return max_depth, cond_count, branch_count

@@ -12,13 +12,11 @@ Regression tests for the audit bug fixes:
 """
 
 from jclparser import parse_jcl, validate_jcl
-from jclparser.model import DDStatement
+from jclparser.model import DDStatement, Procedure
 from jclparser.proc_loader import (
     CompositeProcedureLoader,
     ProcedureLoader,
 )
-from jclparser.model import Procedure
-
 
 # ---------------------------------------------------------------------------
 # 1. Column-71 truncation

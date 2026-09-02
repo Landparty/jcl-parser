@@ -33,7 +33,7 @@ A standalone `jclparser/profiling.py` module provides `ProfilingResult`, `Functi
 ```python
 @dataclass
 class FunctionProfile:
-    function: str          # "filename:lineno(funcname)"
+    function: str  # "filename:lineno(funcname)"
     calls: int
     total_time_s: float
     cumul_time_s: float
@@ -49,7 +49,7 @@ class ProfilingResult:
     wall_clock_s: float
     cpu_user_s: float | None
     cpu_system_s: float | None
-    peak_memory_mb: float         # tracemalloc peak allocation within the profiled call
+    peak_memory_mb: float  # tracemalloc peak allocation within the profiled call
     top_functions: list[FunctionProfile]
     prof_file: str | None
 

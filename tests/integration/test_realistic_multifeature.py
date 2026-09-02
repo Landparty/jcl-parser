@@ -6,8 +6,9 @@ inline data, SET symbols, and temporary datasets in single jobs.
 """
 
 import pytest
+
+from jclparser.model import ConditionalBlock, Step
 from jclparser.parser import parse_jcl, validate_jcl
-from jclparser.model import Step, ConditionalBlock
 
 
 @pytest.mark.integration

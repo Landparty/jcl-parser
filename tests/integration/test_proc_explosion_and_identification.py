@@ -13,15 +13,15 @@ Scenario 2: JCL with PROC files in JCLLIB and backend proc identification
 - PROC definition files vs JCL job files distinguished
 """
 
-import pytest
-from pathlib import Path
 import tempfile
-from typing import List, Dict
+from pathlib import Path
+
+import pytest
 
 from jclparser import (
-    parse_jcl,
-    ProcedureNotFoundError,
     CircularProcedureError,
+    ProcedureNotFoundError,
+    parse_jcl,
 )
 from jclparser.model import (
     Procedure,
@@ -705,7 +705,7 @@ class TestProcedureEntryPointDetection:
 
         job = parse_jcl(jcl_content)
 
-        def classify_entry_points(procedures: List[Procedure]) -> Dict[str, bool]:
+        def classify_entry_points(procedures: list[Procedure]) -> dict[str, bool]:
             """Classify each procedure as entry point or not"""
 
             def is_entry_point(proc: Procedure) -> bool:

@@ -169,7 +169,7 @@ class TestProcExpansionDebug:
 
     def test_circular_reference_logged_at_debug(self, caplog):
         """A circular PROC chain logs a DEBUG before raising."""
-        from jclparser.model import Job, Step, Procedure
+        from jclparser.model import Job, Procedure, Step
         from jclparser.proc_loader import InlineProcedureLoader
 
         # PROCA calls PROCB which calls PROCA.
@@ -178,9 +178,11 @@ class TestProcExpansionDebug:
         job = Job(name="J", steps=[Step(name="TOP", procedure="PROCA")])
         loader = InlineProcedureLoader([proc_a, proc_b])
 
-        with caplog.at_level(logging.DEBUG, logger="jclparser"):
-            with pytest.raises(CircularProcedureError):
-                explode_job(job, proc_loader=loader)
+        with (
+            caplog.at_level(logging.DEBUG, logger="jclparser"),
+            pytest.raises(CircularProcedureError),
+        ):
+            explode_job(job, proc_loader=loader)
 
         circ = [
             r
@@ -193,7 +195,7 @@ class TestProcExpansionDebug:
 
     def test_depth_limit_logged_at_debug(self, caplog):
         """Exceeding max_depth logs a DEBUG before raising."""
-        from jclparser.model import Job, Step, Procedure
+        from jclparser.model import Job, Procedure, Step
         from jclparser.proc_loader import InlineProcedureLoader
 
         # PROCA -> PROCB -> PROCC, exploded with max_depth=1.
@@ -203,9 +205,11 @@ class TestProcExpansionDebug:
         job = Job(name="J", steps=[Step(name="TOP", procedure="PROCA")])
         loader = InlineProcedureLoader([proc_a, proc_b, proc_c])
 
-        with caplog.at_level(logging.DEBUG, logger="jclparser"):
-            with pytest.raises(ExplosionDepthError):
-                explode_job(job, proc_loader=loader, max_depth=1)
+        with (
+            caplog.at_level(logging.DEBUG, logger="jclparser"),
+            pytest.raises(ExplosionDepthError),
+        ):
+            explode_job(job, proc_loader=loader, max_depth=1)
 
         depth = [
             r

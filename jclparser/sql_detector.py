@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .model import Job, Step, DDStatement
+    from .model import DDStatement, Job, Step
 
 # Programs known to execute SQL or DB2 operations.
 DB2_PROGRAMS: frozenset[str] = frozenset(
@@ -123,7 +123,7 @@ def detect_sql_in_text(text: str) -> list[tuple[str, str]]:
     return results
 
 
-def detect_sql_in_dd(dd: "DDStatement") -> list[tuple[str, str]]:
+def detect_sql_in_dd(dd: DDStatement) -> list[tuple[str, str]]:
     """Scan a single DD statement's inline data for SQL.
 
     Returns ``(keyword, category)`` pairs, or an empty list when the DD
@@ -134,7 +134,7 @@ def detect_sql_in_dd(dd: "DDStatement") -> list[tuple[str, str]]:
     return detect_sql_in_text(dd.inline_data)
 
 
-def detect_sql_in_step(step: "Step") -> SQLDetectionResult:
+def detect_sql_in_step(step: Step) -> SQLDetectionResult:
     """Analyse a step for SQL content.
 
     Checks both the program name and inline data of every DD statement.
@@ -150,7 +150,7 @@ def detect_sql_in_step(step: "Step") -> SQLDetectionResult:
     return result
 
 
-def detect_sql_in_job(job: "Job") -> list[SQLDetectionResult]:
+def detect_sql_in_job(job: Job) -> list[SQLDetectionResult]:
     """Analyse all steps in a job and return results for those containing SQL.
 
     Only steps with detected SQL are included in the returned list.

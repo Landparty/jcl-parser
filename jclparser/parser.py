@@ -25,17 +25,35 @@ import logging
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Literal, overload
 
-from ._job_builder import (
+# Backward-compatible re-exports: these helpers historically lived in this
+# module and are imported from ``jclparser.parser`` by tests and downstream
+# code. Keep them importable from here.
+from ._job_builder import (  # noqa: F401
+    _SET_SYMBOL_PATTERN,
     JobBuilder,
+    _create_dd_from_statement,
+    _create_job_from_statement,
+    _create_step_from_statement,
+    _exec_has_program_spec,
+    _extract_output_ref_names,
+    _has_unresolved_symbol_ref,
     _resolve_output_refs,
+    _resolve_set_value,
     enforce_strict_dd_structure,
     load_external_procedures,
     resolve_set_symbols,
 )
-from ._statement_parser import (
+from ._statement_parser import (  # noqa: F401
+    _OPERATOR_PREFIXES,
+    _RE_HAS_INCLUDE,
+    _STATEMENT_TYPES,
+    _check_param_balance,
     _extract_jcllib_order,
+    _find_keyword_eq,
     _has_include_statement,
     _operand_field,
+    _parse_list_parameter,
+    _parse_parameters,
     parse_statement,
     statement_operation,
 )
@@ -48,42 +66,23 @@ from .errors import (
     JCLValidationError,
     ParseError,
 )
-from .model import Job
-from .plugins import ParserConfig, get_plugin_registry
-from .profiling import ProfilerContext, ProfilingResult
-from .utils import is_positional_key, normalize_jcl_line, read_source
-
-# Backward-compatible re-exports: these helpers historically lived in this
-# module and are imported from ``jclparser.parser`` by tests and downstream
-# code. Keep them importable from here.
-from ._job_builder import (  # noqa: F401
-    _SET_SYMBOL_PATTERN,
-    _create_dd_from_statement,
-    _create_job_from_statement,
-    _create_step_from_statement,
-    _exec_has_program_spec,
-    _extract_output_ref_names,
-    _has_unresolved_symbol_ref,
-    _resolve_set_value,
-)
-from ._statement_parser import (  # noqa: F401
-    _OPERATOR_PREFIXES,
-    _RE_HAS_INCLUDE,
-    _STATEMENT_TYPES,
-    _check_param_balance,
-    _find_keyword_eq,
-    _parse_list_parameter,
-    _parse_parameters,
-)
 from .model import (  # noqa: F401
     ConditionalBlock,
     DDStatement,
+    Job,
     OutputStatement,
     Procedure,
     Statement,
     Step,
 )
-from .utils import POSITIONAL_PARAM_PREFIX  # noqa: F401
+from .plugins import ParserConfig, get_plugin_registry
+from .profiling import ProfilerContext, ProfilingResult
+from .utils import (
+    POSITIONAL_PARAM_PREFIX,  # noqa: F401
+    is_positional_key,
+    normalize_jcl_line,
+    read_source,
+)
 
 if TYPE_CHECKING:
     from .include_loader import IncludeMemberLoader
@@ -238,21 +237,18 @@ def _parse_jcl_core(
     config: ParserConfig | None = None,
     proc_base_path: str | Path | None = None,
     enable_external_procs: bool = True,
-    include_loader: "IncludeMemberLoader | None" = None,
+    include_loader: IncludeMemberLoader | None = None,
 ) -> Job:
     """Core parsing implementation. See parse_jcl() for full documentation."""
-    # Handle different input source types
-    try:
-        content = read_source(source)
-    except FileNotFoundError:
-        raise
+    # Handle different input source types (FileNotFoundError propagates)
+    content = read_source(source)
 
     # Expand INCLUDE MEMBER= statements before the main parse loop so that
     # inlined content participates in continuation-line merging and everything
     # else that follows.
     _expanded_includes: list[str] = []
     if _has_include_statement(content):
-        from .include_loader import resolve_includes, JCLLIBMemberLoader
+        from .include_loader import JCLLIBMemberLoader, resolve_includes
 
         if include_loader is None:
             include_loader = JCLLIBMemberLoader(base_path=proc_base_path)
@@ -403,7 +399,7 @@ def parse_jcl(
     config: ParserConfig | None = ...,
     proc_base_path: str | Path | None = ...,
     enable_external_procs: bool = ...,
-    include_loader: "IncludeMemberLoader | None" = ...,
+    include_loader: IncludeMemberLoader | None = ...,
     enable_profiling: Literal[False] = ...,
     top_n: int = ...,
     prof_output: str | None = ...,
@@ -417,7 +413,7 @@ def parse_jcl(
     config: ParserConfig | None = ...,
     proc_base_path: str | Path | None = ...,
     enable_external_procs: bool = ...,
-    include_loader: "IncludeMemberLoader | None" = ...,
+    include_loader: IncludeMemberLoader | None = ...,
     enable_profiling: Literal[True] = ...,
     top_n: int = ...,
     prof_output: str | None = ...,
@@ -430,11 +426,11 @@ def parse_jcl(
     config: ParserConfig | None = None,
     proc_base_path: str | Path | None = None,
     enable_external_procs: bool = True,
-    include_loader: "IncludeMemberLoader | None" = None,
+    include_loader: IncludeMemberLoader | None = None,
     enable_profiling: bool = False,
     top_n: int = 50,
     prof_output: str | None = None,
-) -> "Job | tuple[Job, ProfilingResult]":
+) -> Job | tuple[Job, ProfilingResult]:
     """
     Parse JCL script from various input sources into structured Job object.
 

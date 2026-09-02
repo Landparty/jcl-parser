@@ -161,6 +161,6 @@ def read_source(source: str | Path | Any) -> str:
     if hasattr(source, "seek"):
         try:
             source.seek(0)
-        except (OSError, IOError):
+        except OSError:
             pass  # Non-seekable streams are fine; seek is best-effort only
     return content

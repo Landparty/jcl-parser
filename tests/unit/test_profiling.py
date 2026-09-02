@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from jclparser.profiling import FunctionProfile, ProfilingResult, ProfilerContext
+from jclparser.profiling import FunctionProfile, ProfilerContext, ProfilingResult
 
 
 def test_function_profile_to_dict():

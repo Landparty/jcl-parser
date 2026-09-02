@@ -5,9 +5,8 @@ Covers: ValidationError.__str__ with line_number, DDStatement.dcb with
 list-format, DDStatement.space with list-format, Job.get_sysin_statements.
 """
 
-from jclparser.errors import ValidationError, ErrorType
-from jclparser.model import Job, Step, DDStatement
-
+from jclparser.errors import ErrorType, ValidationError
+from jclparser.model import DDStatement, Job, Step
 
 # ---------------------------------------------------------------------------
 # errors.py — line 141
@@ -167,9 +166,10 @@ class TestJCLParseErrorColumnNumber:
 
     def test_check_param_balance_reports_quote_column(self):
         """_check_param_balance must include column for unclosed quote."""
-        from jclparser.parser import _check_param_balance
-        from jclparser.errors import JCLSyntaxError
         import pytest
+
+        from jclparser.errors import JCLSyntaxError
+        from jclparser.parser import _check_param_balance
 
         with pytest.raises(JCLSyntaxError) as exc_info:
             _check_param_balance("DSN='MY.FILE", line_number=10)
@@ -180,9 +180,10 @@ class TestJCLParseErrorColumnNumber:
 
     def test_check_param_balance_reports_paren_column(self):
         """_check_param_balance must include column for unmatched paren."""
-        from jclparser.parser import _check_param_balance
-        from jclparser.errors import JCLSyntaxError
         import pytest
+
+        from jclparser.errors import JCLSyntaxError
+        from jclparser.parser import _check_param_balance
 
         with pytest.raises(JCLSyntaxError) as exc_info:
             _check_param_balance("SPACE=(CYL,(10,5)", line_number=3)
@@ -194,29 +195,29 @@ class TestValidationErrorSeverity:
     """ValidationError must carry an ErrorSeverity and expose is_warning."""
 
     def test_default_severity_is_error(self):
-        from jclparser.errors import ValidationError, ErrorSeverity
+        from jclparser.errors import ErrorSeverity, ValidationError
 
         err = ValidationError("something wrong")
         assert err.severity == ErrorSeverity.ERROR
         assert not err.is_warning
 
     def test_warning_severity(self):
-        from jclparser.errors import ValidationError, ErrorSeverity
+        from jclparser.errors import ErrorSeverity, ValidationError
 
         warn = ValidationError("advisory issue", severity=ErrorSeverity.WARNING)
         assert warn.severity == ErrorSeverity.WARNING
         assert warn.is_warning
 
     def test_warning_str_includes_label(self):
-        from jclparser.errors import ValidationError, ErrorSeverity
+        from jclparser.errors import ErrorSeverity, ValidationError
 
         warn = ValidationError("dup dd", severity=ErrorSeverity.WARNING)
         assert "WARNING" in str(warn).upper()
 
     def test_duplicate_dd_is_warning_in_validation(self):
         """Duplicate DD names in a step produce a WARNING, not an ERROR."""
-        from jclparser.parser import parse_jcl
         from jclparser.errors import ErrorSeverity
+        from jclparser.parser import parse_jcl
 
         jcl = """\
 //MYJOB   JOB CLASS=A
@@ -243,9 +244,10 @@ class TestUndefinedSymbolErrorContext:
 
     def test_strict_substitution_includes_source(self):
         """When strict=True and symbol is undefined, error message includes source."""
-        from jclparser.explosion import substitute_symbols, SymbolScope
-        from jclparser.errors import UndefinedSymbolError
         import pytest
+
+        from jclparser.errors import UndefinedSymbolError
+        from jclparser.explosion import SymbolScope, substitute_symbols
 
         scope = SymbolScope()
         with pytest.raises(UndefinedSymbolError) as exc_info:
@@ -273,9 +275,10 @@ class TestExplosionMaxSteps:
         assert exploded is not None
 
     def test_max_steps_exceeded_raises(self):
-        from jclparser.parser import parse_jcl
-        from jclparser.errors import JCLStructureError
         import pytest
+
+        from jclparser.errors import JCLStructureError
+        from jclparser.parser import parse_jcl
 
         jcl = """\
 //MYJOB   JOB CLASS=A

@@ -83,13 +83,19 @@ exploded = explode_job(job, loader=loader)
 ## Chaining Loaders
 
 ```python
-from jclparser.proc_loader import CompositeProcedureLoader, InlineProcedureLoader, create_default_loader
+from jclparser.proc_loader import (
+    CompositeProcedureLoader,
+    InlineProcedureLoader,
+    create_default_loader,
+)
 
 base_loader = create_default_loader(proc_base_path="/procs")
-loader = CompositeProcedureLoader([
-    InlineProcedureLoader(job.procedures),   # inline wins
-    base_loader,
-])
+loader = CompositeProcedureLoader(
+    [
+        InlineProcedureLoader(job.procedures),  # inline wins
+        base_loader,
+    ]
+)
 exploded = explode_job(job, loader=loader)
 ```
 
@@ -101,9 +107,9 @@ This is exactly what the backend adapter does — it chains an `InlineProcedureL
 exploded = explode_job(
     job,
     loader=loader,
-    max_depth=10,           # default — raises ExplosionDepthError if exceeded
-    audit=True,             # populates job.explosion_audit and job.explosion_map
-    strict_symbols=False,   # if True, raise UndefinedSymbolError for unknown &SYMBOLS
+    max_depth=10,  # default — raises ExplosionDepthError if exceeded
+    audit=True,  # populates job.explosion_audit and job.explosion_map
+    strict_symbols=False,  # if True, raise UndefinedSymbolError for unknown &SYMBOLS
 )
 ```
 
@@ -112,15 +118,15 @@ exploded = explode_job(
 When `audit=True`, the exploded job gains two attributes:
 
 ```python
-exploded.explosion_audit   # list of audit entries
-exploded.explosion_map     # dict of step → PROC mapping
+exploded.explosion_audit  # list of audit entries
+exploded.explosion_map  # dict of step → PROC mapping
 
 # Each audit entry has:
-entry.step_name         # str
-entry.proc_name         # str
-entry.parameters        # dict — symbol substitutions applied
-entry.depth             # int — nesting depth
-entry.expanded_steps    # list — steps produced by this expansion
+entry.step_name  # str
+entry.proc_name  # str
+entry.parameters  # dict — symbol substitutions applied
+entry.depth  # int — nesting depth
+entry.expanded_steps  # list — steps produced by this expansion
 ```
 
 ## Symbol Substitution
@@ -149,7 +155,7 @@ Toggle builtins:
 ```python
 loader = create_default_loader(
     proc_base_path="/procs",
-    include_builtins=True,   # default — include IBM utility templates as fallback
+    include_builtins=True,  # default — include IBM utility templates as fallback
 )
 ```
 

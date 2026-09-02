@@ -7,10 +7,12 @@ with validation methods and type safety.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
+
 from .errors import ValidationError
-from .parameter_ast import DCBParameter, SPACEParameter, ParameterParser
+from .parameter_ast import DCBParameter, ParameterParser, SPACEParameter
 
 if TYPE_CHECKING:
     from .sql_detector import SQLDetectionResult
@@ -118,7 +120,7 @@ class OutputStatement:
         return _to_int_or_none(self.parameters.get("INDEX"))
 
     @classmethod
-    def from_statement(cls, stmt: "Statement") -> "OutputStatement":
+    def from_statement(cls, stmt: Statement) -> OutputStatement:
         """Create an OutputStatement from a generic Statement object."""
         return cls(
             name=stmt.name,
@@ -562,7 +564,7 @@ class Step:
         """Restart definition (R, RNC, NR, NC)."""
         return self.parameters.get("RD")
 
-    def detect_sql(self) -> "SQLDetectionResult":
+    def detect_sql(self) -> SQLDetectionResult:
         """Detect SQL statements in this step's inline data and program name.
 
         Returns:
@@ -707,7 +709,7 @@ class Job:
         audit: bool = True,
         system_provider: Any | None = None,
         strict_symbols: bool = False,
-    ) -> "Job":
+    ) -> Job:
         """
         Explode all procedure invocations in this job.
 

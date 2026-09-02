@@ -42,7 +42,7 @@ PROC invocations remain as `Step(exec_type="PROC")` objects. Call `explode_job()
 
 **7. `validate_jcl()` returns `(Job, list)`, not a boolean.**
 ```python
-job, errors = validate_jcl(source)   # always unpack both values
+job, errors = validate_jcl(source)  # always unpack both values
 ```
 Check `result.errors` for `ErrorSeverity.ERROR` items to determine hard failure. Warnings and INFO entries are also in the list.
 

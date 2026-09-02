@@ -7,13 +7,14 @@ bracket tracking, and edge-case parameter validation.
 
 import os
 import tempfile
-import pytest
 from pathlib import Path
-from jclparser.continuation_handler import ContinuationLineHandler
-from jclparser.parameter_validators import DISPValidator, DatasetNameValidator
-from jclparser.validators import validate_disposition, validate_dd_statement
-from jclparser.model import DDStatement
 
+import pytest
+
+from jclparser.continuation_handler import ContinuationLineHandler
+from jclparser.model import DDStatement
+from jclparser.parameter_validators import DatasetNameValidator, DISPValidator
+from jclparser.validators import validate_dd_statement, validate_disposition
 
 # ---------------------------------------------------------------------------
 # continuation_handler.py — bracket depth tracking
@@ -178,8 +179,9 @@ class TestFileTypeEdgeCases:
         safe entry point.
         """
         import pytest
-        from jclparser.utils import read_source
+
         from jclparser.jcl_file_type import is_jcl_file
+        from jclparser.utils import read_source
 
         nonexistent = str(tmp_path / "guaranteed_nonexistent.jcl")
         with pytest.raises(FileNotFoundError):

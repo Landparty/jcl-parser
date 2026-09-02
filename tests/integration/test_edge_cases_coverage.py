@@ -2,11 +2,12 @@
 Additional edge case tests to push coverage over 90%.
 """
 
-from pathlib import Path
-import tempfile
 import os
+import tempfile
+from pathlib import Path
+
 from jclparser import parse_jcl
-from jclparser.model import Job, Step, DDStatement
+from jclparser.model import DDStatement, Job, Step
 from jclparser.validators import validate_job_structure
 
 
@@ -208,7 +209,7 @@ class TestSymbolicParameterEdgeCases:
 
     def test_symbol_with_period_concatenation(self):
         """Test symbolic parameter with period concatenation"""
-        from jclparser.explosion import substitute_symbols, SymbolScope
+        from jclparser.explosion import SymbolScope, substitute_symbols
 
         scope = SymbolScope(set_symbols={"VAR": "VALUE"})
         result = substitute_symbols("&VAR..DATA", scope, strict=False)
@@ -217,7 +218,7 @@ class TestSymbolicParameterEdgeCases:
 
     def test_double_ampersand_escape(self):
         """Test && escapes to single &"""
-        from jclparser.explosion import substitute_symbols, SymbolScope
+        from jclparser.explosion import SymbolScope, substitute_symbols
 
         scope = SymbolScope(set_symbols={})
         result = substitute_symbols("&&TEMP", scope, strict=False)
@@ -225,7 +226,7 @@ class TestSymbolicParameterEdgeCases:
 
     def test_undefined_symbol_lenient(self):
         """Test undefined symbol in lenient mode"""
-        from jclparser.explosion import substitute_symbols, SymbolScope
+        from jclparser.explosion import SymbolScope, substitute_symbols
 
         scope = SymbolScope(set_symbols={})
         result = substitute_symbols("&UNDEF", scope, strict=False, allow_undefined=True)
@@ -238,8 +239,8 @@ class TestProcLoaderEdgeCases:
 
     def test_inline_loader_case_insensitive(self):
         """Test inline loader with case variations"""
-        from jclparser.proc_loader import InlineProcedureLoader
         from jclparser.model import Procedure
+        from jclparser.proc_loader import InlineProcedureLoader
 
         proc = Procedure(name="MYPROC", parameters={}, line_number=1)
         # Pass list of procedures, not dict

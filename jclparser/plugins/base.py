@@ -6,9 +6,9 @@ that enable custom JCL dialects and validation rules.
 """
 
 from abc import ABC, abstractmethod
-from typing import List
-from ..model import Job, Step, DDStatement, Statement
+
 from ..errors import ValidationError
+from ..model import DDStatement, Job, Statement, Step
 
 
 class StatementPlugin(ABC):
@@ -30,7 +30,6 @@ class StatementPlugin(ABC):
         Returns:
             True if this plugin should handle parsing this line
         """
-        pass
 
     @abstractmethod
     def parse_statement(self, line: str, line_number: int) -> Statement:
@@ -47,18 +46,16 @@ class StatementPlugin(ABC):
         Raises:
             JCLSyntaxError: If line cannot be parsed
         """
-        pass
 
     @property
     @abstractmethod
-    def statement_types(self) -> List[str]:
+    def statement_types(self) -> list[str]:
         """
         List of JCL statement types this plugin handles.
 
         Returns:
             List of statement type strings (e.g., ["JOB", "EXEC", "DD"])
         """
-        pass
 
 
 class ValidationPlugin(ABC):
@@ -70,7 +67,7 @@ class ValidationPlugin(ABC):
     """
 
     @abstractmethod
-    def validate_job(self, job: Job) -> List[ValidationError]:
+    def validate_job(self, job: Job) -> list[ValidationError]:
         """
         Validate complete job structure.
 
@@ -80,10 +77,9 @@ class ValidationPlugin(ABC):
         Returns:
             List of validation errors (empty if valid)
         """
-        pass
 
     @abstractmethod
-    def validate_step(self, step: Step) -> List[ValidationError]:
+    def validate_step(self, step: Step) -> list[ValidationError]:
         """
         Validate individual step.
 
@@ -93,10 +89,9 @@ class ValidationPlugin(ABC):
         Returns:
             List of validation errors (empty if valid)
         """
-        pass
 
     @abstractmethod
-    def validate_dd(self, dd: DDStatement) -> List[ValidationError]:
+    def validate_dd(self, dd: DDStatement) -> list[ValidationError]:
         """
         Validate DD statement.
 
@@ -106,4 +101,3 @@ class ValidationPlugin(ABC):
         Returns:
             List of validation errors (empty if valid)
         """
-        pass

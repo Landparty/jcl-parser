@@ -31,22 +31,19 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .jcl_file_type import detect_file_type
-from .metrics import compute_metrics
-from .lint import lint_job, all_rules
 from .dataset_lifecycle import analyze_dataset_lifecycle, validate_dataset_lifecycle
-from .sql_detector import detect_sql_in_job
-from .program_profiles import analyze_job, analyze_step
-from .rc_analysis import compute_feasible_paths
 from .errors import (
-    JCLSyntaxError,
-    JCLValidationError,
-    JCLStructureError,
-    UndefinedSymbolError,
     CircularProcedureError,
     ExplosionDepthError,
+    JCLStructureError,
+    JCLSyntaxError,
+    JCLValidationError,
     ProcedureNotFoundError,
+    UndefinedSymbolError,
 )
+from .jcl_file_type import detect_file_type
+from .lint import all_rules, lint_job
+from .metrics import compute_metrics
 from .model import (
     ConditionalBlock,
     DDStatement,
@@ -57,6 +54,9 @@ from .model import (
 )
 from .parser import parse_jcl, validate_jcl
 from .proc_loader import JCLLIBProcedureLoader
+from .program_profiles import analyze_job, analyze_step
+from .rc_analysis import compute_feasible_paths
+from .sql_detector import detect_sql_in_job
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -286,9 +286,7 @@ def _cmd_validate(path: Path, json_output: bool = False) -> int:
         items = [
             {
                 "severity": (
-                    getattr(err, "severity", None)
-                    and getattr(err, "severity").name
-                    or "ERROR"
+                    getattr(err, "severity", None) and err.severity.name or "ERROR"
                 ),
                 "line": getattr(err, "line_number", None),
                 "message": err.message,
@@ -352,7 +350,7 @@ def _cmd_detect(path: Path, json_output: bool = False) -> int:
     return 0
 
 
-def _cmd_metrics(job: "Job", json_output: bool = False) -> int:
+def _cmd_metrics(job: Job, json_output: bool = False) -> int:
     m = compute_metrics(job)
     if json_output:
         print(json.dumps(m.to_dict(), indent=2))
@@ -379,7 +377,7 @@ def _cmd_lint_list() -> int:
     return 0
 
 
-def _cmd_lint(job: "Job", json_output: bool = False) -> int:
+def _cmd_lint(job: Job, json_output: bool = False) -> int:
     findings = lint_job(job)
     if json_output:
         items = [
@@ -408,7 +406,7 @@ def _print_lint_findings(findings: list) -> None:
         print(f"[{code}]{loc}: {e.message}")
 
 
-def _cmd_datasets(job: "Job", json_output: bool = False) -> int:
+def _cmd_datasets(job: Job, json_output: bool = False) -> int:
     lifecycle = analyze_dataset_lifecycle(job)
     violations = validate_dataset_lifecycle(job)
     if json_output:
@@ -463,7 +461,7 @@ def _print_datasets(lifecycle: dict, violations: list) -> None:
             print(f"  [{sev}] {e.message}")
 
 
-def _cmd_sql(job: "Job", json_output: bool = False) -> int:
+def _cmd_sql(job: Job, json_output: bool = False) -> int:
     results = detect_sql_in_job(job)
     hits = [r for r in results if r.has_sql]
     if json_output:
@@ -503,7 +501,7 @@ def _print_sql_results(hits: list) -> None:
 
 
 def _cmd_analyze(
-    job: "Job", json_output: bool = False, step_filter: str | None = None
+    job: Job, json_output: bool = False, step_filter: str | None = None
 ) -> int:
     if step_filter:
         step = job.get_step(step_filter)
@@ -547,7 +545,7 @@ def _print_analyze_results(results: list) -> None:
         print()
 
 
-def _cmd_paths(job: "Job", json_output: bool = False) -> int:
+def _cmd_paths(job: Job, json_output: bool = False) -> int:
     report = compute_feasible_paths(job)
     if json_output:
         print(

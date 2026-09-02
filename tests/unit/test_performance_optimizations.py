@@ -6,14 +6,13 @@ Tests for performance optimization additions:
 - validate_jcl_identifier("1INVALID") must return False
 """
 
+from jclparser.explosion import SymbolScope, substitute_symbols
 from jclparser.jcl_file_type import (
     FileType,
     detect_file_type,
     detect_file_type_from_content,
 )
-from jclparser.explosion import substitute_symbols, SymbolScope
 from jclparser.validators import validate_jcl_identifier
-
 
 # ---------------------------------------------------------------------------
 # detect_file_type_from_content() tests

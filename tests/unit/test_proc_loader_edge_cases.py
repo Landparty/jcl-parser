@@ -7,12 +7,13 @@ Simplified tests focusing on achievable edge cases without complex mocking.
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
-from jclparser.proc_loader import (
-    JCLLIBProcedureLoader,
-    InlineProcedureLoader,
-    CompositeProcedureLoader,
-)
+
 from jclparser.model import Procedure, Step
+from jclparser.proc_loader import (
+    CompositeProcedureLoader,
+    InlineProcedureLoader,
+    JCLLIBProcedureLoader,
+)
 
 
 class TestJCLLIBProcedureLoaderEdgeCases:

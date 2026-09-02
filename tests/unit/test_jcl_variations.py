@@ -21,8 +21,8 @@ Grouping:
 import pytest
 
 from jclparser import parse_jcl, validate_jcl
-from jclparser.explosion import explode_job
 from jclparser.errors import JCLSyntaxError
+from jclparser.explosion import explode_job
 
 pytestmark = pytest.mark.unit
 
