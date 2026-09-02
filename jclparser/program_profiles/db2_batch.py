@@ -10,8 +10,8 @@ analysis does not stop at the DB2 driver.
 
 from __future__ import annotations
 
-from .base import ProgramProfile, ProgramAnalysis
 from ._invoked import collect_control_text, invoked_and_sql_notes
+from .base import ProgramAnalysis, ProgramProfile
 
 
 class DB2BatchProfile(ProgramProfile):

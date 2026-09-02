@@ -5,18 +5,19 @@ Tests based on reference parser (grossvater/jcl-parser) to ensure
 we cover most JCL syntax and statement types.
 """
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from jclparser import parse_jcl, validate_jcl
 from jclparser.errors import (
+    CircularProcedureError,
     JCLSyntaxError,
     JCLValidationError,
-    CircularProcedureError,
     ProcedureNotFoundError,
 )
 from jclparser.explosion import explode_job
-from jclparser.jcl_file_type import detect_file_type, FileType
-
+from jclparser.jcl_file_type import FileType, detect_file_type
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "sample_jcl"
 EXAMPLES_DIR = Path(__file__).parent.parent.parent / "examples"

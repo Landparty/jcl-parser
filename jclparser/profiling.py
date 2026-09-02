@@ -79,7 +79,7 @@ class ProfilerContext:
         self._was_tracing: bool = False
         self.result: ProfilingResult | None = None
 
-    def __enter__(self) -> "ProfilerContext":
+    def __enter__(self) -> ProfilerContext:  # noqa: PYI034 — typing.Self needs 3.11
         # Memory: start tracemalloc only if not already running
         self._was_tracing = tracemalloc.is_tracing()
         if not self._was_tracing:
@@ -93,7 +93,7 @@ class ProfilerContext:
         self._profiler.enable()
         return self
 
-    def __exit__(self, *_: Any) -> None:
+    def __exit__(self, *_: object) -> None:
         self._profiler.disable()
         wall_clock_s = time.perf_counter() - self._wall_start
 

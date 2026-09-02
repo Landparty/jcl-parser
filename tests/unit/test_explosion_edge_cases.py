@@ -7,20 +7,22 @@ This module tests uncovered edge cases:
 - Maximum explosion depth handling
 """
 
-import pytest
 from datetime import datetime
-from jclparser.explosion import (
-    ExplosionRecord,
-    substitute_symbols,
-    explode_job,
-    SymbolScope,
-)
-from jclparser.model import Job, Step, Procedure
+
+import pytest
+
 from jclparser.errors import (
+    CircularProcedureError,
     ExplosionDepthError,
     UndefinedSymbolError,
-    CircularProcedureError,
 )
+from jclparser.explosion import (
+    ExplosionRecord,
+    SymbolScope,
+    explode_job,
+    substitute_symbols,
+)
+from jclparser.model import Job, Procedure, Step
 from jclparser.proc_loader import InlineProcedureLoader
 
 

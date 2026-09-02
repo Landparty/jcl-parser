@@ -14,8 +14,9 @@ COND parameters on EXEC only use the keyword form: NE
 """
 
 import pytest
-from jclparser.parser import parse_jcl
+
 from jclparser.model import ConditionalBlock
+from jclparser.parser import parse_jcl
 
 
 class TestNotEqualInIfConditions:

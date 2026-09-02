@@ -2,7 +2,7 @@
 Additional comprehensive tests for jclparser.model module.
 """
 
-from jclparser.model import Job, Step, DDStatement, Procedure
+from jclparser.model import DDStatement, Job, Procedure, Step
 
 
 class TestJobModel:

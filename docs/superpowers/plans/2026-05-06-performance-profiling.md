@@ -37,6 +37,7 @@ Create `tests/unit/test_profiling.py`:
 
 ```python
 """Unit tests for jclparser.profiling module."""
+
 from __future__ import annotations
 
 import json
@@ -51,6 +52,7 @@ from jclparser.profiling import FunctionProfile, ProfilingResult, ProfilerContex
 # ---------------------------------------------------------------------------
 # FunctionProfile
 # ---------------------------------------------------------------------------
+
 
 def test_function_profile_to_dict():
     fp = FunctionProfile(
@@ -71,6 +73,7 @@ def test_function_profile_to_dict():
 # ---------------------------------------------------------------------------
 # ProfilingResult
 # ---------------------------------------------------------------------------
+
 
 def test_profiling_result_to_dict_with_cpu():
     fp = FunctionProfile("f.py:1(fn)", 1, 0.002, 0.018, 0.002, 0.018)
@@ -123,6 +126,7 @@ def test_profiling_result_to_json_compact():
 # ---------------------------------------------------------------------------
 # ProfilerContext
 # ---------------------------------------------------------------------------
+
 
 def test_profiler_context_produces_result():
     ctx = ProfilerContext(top_n=10)
@@ -188,6 +192,7 @@ def test_profiler_context_no_prof_file_by_default():
 def test_profiler_context_nested_tracemalloc_safe():
     """ProfilerContext must not stop an outer tracemalloc session."""
     import tracemalloc
+
     tracemalloc.start()
     try:
         ctx = ProfilerContext(top_n=5)
@@ -215,6 +220,7 @@ ProfilerContext wraps any parse call with cProfile, tracemalloc, and
 optional psutil CPU accounting. Import psutil lazily so the package remains
 usable without it.
 """
+
 from __future__ import annotations
 
 import cProfile
@@ -432,6 +438,7 @@ Create `tests/integration/test_profiling_api.py`:
 
 ```python
 """Integration tests: parse_jcl() with profiling."""
+
 from __future__ import annotations
 
 import json
@@ -487,6 +494,7 @@ def test_parse_profiling_prof_file(tmp_path):
     prof_path = str(tmp_path / "jcl.prof")
     _, profiling = parse_jcl(_SIMPLE, enable_profiling=True, prof_output=prof_path)
     import os
+
     assert os.path.exists(prof_path)
     assert profiling.prof_file == prof_path
 
@@ -694,6 +702,7 @@ Create `tests/integration/test_profiling_cli.py`:
 
 ```python
 """Integration tests: jcl-parser CLI --profile flag."""
+
 from __future__ import annotations
 
 import json
@@ -713,7 +722,9 @@ def _get_sample() -> Path:
     if not samples:
         # Fallback: create a minimal inline JCL file for testing
         p = Path(__file__).parent / "_sample_test.jcl"
-        p.write_text("//MYJOB   JOB (ACCT),'Test',CLASS=A\n//STEP1   EXEC PGM=IEFBR14\n")
+        p.write_text(
+            "//MYJOB   JOB (ACCT),'Test',CLASS=A\n//STEP1   EXEC PGM=IEFBR14\n"
+        )
         return p
     return samples[0]
 
@@ -731,8 +742,14 @@ def test_profile_section_has_required_fields():
     rc, stdout, _ = _run_cli(str(sample), "--json", "--profile")
     assert rc == 0
     profiling = json.loads(stdout)["profiling"]
-    for field in ("wall_clock_s", "cpu_user_s", "cpu_system_s", "peak_memory_mb",
-                  "top_functions", "prof_file"):
+    for field in (
+        "wall_clock_s",
+        "cpu_user_s",
+        "cpu_system_s",
+        "peak_memory_mb",
+        "top_functions",
+        "prof_file",
+    ):
         assert field in profiling, f"Missing field: {field}"
 
 
@@ -753,9 +770,12 @@ def test_profile_top_n_flag():
 def test_profile_output_flag(tmp_path):
     sample = _get_sample()
     prof_path = str(tmp_path / "out.prof")
-    rc, stdout, _ = _run_cli(str(sample), "--json", "--profile", "--profile-output", prof_path)
+    rc, stdout, _ = _run_cli(
+        str(sample), "--json", "--profile", "--profile-output", prof_path
+    )
     assert rc == 0
     import os
+
     assert os.path.exists(prof_path)
     assert json.loads(stdout)["profiling"]["prof_file"] == prof_path
 

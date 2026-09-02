@@ -3,15 +3,14 @@ Tests for the JCL IF condition parser (condition_parser.py).
 """
 
 from jclparser.condition_parser import (
-    parse_condition,
-    ReturnCodeCondition,
     AbendCondition,
-    RunCondition,
-    NotCondition,
     AndCondition,
+    NotCondition,
     OrCondition,
+    ReturnCodeCondition,
+    RunCondition,
+    parse_condition,
 )
-
 
 # ---------------------------------------------------------------------------
 # parse_condition — structural tests

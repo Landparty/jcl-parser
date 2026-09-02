@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import re
 
-from .base import ProgramProfile, ProgramAnalysis, _sysin_text
 from ..dataset_lifecycle import DatasetEvent
+from .base import ProgramAnalysis, ProgramProfile, _sysin_text
 
 _RE_DELETE = re.compile(
     r"^\s*DELETE\s+([A-Z0-9.@#$\-']+)", re.IGNORECASE | re.MULTILINE

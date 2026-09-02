@@ -11,22 +11,21 @@ Tests for the six new parser features:
 
 from jclparser import parse_jcl
 from jclparser.condition_parser import (
-    parse_condition,
-    ReturnCodeCondition,
     AbendCondition,
+    ReturnCodeCondition,
     RunCondition,
-)
-from jclparser.include_loader import (
-    DictMemberLoader,
-    resolve_includes,
-    _extract_include_member,
+    parse_condition,
 )
 from jclparser.dataset_lifecycle import (
     analyze_dataset_lifecycle,
     validate_dataset_lifecycle,
 )
+from jclparser.include_loader import (
+    DictMemberLoader,
+    _extract_include_member,
+    resolve_includes,
+)
 from jclparser.model import OutputStatement
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Typed JOB parameter properties

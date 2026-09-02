@@ -1,6 +1,6 @@
 ---
 title: Data Model
-updated: 2026-06-27
+updated: 2026-09-02
 sources: LegacyLens team, 2026-06-27
 ---
 
@@ -18,6 +18,10 @@ Job
 ├── steps: list[Step | ConditionalBlock]
 ├── procedures: list[Procedure]        # Inline PROCs (PROC…PEND blocks)
 ├── output_statements: list[OutputStatement]
+├── control_statements: list[Statement]  # COMMAND / SCHEDULE / CNTL (CNTL keeps
+│                                        # its block's records in ["_records"])
+├── jes_statements: list[str]           # /*JOBPARM, //*MAIN, ... raw text
+├── jes_typed_statements: list[Any]     # same, promoted to typed models
 ├── errors: list[ParseError]
 └── warnings: list[ParseError]
 
@@ -84,13 +88,13 @@ Parameter
 
 ```python
 # All importable from jclparser
-ConditionNode           # abstract base
-ReturnCodeCondition     # RC(step) comparison — RC(STEP1) LT 8
-AbendCondition          # ABEND(step)
-RunCondition            # RUN(step)
-NotCondition            # NOT(condition)
-AndCondition            # condition AND condition
-OrCondition             # condition OR condition
+ConditionNode  # abstract base
+ReturnCodeCondition  # RC(step) comparison — RC(STEP1) LT 8
+AbendCondition  # ABEND(step)
+RunCondition  # RUN(step)
+NotCondition  # NOT(condition)
+AndCondition  # condition AND condition
+OrCondition  # condition OR condition
 ```
 
 ## Source Modules

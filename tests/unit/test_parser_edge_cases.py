@@ -9,16 +9,18 @@ This module tests uncovered edge cases identified in the coverage audit:
 - Escaped quotes in list parameters
 """
 
-import pytest
 from pathlib import Path
-from jclparser.parser import (
-    parse_jcl,
-    validate_jcl,
-    parse_statement,
-    _parse_parameters,
-    _parse_list_parameter,
-)
+
+import pytest
+
 from jclparser.errors import JCLSyntaxError
+from jclparser.parser import (
+    _parse_list_parameter,
+    _parse_parameters,
+    parse_jcl,
+    parse_statement,
+    validate_jcl,
+)
 
 
 class TestContinuationLineEdgeCases:

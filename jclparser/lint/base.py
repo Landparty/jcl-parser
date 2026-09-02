@@ -11,9 +11,10 @@ Rules are run via :func:`jclparser.lint.runner.lint_job`.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Iterable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
-from ..errors import ValidationError, ErrorSeverity, ErrorType
+from ..errors import ErrorSeverity, ErrorType, ValidationError
 
 if TYPE_CHECKING:
     from ..model import Job
@@ -33,7 +34,7 @@ class LintRule(ABC):
     error_type: ErrorType = ErrorType.SEMANTIC_ERROR
 
     @abstractmethod
-    def check(self, job: "Job", config: "LintConfig") -> Iterable[ValidationError]:
+    def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
         """Yield findings for *job* under *config*."""
         raise NotImplementedError
 
@@ -42,7 +43,7 @@ class LintRule(ABC):
         message: str,
         *,
         line_number: int | None = None,
-        config: "LintConfig | None" = None,
+        config: LintConfig | None = None,
     ) -> ValidationError:
         """Helper: build a ValidationError tagged with this rule's code."""
         severity = self.default_severity

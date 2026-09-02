@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from .condition_parser import ConditionNode
-from .model import iter_execution_steps, ConditionalBlock, Step
+from .model import ConditionalBlock, Step, iter_execution_steps
 
 if TYPE_CHECKING:
     from .model import Job
@@ -54,7 +54,7 @@ class FeasibilityReport:
         )
 
 
-def _collect_predecessors(job: "Job") -> list[str]:
+def _collect_predecessors(job: Job) -> list[str]:
     """Return the ordered list of predecessor step names for analysis."""
     names: list[str] = []
     for step in iter_execution_steps(job.steps):
@@ -139,7 +139,7 @@ def _evaluate_over_domain(
 
 
 def compute_feasible_paths(
-    job: "Job",
+    job: Job,
     rc_domain: tuple[int, ...] = DEFAULT_RC_DOMAIN,
     include_abends: bool = True,
 ) -> FeasibilityReport:

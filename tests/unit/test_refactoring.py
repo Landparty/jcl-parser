@@ -21,7 +21,7 @@ class TestExplodeStepJcllibOrder:
     def test_jcllib_order_forwarded_to_loader(self):
         """jcllib_order from the job is forwarded to proc_loader.load_procedure."""
         from jclparser.explosion import _explode_step
-        from jclparser.model import Step, Procedure
+        from jclparser.model import Procedure, Step
         from jclparser.proc_loader import ProcedureLoader
 
         captured = {}
@@ -56,10 +56,9 @@ class TestExplodeStepJcllibOrder:
 
     def test_jcllib_order_none_when_not_provided(self):
         """If no jcllib_order is given, load_procedure receives None."""
-        from jclparser.explosion import _explode_step
-        from jclparser.model import Step, Procedure
+        from jclparser.explosion import SymbolScope, _explode_step
+        from jclparser.model import Procedure, Step
         from jclparser.proc_loader import ProcedureLoader
-        from jclparser.explosion import SymbolScope
 
         captured = {}
 
@@ -87,13 +86,12 @@ class TestExplodeStepJcllibOrder:
 
     def test_jcllib_order_list_forwarded_as_tuple(self):
         """jcllib_order is always forwarded as tuple (hashable) for LRU-cache loaders."""
-        from jclparser.explosion import _explode_step
-        from jclparser.model import Step, Procedure
+        from jclparser.explosion import SymbolScope, _explode_step
+        from jclparser.model import Procedure, Step
         from jclparser.proc_loader import (
             CompositeProcedureLoader,
             InlineProcedureLoader,
         )
-        from jclparser.explosion import SymbolScope
 
         proc = Procedure(name="MYPROC", steps=[Step("INNER", program="PGM1")])
         loader = CompositeProcedureLoader([InlineProcedureLoader([proc])])
@@ -317,6 +315,7 @@ class TestStatementTypesConstant:
         import ast
         import inspect
         import textwrap
+
         from jclparser import parser
 
         source = inspect.getsource(parser.parse_statement)
@@ -465,8 +464,8 @@ class TestJobValidateDelegation:
 
     def test_includes_data_dependency_errors(self):
         """Temporary dataset used without being created should now surface."""
-        from jclparser.model import Job, Step, DDStatement
         from jclparser.errors import ErrorType
+        from jclparser.model import DDStatement, Job, Step
 
         job = Job("MYJOB")
         step = Step("STEP1", program="IEBGENER")

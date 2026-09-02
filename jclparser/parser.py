@@ -25,17 +25,37 @@ import logging
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Literal, overload
 
-from ._job_builder import (
+# Backward-compatible re-exports: these helpers historically lived in this
+# module and are imported from ``jclparser.parser`` by tests and downstream
+# code. Keep them importable from here.
+from ._job_builder import (  # noqa: F401
+    _SET_SYMBOL_PATTERN,
     JobBuilder,
+    _create_dd_from_statement,
+    _create_job_from_statement,
+    _create_step_from_statement,
+    _exec_has_program_spec,
+    _extract_output_ref_names,
+    _has_unresolved_symbol_ref,
     _resolve_output_refs,
+    _resolve_set_value,
     enforce_strict_dd_structure,
     load_external_procedures,
     resolve_set_symbols,
 )
-from ._statement_parser import (
+from ._statement_parser import (  # noqa: F401
+    _OPERATOR_PREFIXES,
+    _RE_HAS_INCLUDE,
+    _STATEMENT_TYPES,
+    _check_param_balance,
     _extract_jcllib_order,
+    _find_keyword_eq,
     _has_include_statement,
+    _operand_field,
+    _parse_list_parameter,
+    _parse_parameters,
     parse_statement,
+    statement_operation,
 )
 from .continuation_handler import ContinuationLineHandler
 from .errors import (
@@ -46,42 +66,23 @@ from .errors import (
     JCLValidationError,
     ParseError,
 )
-from .model import Job
-from .plugins import ParserConfig, get_plugin_registry
-from .profiling import ProfilerContext, ProfilingResult
-from .utils import is_positional_key, normalize_jcl_line, read_source
-
-# Backward-compatible re-exports: these helpers historically lived in this
-# module and are imported from ``jclparser.parser`` by tests and downstream
-# code. Keep them importable from here.
-from ._job_builder import (  # noqa: F401
-    _SET_SYMBOL_PATTERN,
-    _create_dd_from_statement,
-    _create_job_from_statement,
-    _create_step_from_statement,
-    _exec_has_program_spec,
-    _extract_output_ref_names,
-    _has_unresolved_symbol_ref,
-    _resolve_set_value,
-)
-from ._statement_parser import (  # noqa: F401
-    _OPERATOR_PREFIXES,
-    _RE_HAS_INCLUDE,
-    _STATEMENT_TYPES,
-    _check_param_balance,
-    _find_keyword_eq,
-    _parse_list_parameter,
-    _parse_parameters,
-)
 from .model import (  # noqa: F401
     ConditionalBlock,
     DDStatement,
+    Job,
     OutputStatement,
     Procedure,
     Statement,
     Step,
 )
-from .utils import POSITIONAL_PARAM_PREFIX  # noqa: F401
+from .plugins import ParserConfig, get_plugin_registry
+from .profiling import ProfilerContext, ProfilingResult
+from .utils import (
+    POSITIONAL_PARAM_PREFIX,  # noqa: F401
+    is_positional_key,
+    normalize_jcl_line,
+    read_source,
+)
 
 if TYPE_CHECKING:
     from .include_loader import IncludeMemberLoader
@@ -89,14 +90,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _merge_source_lines(content: str) -> tuple[list[tuple[str, int]], set[int]]:
+def _merge_source_lines(
+    content: str,
+) -> tuple[list[tuple[str, int]], set[int], set[int], list[str]]:
     """Normalize, mark in-stream data, and merge continuation lines.
 
-    Returns ``(merged_lines, inline_data_indices)`` where *merged_lines* is a
-    list of ``(line, 1-based line number)`` pairs ready for the parse loop and
-    *inline_data_indices* is the set of 0-based original indices that belong
-    to in-stream (``DD *`` / ``DD DATA``) data blocks and must never be parsed
-    as JCL statements.
+    Returns ``(merged_lines, inline_data_indices, control_data_indices,
+    source_warnings)`` where *merged_lines* is a list of ``(line, 1-based line
+    number)`` pairs ready for the parse loop, *inline_data_indices* is the set
+    of 0-based original indices that belong to in-stream (``DD *`` / ``DD
+    DATA``) data blocks, *control_data_indices* is the set of 0-based indices
+    holding the program control records of a ``CNTL``/``ENDCNTL`` block — both
+    of which must never be parsed as JCL statements — and *comment_warnings*
+    reports comment fields that were stripped off statements but still looked
+    like operands (truncated or garbled records).
     """
     raw_lines = content.splitlines()
     lines = [normalize_jcl_line(line) for line in raw_lines]
@@ -105,9 +112,13 @@ def _merge_source_lines(content: str) -> tuple[list[tuple[str, int]], set[int]]:
     # Simultaneously records which original indices are inline data
     # and builds the non-inline list for continuation merging.
     inline_data_indices: set[int] = set()
+    control_data_indices: set[int] = set()
     non_inline_lines: list[str] = []
     non_inline_orig_indices: list[int] = []  # parallel to non_inline_lines
     in_inline_data = False
+    in_cntl_block = False
+    cntl_start_line = 0
+    source_warnings: list[str] = []
     delimiter = "/*"
     # When the current in-stream dataset was opened with ``DD *`` (and *no*
     # custom ``DLM=``), z/OS terminates the data at the next record beginning
@@ -132,32 +143,61 @@ def _merge_source_lines(content: str) -> tuple[list[tuple[str, int]], set[int]]:
             else:
                 inline_data_indices.add(i)
                 continue
+        if in_cntl_block:
+            # Records between CNTL and ENDCNTL are program control statements
+            # handed to the program, not JCL: they must not be merged as
+            # continuations nor parsed.  ENDCNTL closes the block; so does any
+            # record that is unmistakably a JCL statement, so an unterminated
+            # CNTL cannot swallow the rest of the job (that gets a warning).
+            cntl_operation = statement_operation(line)
+            if cntl_operation == "ENDCNTL":
+                in_cntl_block = False
+            elif cntl_operation in _STATEMENT_TYPES:
+                in_cntl_block = False
+                source_warnings.append(
+                    f"Line {cntl_start_line}: CNTL block has no matching ENDCNTL; "
+                    f"ended at the {cntl_operation} statement on line {i + 1}"
+                )
+            else:
+                control_data_indices.add(i)
+                continue
         if (
             line.strip()
             and line.startswith("//")
             and not line.strip().startswith("//*")
         ):
             upper_line = line.upper()
-            if " DD " in upper_line or " DD*" in upper_line or "\tDD\t" in upper_line:
-                is_star = (
-                    " DD *" in upper_line
-                    or " DD*" in upper_line
-                    or "\tDD\t*" in upper_line
-                )
-                has_dlm = ",DLM=" in upper_line
-                if is_star or " DD DATA" in upper_line or has_dlm:
-                    delimiter = "/*"
-                    if "DLM=" in upper_line:
-                        dlm_start = upper_line.index("DLM=") + 4
-                        dlm_end = dlm_start
-                        while (
-                            dlm_end < len(upper_line)
-                            and upper_line[dlm_end] not in ",) \t\r\n"
-                        ):
-                            dlm_end += 1
-                        delimiter = line[dlm_start:dlm_end]
-                    in_inline_data = True
-                    terminates_on_slash = is_star and not has_dlm
+            if "CNTL" in upper_line and statement_operation(line) == "CNTL":
+                in_cntl_block = True
+                cntl_start_line = i + 1
+            # In-stream data starts at ``DD *`` / ``DD DATA`` / any DD with an
+            # explicit DLM=.  The operand field is located by tokenizing the
+            # record — the same way the JobBuilder reads it — so that spacing
+            # ("//SYSIN    DD    *") can never make the two disagree and leave
+            # data records to be parsed as JCL.
+            if "DD" in upper_line:
+                dd_field = _operand_field(line)
+                if dd_field is not None and dd_field[1] == "DD":
+                    operands = line[dd_field[0] :]
+                    first_operand = operands.split(",", 1)[0].strip().upper()
+                    is_star = first_operand == "*"
+                    upper_operands = operands.upper()
+                    has_dlm = "DLM=" in upper_operands
+                    if is_star or first_operand == "DATA" or has_dlm:
+                        delimiter = "/*"
+                        if has_dlm:
+                            dlm_start = upper_operands.index("DLM=") + 4
+                            dlm_end = dlm_start
+                            while (
+                                dlm_end < len(upper_operands)
+                                and upper_operands[dlm_end] not in ",) \t\r\n"
+                            ):
+                                dlm_end += 1
+                            delimiter = operands[dlm_start:dlm_end]
+                            if delimiter.startswith("'") and delimiter.endswith("'"):
+                                delimiter = delimiter[1:-1]
+                        in_inline_data = True
+                        terminates_on_slash = is_star and not has_dlm
         non_inline_lines.append(line)
         non_inline_orig_indices.append(i)
 
@@ -175,12 +215,20 @@ def _merge_source_lines(content: str) -> tuple[list[tuple[str, int]], set[int]]:
 
     merged_lines: list[tuple[str, int]] = []
     for i, line in enumerate(lines):
-        if i in inline_data_indices:
+        if i in inline_data_indices or i in control_data_indices:
             merged_lines.append((line, i + 1))
         elif i in merged_start:
             merged_lines.append((merged_start[i], i + 1))
 
-    return merged_lines, inline_data_indices
+    # Map the handler's suspect comment fields back to original line numbers.
+    source_warnings.extend(
+        f"Line {non_inline_orig_indices[ni_line_num - 1] + 1}: text after the "
+        f"operand field ignored as a comment, but it looks like operands: "
+        f"{comment!r}"
+        for ni_line_num, comment in handler.suspect_comments
+    )
+
+    return merged_lines, inline_data_indices, control_data_indices, source_warnings
 
 
 def _parse_jcl_core(
@@ -189,21 +237,18 @@ def _parse_jcl_core(
     config: ParserConfig | None = None,
     proc_base_path: str | Path | None = None,
     enable_external_procs: bool = True,
-    include_loader: "IncludeMemberLoader | None" = None,
+    include_loader: IncludeMemberLoader | None = None,
 ) -> Job:
     """Core parsing implementation. See parse_jcl() for full documentation."""
-    # Handle different input source types
-    try:
-        content = read_source(source)
-    except FileNotFoundError:
-        raise
+    # Handle different input source types (FileNotFoundError propagates)
+    content = read_source(source)
 
     # Expand INCLUDE MEMBER= statements before the main parse loop so that
     # inlined content participates in continuation-line merging and everything
     # else that follows.
     _expanded_includes: list[str] = []
     if _has_include_statement(content):
-        from .include_loader import resolve_includes, JCLLIBMemberLoader
+        from .include_loader import JCLLIBMemberLoader, resolve_includes
 
         if include_loader is None:
             include_loader = JCLLIBMemberLoader(base_path=proc_base_path)
@@ -225,7 +270,12 @@ def _parse_jcl_core(
         )
 
     # Normalize the content and merge continuation lines
-    merged_lines, inline_data_indices = _merge_source_lines(content)
+    (
+        merged_lines,
+        inline_data_indices,
+        control_data_indices,
+        source_warnings,
+    ) = _merge_source_lines(content)
 
     # Now parse the merged lines; the builder holds all loop state and has
     # one handler per statement type (see jclparser/_job_builder.py).
@@ -245,6 +295,12 @@ def _parse_jcl_core(
         if (line_num - 1) in inline_data_indices:
             continue
 
+        # Program control records inside a CNTL/ENDCNTL block are kept with
+        # the CNTL statement rather than parsed as JCL.
+        if (line_num - 1) in control_data_indices:
+            builder.handle_control_data(line)
+            continue
+
         # Parse the statement
         stmt = parse_statement(line, line_num)
         if not stmt:
@@ -254,6 +310,11 @@ def _parse_jcl_core(
         builder.handle_statement(stmt, line_num)
 
     job = builder.finish()
+
+    # Anything the line-classification pass discarded or repaired (a comment
+    # field that looked like operands, an unterminated CNTL block) is reported
+    # rather than dropped without a trace.
+    job.warnings.extend(source_warnings)
 
     # Create and attach procedure loader for external PROC loading
     load_external_procedures(
@@ -338,7 +399,7 @@ def parse_jcl(
     config: ParserConfig | None = ...,
     proc_base_path: str | Path | None = ...,
     enable_external_procs: bool = ...,
-    include_loader: "IncludeMemberLoader | None" = ...,
+    include_loader: IncludeMemberLoader | None = ...,
     enable_profiling: Literal[False] = ...,
     top_n: int = ...,
     prof_output: str | None = ...,
@@ -352,7 +413,7 @@ def parse_jcl(
     config: ParserConfig | None = ...,
     proc_base_path: str | Path | None = ...,
     enable_external_procs: bool = ...,
-    include_loader: "IncludeMemberLoader | None" = ...,
+    include_loader: IncludeMemberLoader | None = ...,
     enable_profiling: Literal[True] = ...,
     top_n: int = ...,
     prof_output: str | None = ...,
@@ -365,11 +426,11 @@ def parse_jcl(
     config: ParserConfig | None = None,
     proc_base_path: str | Path | None = None,
     enable_external_procs: bool = True,
-    include_loader: "IncludeMemberLoader | None" = None,
+    include_loader: IncludeMemberLoader | None = None,
     enable_profiling: bool = False,
     top_n: int = 50,
     prof_output: str | None = None,
-) -> "Job | tuple[Job, ProfilingResult]":
+) -> Job | tuple[Job, ProfilingResult]:
     """
     Parse JCL script from various input sources into structured Job object.
 

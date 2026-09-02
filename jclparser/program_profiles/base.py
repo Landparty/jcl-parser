@@ -65,12 +65,12 @@ class ProgramProfile(ABC):
         return program_name.upper() in self.program_names
 
     @abstractmethod
-    def analyze(self, step: "Step") -> ProgramAnalysis:
+    def analyze(self, step: Step) -> ProgramAnalysis:
         """Analyse *step* and return a :class:`ProgramAnalysis`."""
         raise NotImplementedError
 
 
-def _sysin_text(step: "Step") -> str | None:
+def _sysin_text(step: Step) -> str | None:
     """Return the inline data from the step's SYSIN DD, or None if absent."""
     dd = step.get_dd("SYSIN")
     if dd is None or not dd.inline_data:

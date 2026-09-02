@@ -7,11 +7,12 @@ that handles ConditionalBlock objects within procedure steps.
 """
 
 import pytest
-from jclparser.parser import parse_jcl
+
 from jclparser.model import (
-    Step,
     ConditionalBlock,
+    Step,
 )
+from jclparser.parser import parse_jcl
 
 
 @pytest.mark.unit

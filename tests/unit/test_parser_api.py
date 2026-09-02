@@ -5,14 +5,16 @@ These tests define the expected behavior of the core parsing functions.
 All tests should FAIL initially, then pass as implementation is added.
 """
 
-import pytest
-from pathlib import Path
 from io import StringIO
+from pathlib import Path
+
+import pytest
+
+from jclparser.errors import JCLSyntaxError, ParseError
+from jclparser.model import Job
 
 # Import the modules we expect to exist
-from jclparser.parser import parse_jcl, validate_jcl, parse_statement
-from jclparser.model import Job
-from jclparser.errors import JCLSyntaxError, ParseError
+from jclparser.parser import parse_jcl, parse_statement, validate_jcl
 
 
 class TestParseJCLFunction:

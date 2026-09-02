@@ -48,8 +48,8 @@ except ProcedureNotFoundError as e:
 # Audit Data (when audit=True)
 
 ```python
-exploded.explosion_audit   # list of audit entries
-exploded.explosion_map     # dict[step_name → proc_name]
+exploded.explosion_audit  # list of audit entries
+exploded.explosion_map  # dict[step_name → proc_name]
 
 # Each entry:
 entry.step_name, entry.proc_name, entry.parameters, entry.depth, entry.expanded_steps

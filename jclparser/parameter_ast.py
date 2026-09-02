@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -87,14 +87,12 @@ class DCBParameter(NestedParameter):
         errors = []
 
         # Validate RECFM
-        if self.recfm:
-            if self.recfm not in _VALID_RECFM:
-                errors.append(f"Invalid RECFM value: {self.recfm}")
+        if self.recfm and self.recfm not in _VALID_RECFM:
+            errors.append(f"Invalid RECFM value: {self.recfm}")
 
         # Validate LRECL
-        if self.lrecl is not None:
-            if self.lrecl < 1 or self.lrecl > 32760:
-                errors.append(f"LRECL out of range (1-32760): {self.lrecl}")
+        if self.lrecl is not None and (self.lrecl < 1 or self.lrecl > 32760):
+            errors.append(f"LRECL out of range (1-32760): {self.lrecl}")
 
         # Validate BLKSIZE
         if self.blksize is not None:
@@ -102,17 +100,20 @@ class DCBParameter(NestedParameter):
                 errors.append(f"BLKSIZE out of range (1-32760): {self.blksize}")
 
             # BLKSIZE should be multiple of LRECL for fixed-length records
-            if self.lrecl and self.recfm and self.recfm.startswith("F"):
-                if self.blksize % self.lrecl != 0:
-                    errors.append(
-                        f"BLKSIZE ({self.blksize}) should be multiple of "
-                        f"LRECL ({self.lrecl}) for fixed-length records"
-                    )
+            if (
+                self.lrecl
+                and self.recfm
+                and self.recfm.startswith("F")
+                and self.blksize % self.lrecl != 0
+            ):
+                errors.append(
+                    f"BLKSIZE ({self.blksize}) should be multiple of "
+                    f"LRECL ({self.lrecl}) for fixed-length records"
+                )
 
         # Validate DSORG
-        if self.dsorg:
-            if self.dsorg not in _VALID_DSORG:
-                errors.append(f"Invalid DSORG value: {self.dsorg}")
+        if self.dsorg and self.dsorg not in _VALID_DSORG:
+            errors.append(f"Invalid DSORG value: {self.dsorg}")
 
         return errors
 
@@ -260,7 +261,7 @@ class ParameterParser:
         if space_string.startswith("(") and space_string.endswith(")"):
             space_string = space_string[1:-1]
 
-        subparams: Dict[str, Any] = {}
+        subparams: dict[str, Any] = {}
 
         # Split by comma
         parts = self._split_parameters(space_string)

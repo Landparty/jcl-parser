@@ -2,10 +2,12 @@
 Additional comprehensive tests for jclparser.parser module.
 """
 
-import pytest
 from io import StringIO
-from jclparser.parser import parse_jcl, parse_statement
+
+import pytest
+
 from jclparser.errors import JCLSyntaxError, JCLValidationError
+from jclparser.parser import parse_jcl, parse_statement
 
 
 class TestParseStatement:

@@ -47,8 +47,8 @@ from jclparser import validate_dd_statement, validate_step_structure
 from jclparser import validate_jcl_identifier, validate_dataset_name
 
 errors = validate_dd_statement(dd)
-ok, msg = validate_jcl_identifier("MYJOB")      # True, None
-ok, msg = validate_dataset_name("SYS1.PARMLIB") # True, None
+ok, msg = validate_jcl_identifier("MYJOB")  # True, None
+ok, msg = validate_dataset_name("SYS1.PARMLIB")  # True, None
 ```
 
 # Error Object Fields
@@ -78,7 +78,9 @@ ok, msg = validate_dataset_name("SYS1.PARMLIB") # True, None
 from jclparser import validate_dataset_lifecycle, analyze_dataset_lifecycle
 
 events = analyze_dataset_lifecycle(job)  # list[DatasetEvent]
-issues = validate_dataset_lifecycle(job) # list[ValidationError] — catches disposed-before-use, etc.
+issues = validate_dataset_lifecycle(
+    job
+)  # list[ValidationError] — catches disposed-before-use, etc.
 ```
 
 # Lint Rules (SARIF output)

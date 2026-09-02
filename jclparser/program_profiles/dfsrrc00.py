@@ -17,7 +17,7 @@ running, not just the region controller.
 
 from __future__ import annotations
 
-from .base import ProgramProfile, ProgramAnalysis
+from .base import ProgramAnalysis, ProgramProfile
 
 
 class DFSRRC00Profile(ProgramProfile):

@@ -40,6 +40,17 @@ class JobParmStatement(JESControlStatement):
 
 
 @dataclass
+class Jes3ControlStatement(JESControlStatement):
+    """A JES3 ``//*COMMAND`` control statement (``//*MAIN``, ``//*FORMAT``, ...).
+
+    ``parameters`` holds the keyword operands that could be split out; ``raw``
+    always carries the statement text after ``//*``.
+    """
+
+    parameters: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class RouteStatement(JESControlStatement):
     """``/*ROUTE`` — route SYSOUT / job output.
 
@@ -236,6 +247,62 @@ def parse_jes_control(command: str, params: str, line_number: int = 0) -> Any:
     return None
 
 
+#: JES3 control statements, written ``//*COMMAND ...`` with the command
+#: starting immediately after ``//*`` (a blank there makes it an ordinary
+#: comment).  ``//*ROUTE XEQ`` has its own typed model; the rest are captured
+#: generically so they are not mistaken for comments and dropped.
+JES3_COMMANDS: frozenset[str] = frozenset(
+    {
+        "MAIN",
+        "FORMAT",
+        "NET",
+        "NETACCT",
+        "OPERATOR",
+        "PAUSE",
+        "PROCESS",
+        "ENDPROCESS",
+        "DATASET",
+        "ENDDATASET",
+        "ROUTE",
+        "SIGNOFF",
+        "SIGNON",
+    }
+)
+
+
+def parse_jes3_control(comment_line: str, line_number: int = 0) -> Any:
+    """Recognise a JES3 ``//*COMMAND`` control statement.
+
+    JES3 control statements share the ``//*`` prefix with ordinary comments,
+    so they are told apart by the command token starting in column 4 with no
+    intervening blank (``//*MAIN CLASS=A``, not ``//* MAIN PROCESSING``).
+
+    Returns a typed statement, or ``None`` when *comment_line* is an ordinary
+    comment.
+    """
+    stripped = comment_line.strip()
+    if not stripped.startswith("//*"):
+        return None
+    body = stripped[3:]
+    if not body or body[0].isspace():
+        return None
+    parts = body.split(None, 1)
+    command = parts[0].upper()
+    if command not in JES3_COMMANDS:
+        return None
+    params = parts[1].strip() if len(parts) > 1 else ""
+    if command == "ROUTE":
+        route = parse_jes3_route_xeq(comment_line, line_number)
+        if route is not None:
+            return route
+    return Jes3ControlStatement(
+        name=parts[0],
+        raw=body.strip(),
+        line_number=line_number,
+        parameters=_split_keyword_params(params),
+    )
+
+
 def parse_jes3_route_xeq(
     comment_line: str, line_number: int = 0
 ) -> Jes3RouteXeqStatement | None:
@@ -261,16 +328,19 @@ def parse_jes3_route_xeq(
 
 
 __all__ = [
+    "JES3_COMMANDS",
     "JESControlStatement",
+    "Jes3ControlStatement",
+    "Jes3RouteXeqStatement",
     "JobParmStatement",
-    "RouteStatement",
-    "XmitStatement",
-    "SignonStatement",
     "MessageStatement",
     "NetacctStatement",
     "NotifyStatement",
     "PriorityStatement",
-    "Jes3RouteXeqStatement",
-    "parse_jes_control",
+    "RouteStatement",
+    "SignonStatement",
+    "XmitStatement",
+    "parse_jes3_control",
     "parse_jes3_route_xeq",
+    "parse_jes_control",
 ]

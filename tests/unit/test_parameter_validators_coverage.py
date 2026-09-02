@@ -6,10 +6,9 @@ edge cases (SER= prefix, invalid chars).
 """
 
 from jclparser.parameter_validators import (
-    DISPValidator,
     DatasetNameValidator,
+    DISPValidator,
 )
-
 
 # ---------------------------------------------------------------------------
 # DISPValidator edge cases — lines 74-75

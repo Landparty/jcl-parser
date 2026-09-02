@@ -5,8 +5,9 @@ Run with: pytest tests/benchmarks/ --benchmark-only
 """
 
 import pytest
+
 from jclparser import parse_jcl, validate_jcl
-from jclparser.explosion import explode_job, substitute_symbols, SymbolScope
+from jclparser.explosion import SymbolScope, explode_job, substitute_symbols
 from jclparser.parameter_ast import ParameterParser
 
 # ---------------------------------------------------------------------------

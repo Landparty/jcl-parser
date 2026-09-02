@@ -22,28 +22,27 @@ from unittest.mock import patch
 import pytest
 
 from jclparser import (
-    Job,
-    Step,
     DDStatement,
-    Statement,
-    ParseError,
-    ErrorType,
     ErrorSeverity,
+    ErrorType,
+    JCLStructureError,
     JCLSyntaxError,
     JCLValidationError,
-    JCLStructureError,
+    Job,
+    ParseError,
+    Statement,
+    Step,
     parse_jcl,
-    validate_jcl,
     parse_statement,
-)
-from jclparser.model import (
-    Procedure,
-    ConditionalBlock,
-    iter_execution_steps,
+    validate_jcl,
 )
 from jclparser.explosion import explode_job
+from jclparser.model import (
+    ConditionalBlock,
+    Procedure,
+    iter_execution_steps,
+)
 from jclparser.utils import _read_file_with_fallback, read_source
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Contract tests for Tier 1 API
@@ -483,6 +482,7 @@ class TestMainModule:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         assert result.returncode == 0
         assert "usage" in result.stdout.lower() or "jclparser" in result.stdout.lower()
@@ -493,6 +493,7 @@ class TestMainModule:
             [sys.executable, "-m", "jclparser", "/nonexistent/path.jcl"],
             capture_output=True,
             text=True,
+            check=False,
             timeout=10,
         )
         assert result.returncode != 0

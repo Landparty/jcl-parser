@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import re
 
-from .base import ProgramProfile, ProgramAnalysis
 from ._invoked import collect_control_text, invoked_and_sql_notes
+from .base import ProgramAnalysis, ProgramProfile
 
 _RE_DSN = re.compile(r"\bDSN\s+SYSTEM\s*\(\s*([A-Z0-9]+)\s*\)", re.IGNORECASE)
 _RE_BIND = re.compile(r"\bBIND\s+(?:PACKAGE|PLAN)\b", re.IGNORECASE)

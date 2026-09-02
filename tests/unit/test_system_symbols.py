@@ -5,10 +5,10 @@ Unit tests for system symbol providers.
 from datetime import datetime
 
 from jclparser.system_symbols import (
-    SystemSymbolProvider,
+    EnvironmentSystemSymbolProvider,
     MockSystemSymbolProvider,
     RuntimeSystemSymbolProvider,
-    EnvironmentSystemSymbolProvider,
+    SystemSymbolProvider,
     get_default_provider,
     set_default_provider,
 )

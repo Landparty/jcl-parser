@@ -5,8 +5,8 @@ Provides validation for common JCL parameter values like DISP, dataset names, et
 """
 
 import re
-from typing import ClassVar, List, Set
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 # Module-level frozenset for dataset-qualifier character validation
 # (avoids per-call set construction).
@@ -18,24 +18,24 @@ class ValidationResult:
     """Result of a validation check."""
 
     is_valid: bool
-    errors: List[str]
-    warnings: List[str] = field(default_factory=list)
+    errors: list[str]
+    warnings: list[str] = field(default_factory=list)
 
     @classmethod
-    def valid(cls, warnings: List[str] | None = None) -> "ValidationResult":
+    def valid(cls, warnings: list[str] | None = None) -> "ValidationResult":
         """Return a passing result, with optional warnings."""
         return cls(is_valid=True, errors=[], warnings=warnings or [])
 
     @classmethod
     def invalid(
-        cls, errors: List[str], warnings: List[str] | None = None
+        cls, errors: list[str], warnings: list[str] | None = None
     ) -> "ValidationResult":
         """Return a failing result with the supplied error messages."""
         return cls(is_valid=False, errors=errors, warnings=warnings or [])
 
     @classmethod
     def from_errors(
-        cls, errors: List[str], warnings: List[str] | None = None
+        cls, errors: list[str], warnings: list[str] | None = None
     ) -> "ValidationResult":
         """Return valid when *errors* is empty, invalid otherwise."""
         return cls(is_valid=len(errors) == 0, errors=errors, warnings=warnings or [])
@@ -51,15 +51,15 @@ class DISPValidator:
     - abnormal-termination: DELETE, KEEP, CATLG, UNCATLG
     """
 
-    VALID_STATUS: ClassVar[Set[str]] = {"NEW", "OLD", "SHR", "MOD"}
-    VALID_NORMAL_TERM: ClassVar[Set[str]] = {
+    VALID_STATUS: ClassVar[set[str]] = {"NEW", "OLD", "SHR", "MOD"}
+    VALID_NORMAL_TERM: ClassVar[set[str]] = {
         "DELETE",
         "KEEP",
         "CATLG",
         "UNCATLG",
         "PASS",
     }
-    VALID_ABNORMAL_TERM: ClassVar[Set[str]] = {"DELETE", "KEEP", "CATLG", "UNCATLG"}
+    VALID_ABNORMAL_TERM: ClassVar[set[str]] = {"DELETE", "KEEP", "CATLG", "UNCATLG"}
 
     # Precomputed sorted join strings (built once at class definition time)
     _VALID_STATUS_STR: ClassVar[str] = ", ".join(sorted(VALID_STATUS))
@@ -78,7 +78,7 @@ class DISPValidator:
             ValidationResult with errors and warnings
         """
         errors = []
-        warnings: List[str] = []
+        warnings: list[str] = []
 
         if not disp_value:
             return ValidationResult.valid()
@@ -111,11 +111,10 @@ class DISPValidator:
                 )
 
         # Validate abnormal termination (third parameter)
-        if len(parts) >= 3 and parts[2]:
-            if parts[2] not in cls.VALID_ABNORMAL_TERM:
-                errors.append(
-                    f"Invalid DISP abnormal termination: {parts[2]}. Valid values: {cls._VALID_ABNORMAL_TERM_STR}"
-                )
+        if len(parts) >= 3 and parts[2] and parts[2] not in cls.VALID_ABNORMAL_TERM:
+            errors.append(
+                f"Invalid DISP abnormal termination: {parts[2]}. Valid values: {cls._VALID_ABNORMAL_TERM_STR}"
+            )
 
         # Too many parameters
         if len(parts) > 3:
@@ -164,7 +163,7 @@ class DatasetNameValidator:
             ValidationResult with errors and warnings
         """
         errors = []
-        warnings: List[str] = []
+        warnings: list[str] = []
 
         if not dsn:
             errors.append("Dataset name is empty")

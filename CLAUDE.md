@@ -112,13 +112,14 @@ Set `JCL_PROCLIB_PATH` env var or pass `proc_base_path` to `parse_jcl()`. Layout
 ## Key Invariants
 
 1. **`parse_jcl()` does not expand PROCs** — call `explode_job()` separately when you need explosion.
-2. **Column 71 is the continuation boundary** — content past col 71 is sequence/ignored; `ContinuationLineHandler` enforces this. Never pass pre-stripped lines.
+2. **Column 71 is the continuation boundary** — column 72 is the continuation indicator, 73-80 the sequence field; `normalize_jcl_line()` strips both from fixed-format records and `ContinuationLineHandler` merges what is left. Never pass pre-stripped lines.
 3. **`ConditionalBlock.condition` (raw string) is authoritative** — `condition_ast` may be `None` if the expression was unparseable; always use `condition` for display.
 4. **`&&` is an escaped ampersand in JCL** — symbol substitution replaces `&NAME` → value and `&&` → `&`. Handled in `explosion.py`.
 5. **mypy strict is not yet clean** — known violations in `profiling.py`, `explosion.py`, and the parser modules (`parser.py` / `_statement_parser.py` / `_post_parse.py`). Add annotations when touching a file; never widen the config.
 6. **Coverage floor is 90%** — every `pytest` run enforces it. Add tests alongside any new module.
+7. **A statement's operand field ends at the first blank** outside quotes/parens — the rest is a comment field, stripped before continuation merging (`split_comment_field()`). `IF`/`THEN`/`ELSE`/`ENDIF` are exempt.
 
-Full list (14 invariants): [`development/invariants.md`](development/invariants.md).
+Full list (16 invariants): [`development/invariants.md`](development/invariants.md).
 
 ## Test Structure
 

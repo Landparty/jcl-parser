@@ -7,16 +7,15 @@ parser edge cases (RC-no-op, RC-op-no-value, bare numerics, unrecognized atoms).
 """
 
 from jclparser.condition_parser import (
-    parse_condition,
-    ReturnCodeCondition,
     AbendCondition,
-    RunCondition,
-    NotCondition,
     AndCondition,
+    NotCondition,
     OrCondition,
+    ReturnCodeCondition,
+    RunCondition,
     _tokenize,
+    parse_condition,
 )
-
 
 # ---------------------------------------------------------------------------
 # Anonymous (no step name) evaluate paths — lines 107-111, 123

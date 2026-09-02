@@ -9,20 +9,24 @@ This module tests uncovered edge cases:
 - Statement type extraction edge cases
 """
 
-import pytest
 import tempfile
-from pathlib import Path
 from io import BytesIO, StringIO
+from pathlib import Path
+
+import pytest
+
 from jclparser.jcl_file_type import (
+    FileType,
+    _extract_statement_type,
     detect_file_type,
     is_jcl_file,
     is_proc_file,
-    FileType,
-    _extract_statement_type,
+)
+from jclparser.utils import (
+    _read_file_with_fallback as _read_file,
 )
 from jclparser.utils import (
     read_source as _read_source,
-    _read_file_with_fallback as _read_file,
 )
 
 

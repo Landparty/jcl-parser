@@ -5,8 +5,10 @@ This test module validates the parser against all the edge case fixtures
 to ensure complete coverage of JCL parsing scenarios.
 """
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from jclparser import parse_jcl, validate_jcl
 from jclparser.errors import JCLSyntaxError, JCLValidationError
 

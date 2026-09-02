@@ -4,11 +4,12 @@ Additional edge case tests for external PROC loading.
 Tests complex scenarios, nested PROCs, error conditions, and performance.
 """
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from jclparser import parse_jcl
 from jclparser.errors import JCLSyntaxError
-
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "proclibs"
 

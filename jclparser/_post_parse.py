@@ -217,11 +217,11 @@ def resolve_set_symbols(job: Job) -> None:
     DD dataset names/dispositions, so a job-level SET symbol resolves the same
     way regardless of which kind of statement references it.
     """
-    from .explosion import (  # noqa: PLC0415
+    from .explosion import (
+        SymbolScope,
         substitute_dd_statement,
         substitute_parameters_dict,
         substitute_symbols,
-        SymbolScope,
     )
 
     # Pre-resolve the symbol table so every value is fully expanded before
@@ -273,7 +273,7 @@ def resolve_set_symbols(job: Job) -> None:
             collapse_double_amp=False,
         )
 
-    from .model import iter_execution_steps  # noqa: PLC0415
+    from .model import iter_execution_steps
 
     for _step in iter_execution_steps(job.steps):
         _step_warnings: list[str] = []

@@ -9,20 +9,20 @@ from .base import LintRule
 from .config import LintConfig
 from .rules import BUILTIN_RULES
 from .runner import (
-    register_rule,
-    unregister_rule,
     all_rules,
     lint_job,
+    register_rule,
     to_sarif,
+    unregister_rule,
 )
 
 __all__ = [
-    "LintRule",
-    "LintConfig",
     "BUILTIN_RULES",
-    "register_rule",
-    "unregister_rule",
+    "LintConfig",
+    "LintRule",
     "all_rules",
     "lint_job",
+    "register_rule",
     "to_sarif",
+    "unregister_rule",
 ]

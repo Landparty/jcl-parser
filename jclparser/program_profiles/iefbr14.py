@@ -9,8 +9,8 @@ for consistency with other profiles.
 
 from __future__ import annotations
 
-from .base import ProgramProfile, ProgramAnalysis
-from ..dataset_lifecycle import DatasetEvent, _parse_disp_tokens, _action_from_disp
+from ..dataset_lifecycle import DatasetEvent, _action_from_disp, _parse_disp_tokens
+from .base import ProgramAnalysis, ProgramProfile
 
 
 class IEFBR14Profile(ProgramProfile):

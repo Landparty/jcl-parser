@@ -7,14 +7,14 @@ from various sources (inline, external files, JCLLIB libraries).
 
 from __future__ import annotations
 
+import logging
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
-import logging
-import os
 
-from .model import Procedure
 from .errors import JCLSyntaxError, JCLValidationError
+from .model import Procedure
 from .utils import _read_file_with_fallback, is_within_directory
 
 logger = logging.getLogger(__name__)
@@ -27,8 +27,8 @@ def _build_procedure_from_content(content: str, proc_name: str) -> Procedure | N
     nothing usable. Underlying parse errors propagate so callers can add
     context-specific logging.
     """
+    from .jcl_file_type import FileType, detect_file_type_from_content
     from .parser import parse_jcl
-    from .jcl_file_type import detect_file_type_from_content, FileType
 
     file_type = detect_file_type_from_content(content)
     # A PROC file must not carry a JOB card; a full JCL job is not a procedure.
@@ -79,7 +79,6 @@ class ProcedureLoader(ABC):
         Returns:
             Procedure object if found, None otherwise
         """
-        pass
 
     def has_procedure(self, name: str, libraries: Sequence[str] | None = None) -> bool:
         """

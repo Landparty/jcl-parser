@@ -7,9 +7,9 @@ and data integrity checks for parsed JCL structures.
 
 import logging
 import re
-from typing import List, Set, Dict
-from .model import Job, Step, DDStatement, iter_execution_steps
-from .errors import ValidationError, ErrorType, ErrorSeverity
+
+from .errors import ErrorSeverity, ErrorType, ValidationError
+from .model import DDStatement, Job, Step, iter_execution_steps
 from .parameter_validators import DatasetNameValidator, DISPValidator
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ def validate_dataset_name(dsn: str) -> bool:
     return result.is_valid
 
 
-def validate_job_structure(job: Job) -> List[ValidationError]:
+def validate_job_structure(job: Job) -> list[ValidationError]:
     """
     Validate complete job structure and dependencies.
 
@@ -91,7 +91,7 @@ def validate_job_structure(job: Job) -> List[ValidationError]:
     flat_steps = list(iter_execution_steps(job.steps))
 
     # Validate step name uniqueness
-    step_names: Set[str] = set()
+    step_names: set[str] = set()
     for step in flat_steps:
         if step.name:
             if step.name in step_names:
@@ -126,7 +126,7 @@ def validate_job_structure(job: Job) -> List[ValidationError]:
     return errors
 
 
-def validate_output_references(job: Job) -> List[ValidationError]:
+def validate_output_references(job: Job) -> list[ValidationError]:
     """Warn on ``OUTPUT=*.name`` DD references that do not resolve.
 
     Consumes ``Job.unresolved_output_refs`` which is populated during parsing
@@ -135,7 +135,7 @@ def validate_output_references(job: Job) -> List[ValidationError]:
     strict-mode parsing to fail outright — the dataset may be intentionally
     resolved by a downstream tool or environment.
     """
-    errors: List[ValidationError] = []
+    errors: list[ValidationError] = []
     for step_name, ref, line_number in getattr(job, "unresolved_output_refs", []):
         step_label = f" in step '{step_name}'" if step_name else ""
         errors.append(
@@ -149,7 +149,7 @@ def validate_output_references(job: Job) -> List[ValidationError]:
     return errors
 
 
-def validate_step_structure(step: Step) -> List[ValidationError]:
+def validate_step_structure(step: Step) -> list[ValidationError]:
     """
     Validate step structure and constraints.
 
@@ -189,7 +189,7 @@ def validate_step_structure(step: Step) -> List[ValidationError]:
         )
 
     # Validate DD name uniqueness within step (except for empty names used in concatenation)
-    dd_names: Set[str] = set()
+    dd_names: set[str] = set()
     for dd in step.dd_statements:
         # Empty DD names are allowed for concatenation - skip duplicate check.
         # Duplicate DD names are reported as WARNING (not ERROR) because some
@@ -213,7 +213,7 @@ def validate_step_structure(step: Step) -> List[ValidationError]:
     return errors
 
 
-def validate_dd_statement(dd: DDStatement) -> List[ValidationError]:
+def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
     """
     Validate DD statement structure and parameters.
 
@@ -307,7 +307,7 @@ def validate_disposition(disp) -> bool:
     return result.is_valid
 
 
-def validate_data_dependencies(job: Job) -> List[ValidationError]:
+def validate_data_dependencies(job: Job) -> list[ValidationError]:
     """
     Validate data dependencies between job steps.
 
@@ -320,8 +320,8 @@ def validate_data_dependencies(job: Job) -> List[ValidationError]:
     errors = []
 
     # Track temporary datasets created and used
-    temp_datasets_created: Dict[str, str] = {}  # dataset -> step_name
-    temp_datasets_used: Dict[str, List[str]] = {}  # dataset -> [step_names]
+    temp_datasets_created: dict[str, str] = {}  # dataset -> step_name
+    temp_datasets_used: dict[str, list[str]] = {}  # dataset -> [step_names]
 
     flat_steps = list(iter_execution_steps(job.steps))
 
@@ -353,7 +353,7 @@ def validate_data_dependencies(job: Job) -> List[ValidationError]:
     # Reported as WARNING rather than ERROR because the validator is flow-blind:
     # the creating step may be inside a conditional branch that the flat step list
     # does not reflect, so a hard ERROR here would produce false positives.
-    for temp_ds, using_steps in temp_datasets_used.items():
+    for temp_ds in temp_datasets_used:
         if temp_ds not in temp_datasets_created:
             errors.append(
                 ValidationError(

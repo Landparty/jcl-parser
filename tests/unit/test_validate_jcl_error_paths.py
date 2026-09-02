@@ -5,8 +5,10 @@ Covers exception handlers, line-by-line validation fallback,
 PROC/PEND flag tracking, and DD-before-EXEC handling.
 """
 
-import pytest
 from unittest.mock import patch
+
+import pytest
+
 from jclparser.parser import validate_jcl
 
 
@@ -104,9 +106,11 @@ class TestValidateJCLFileNotFound:
         def mock_read(source):
             raise FileNotFoundError("No such file: /nonexistent/test.jcl")
 
-        with patch("jclparser.parser.parse_jcl", side_effect=mock_parse):
-            with patch("jclparser.parser.read_source", side_effect=mock_read):
-                errors = validate_jcl("some_input", level="basic")
+        with (
+            patch("jclparser.parser.parse_jcl", side_effect=mock_parse),
+            patch("jclparser.parser.read_source", side_effect=mock_read),
+        ):
+            errors = validate_jcl("some_input", level="basic")
 
         assert len(errors) >= 1
         assert any(

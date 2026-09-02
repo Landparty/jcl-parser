@@ -7,19 +7,19 @@ support for nested procedures, circular dependency detection, and audit logging.
 
 import logging
 import re
-from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional
-from datetime import datetime
 from copy import deepcopy
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
 
-from .model import Job, Step, DDStatement, Procedure, ConditionalBlock
 from .errors import (
-    UndefinedSymbolError,
-    ExplosionDepthError,
     CircularProcedureError,
-    ProcedureNotFoundError,
+    ExplosionDepthError,
     JCLStructureError,
+    ProcedureNotFoundError,
+    UndefinedSymbolError,
 )
+from .model import ConditionalBlock, DDStatement, Job, Procedure, Step
 from .proc_loader import ProcedureLoader, create_default_loader
 from .system_symbols import SystemSymbolProvider, get_default_provider
 
@@ -98,12 +98,12 @@ class SymbolScope:
     Manages symbol precedence: EXEC overrides > PROC defaults > SET statements > System symbols
     """
 
-    set_symbols: Dict[str, str] = field(default_factory=dict)
-    proc_params: Dict[str, Any] = field(default_factory=dict)
-    exec_overrides: Dict[str, Any] = field(default_factory=dict)
-    system_provider: Optional[SystemSymbolProvider] = None
+    set_symbols: dict[str, str] = field(default_factory=dict)
+    proc_params: dict[str, Any] = field(default_factory=dict)
+    exec_overrides: dict[str, Any] = field(default_factory=dict)
+    system_provider: SystemSymbolProvider | None = None
 
-    def resolve(self, symbol_name: str, strict: bool = False) -> Optional[str]:
+    def resolve(self, symbol_name: str, strict: bool = False) -> str | None:
         """
         Resolve a symbol using precedence rules.
 
@@ -156,12 +156,12 @@ class ExplosionRecord:
 
     step_name: str
     proc_name: str
-    parameters: Dict[str, Any]
+    parameters: dict[str, Any]
     depth: int
     timestamp: datetime
-    expanded_steps: List[str] = field(default_factory=list)
+    expanded_steps: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
         return {
             "step_name": self.step_name,
@@ -183,9 +183,9 @@ class ProcExpansionInfo:
 
     original_statement: str
     proc_definition: str
-    resolved_parameters: Dict[str, Any]
-    source_line_numbers: List[int]
-    expanded_step_names: List[str]
+    resolved_parameters: dict[str, Any]
+    source_line_numbers: list[int]
+    expanded_step_names: list[str]
 
 
 def _make_replacer(
@@ -193,7 +193,7 @@ def _make_replacer(
     strict: bool,
     allow_undefined: bool,
     source_text: str = "",
-    warnings: Optional[List[str]] = None,
+    warnings: list[str] | None = None,
     collapse_double_amp: bool = True,
 ):
     """Create a regex replacer function for symbol substitution."""
@@ -227,7 +227,7 @@ def substitute_symbols(
     scope: "SymbolScope",
     strict: bool = False,
     allow_undefined: bool = False,
-    warnings: Optional[List[str]] = None,
+    warnings: list[str] | None = None,
     collapse_double_amp: bool = True,
 ) -> str:
     """
@@ -273,8 +273,8 @@ def substitute_symbols(
 
 def detect_circular_refs(
     proc_name: str,
-    call_chain: List[str],
-    call_chain_upper: Optional[frozenset] = None,
+    call_chain: list[str],
+    call_chain_upper: frozenset | None = None,
 ) -> None:
     """
     Detect circular procedure references.
@@ -302,12 +302,12 @@ def detect_circular_refs(
 def expand_proc_invocation(
     step: Step,
     procedure: Procedure,
-    overrides: Dict[str, Any],
+    overrides: dict[str, Any],
     scope: SymbolScope,
-    step_prefix: Optional[str] = None,
+    step_prefix: str | None = None,
     strict: bool = False,
-    warnings: Optional[List[str]] = None,
-) -> List[Step]:
+    warnings: list[str] | None = None,
+) -> list[Step]:
     """
     Expand a single procedure invocation into steps.
 
@@ -388,13 +388,13 @@ def expand_proc_invocation(
 
 
 def substitute_parameters_dict(
-    parameters: Dict[str, Any],
+    parameters: dict[str, Any],
     scope: SymbolScope,
     strict: bool = False,
     allow_undefined: bool = False,
-    warnings: Optional[List[str]] = None,
+    warnings: list[str] | None = None,
     collapse_double_amp: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Substitute symbols in parameter dictionary.
 
@@ -413,7 +413,7 @@ def substitute_parameters_dict(
     Returns:
         Dictionary with substituted values
     """
-    result: Dict[str, Any] = {}
+    result: dict[str, Any] = {}
 
     for key, value in parameters.items():
         if isinstance(value, str):
@@ -474,7 +474,7 @@ def substitute_dd_statement(
     scope: SymbolScope,
     strict: bool = False,
     allow_undefined: bool = False,
-    warnings: Optional[List[str]] = None,
+    warnings: list[str] | None = None,
     collapse_double_amp: bool = True,
 ) -> None:
     """
@@ -496,7 +496,7 @@ def substitute_dd_statement(
             ``DDStatement.is_temporary()``) ahead of full PROC explosion
             should pass False here.
     """
-    local_warnings: Optional[List[str]] = [] if warnings is not None else None
+    local_warnings: list[str] | None = [] if warnings is not None else None
 
     # Substitute dataset name
     if dd.dataset_name:
@@ -558,8 +558,8 @@ def substitute_dd_statement(
 
 
 def apply_dd_overrides(
-    expanded_steps: List[Step],
-    dd_overrides: Dict[str, DDStatement],
+    expanded_steps: list[Step],
+    dd_overrides: dict[str, DDStatement],
     step_name_prefix: str,
 ) -> None:
     """
@@ -624,8 +624,8 @@ def apply_dd_overrides(
 
 
 def apply_unqualified_dd_overrides(
-    expanded_steps: List[Step],
-    override_dds: List[DDStatement],
+    expanded_steps: list[Step],
+    override_dds: list[DDStatement],
 ) -> None:
     """Merge unqualified DD overrides onto the procedure's first step.
 
@@ -664,11 +664,11 @@ def apply_unqualified_dd_overrides(
 
 def explode_job(
     job: Job,
-    proc_loader: Optional[ProcedureLoader] = None,
+    proc_loader: ProcedureLoader | None = None,
     max_depth: int = 10,
     max_steps: int = 0,
     audit: bool = True,
-    system_provider: Optional[SystemSymbolProvider] = None,
+    system_provider: SystemSymbolProvider | None = None,
     strict_symbols: bool = False,
 ) -> Job:
     """
@@ -711,17 +711,17 @@ def explode_job(
     )
 
     # Track explosion metadata
-    explosion_audit: List[ExplosionRecord] = []
-    explosion_map: Dict[str, ProcExpansionInfo] = {}
+    explosion_audit: list[ExplosionRecord] = []
+    explosion_map: dict[str, ProcExpansionInfo] = {}
     # Symbol-substitution diagnostics accumulated during explosion (e.g. an
     # undefined &SYMBOL only resolvable inside a PROC body, against PROC
     # defaults/EXEC overrides/system symbols -- parse_jcl() never sees these,
     # since it doesn't expand PROCs). Merged onto exploded_job.warnings below.
-    explosion_warnings: List[str] = []
+    explosion_warnings: list[str] = []
 
     # Mutable step counter shared across all _process_steps recursions.
     # Using a list (not int) so the nested closure can mutate it.
-    _step_count: List[int] = [0]
+    _step_count: list[int] = [0]
 
     def _check_step_limit(new_steps: int) -> None:
         """Raise JCLStructureError if adding new_steps would exceed max_steps."""
@@ -848,16 +848,16 @@ def _explode_step(
     step: Step,
     proc_loader: ProcedureLoader,
     base_scope: SymbolScope,
-    call_chain: List[str],
+    call_chain: list[str],
     depth: int,
     max_depth: int,
-    audit_records: Optional[List[ExplosionRecord]],
-    expansion_map: Dict[str, ProcExpansionInfo],
+    audit_records: list[ExplosionRecord] | None,
+    expansion_map: dict[str, ProcExpansionInfo],
     strict_symbols: bool,
-    jcllib_order: Optional[List[str]] = None,
-    call_chain_upper: Optional[frozenset] = None,
-    warnings: Optional[List[str]] = None,
-) -> List[Step]:
+    jcllib_order: list[str] | None = None,
+    call_chain_upper: frozenset | None = None,
+    warnings: list[str] | None = None,
+) -> list[Step]:
     """
     Recursively explode a single step.
 
@@ -950,7 +950,7 @@ def _explode_step(
             proc_name=proc_name,
             parameters=overrides,
             depth=depth,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(),  # noqa: DTZ005 — local time, matches SYSTIME
             expanded_steps=[s.name for s in expanded if hasattr(s, "name") and s.name],
         )
         audit_records.append(record)

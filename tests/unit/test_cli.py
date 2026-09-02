@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from jclparser.cli import main, _print_step_detail, _print_dd_detail
-from jclparser.model import Step, DDStatement
+from jclparser.cli import _print_dd_detail, _print_step_detail, main
+from jclparser.model import DDStatement, Step
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 SORT_JCL = str(FIXTURES / "real_world" / "sort_job.jcl")
@@ -152,9 +152,9 @@ class TestCLIJSON:
         rc = main([SORT_JCL, "--json"])
         assert rc == 0
         data = json.loads(capsys.readouterr().out)
-        sysin = [
+        sysin = next(
             dd for dd in data["steps"][0]["dd_statements"] if dd["name"] == "SYSIN"
-        ][0]
+        )
         assert "SORT FIELDS" in sysin["inline_data"]
 
 

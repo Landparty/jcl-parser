@@ -7,10 +7,12 @@ with validation methods and type safety.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
+
 from .errors import ValidationError
-from .parameter_ast import DCBParameter, SPACEParameter, ParameterParser
+from .parameter_ast import DCBParameter, ParameterParser, SPACEParameter
 
 if TYPE_CHECKING:
     from .sql_detector import SQLDetectionResult
@@ -118,7 +120,7 @@ class OutputStatement:
         return _to_int_or_none(self.parameters.get("INDEX"))
 
     @classmethod
-    def from_statement(cls, stmt: "Statement") -> "OutputStatement":
+    def from_statement(cls, stmt: Statement) -> OutputStatement:
         """Create an OutputStatement from a generic Statement object."""
         return cls(
             name=stmt.name,
@@ -562,7 +564,7 @@ class Step:
         """Restart definition (R, RNC, NR, NC)."""
         return self.parameters.get("RD")
 
-    def detect_sql(self) -> "SQLDetectionResult":
+    def detect_sql(self) -> SQLDetectionResult:
         """Detect SQL statements in this step's inline data and program name.
 
         Returns:
@@ -621,6 +623,12 @@ class Job:
     jes_typed_statements: list[Any] = field(default_factory=list)
     output_statements: list[OutputStatement] = field(default_factory=list)
     joblib_dds: list[DDStatement] = field(default_factory=list)
+    #: Statements the model has no richer representation for but that are part
+    #: of the job stream — ``COMMAND``, ``SCHEDULE`` and ``CNTL``.  A ``CNTL``
+    #: entry carries the program control records of its ``CNTL``/``ENDCNTL``
+    #: block in ``parameters["_records"]``.  Kept verbatim so no source
+    #: statement is dropped without a trace.
+    control_statements: list[Statement] = field(default_factory=list)
     #: Optional SQL detection results, keyed by step name.  Populated when
     #: ``parse_jcl`` is called with ``ParserConfig(detect_sql=True)``; otherwise
     #: left empty.  Each entry is a
@@ -701,7 +709,7 @@ class Job:
         audit: bool = True,
         system_provider: Any | None = None,
         strict_symbols: bool = False,
-    ) -> "Job":
+    ) -> Job:
         """
         Explode all procedure invocations in this job.
 

@@ -31,11 +31,9 @@ Usage::
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
 
+from .errors import ErrorSeverity, ErrorType, ValidationError
 from .model import Job, iter_execution_steps
-from .errors import ValidationError, ErrorType, ErrorSeverity
-
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -115,7 +113,7 @@ def _action_from_disp(status: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def analyze_dataset_lifecycle(job: Job) -> Dict[str, List[DatasetEvent]]:
+def analyze_dataset_lifecycle(job: Job) -> dict[str, list[DatasetEvent]]:
     """Build a per-dataset event log for *job*.
 
     Iterates all steps in execution order (flattening conditional branches)
@@ -134,7 +132,7 @@ def analyze_dataset_lifecycle(job: Job) -> Dict[str, List[DatasetEvent]]:
         for dsn, evts in sorted(events.items()):
             print(dsn, [e.action for e in evts])
     """
-    lifecycle: Dict[str, List[DatasetEvent]] = {}
+    lifecycle: dict[str, list[DatasetEvent]] = {}
 
     for step in iter_execution_steps(job.steps):
         step_name = step.name or "(unnamed)"
@@ -166,7 +164,7 @@ def analyze_dataset_lifecycle(job: Job) -> Dict[str, List[DatasetEvent]]:
     return lifecycle
 
 
-def validate_dataset_lifecycle(job: Job) -> List[ValidationError]:
+def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:
     """Validate cross-step dataset lifecycle consistency.
 
     Checks for:
@@ -191,7 +189,7 @@ def validate_dataset_lifecycle(job: Job) -> List[ValidationError]:
     Returns:
         List of :class:`~jclparser.errors.ValidationError` objects.
     """
-    errors: List[ValidationError] = []
+    errors: list[ValidationError] = []
     lifecycle = analyze_dataset_lifecycle(job)
 
     for dsn, events in lifecycle.items():

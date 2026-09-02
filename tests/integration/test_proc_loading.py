@@ -5,11 +5,12 @@ Tests the integration of JCLLIBProcedureLoader with the main parser
 to support JCLLIB ORDER and external procedure references.
 """
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from jclparser import parse_jcl
 from jclparser.errors import JCLSyntaxError
-
 
 # Get path to test fixtures
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "proclibs"

@@ -579,3 +579,370 @@ class TestQualifiedDdOverrideAppendsWhenMissing:
         assert replaced is not None
         assert replaced.dataset_name == "REPLACED.DSN"
         assert len(step.dd_statements) == 1
+
+
+class TestColumn72ContinuationIndicator:
+    """Column 72 of a fixed-format record holds the continuation indicator,
+    not JCL content. It used to be kept and merged into the next record's
+    first operand, renaming (and so losing) that parameter."""
+
+    @staticmethod
+    def _record(text, cont=" "):
+        """Build an 80-column record: content, continuation column, sequence."""
+        return text.ljust(71) + cont + "SEQ00001"
+
+    def test_continuation_indicator_does_not_corrupt_next_parameter(self):
+        jcl = "\n".join(
+            [
+                self._record("//J JOB (ACCT),'NAME',CLASS=A"),
+                self._record("//S1 EXEC PGM=IEFBR14"),
+                self._record("//D1 DD DSN=A.B.C,DISP=SHR,", cont="X"),
+                self._record("//        SPACE=(CYL,(1,1))"),
+            ]
+        )
+        dd = parse_jcl(jcl).steps[0].dd_statements[0]
+        assert dd.parameters["DSN"] == "A.B.C"
+        assert dd.parameters["SPACE"] == ["CYL", "(1,1)"]
+        assert not any(key.startswith("X") for key in dd.parameters)
+
+    def test_trimmed_record_keeps_continuation_indicator_out_of_operands(self):
+        # Same record with the sequence field trimmed away: 72 characters,
+        # blank column 71, continuation indicator in column 72.
+        jcl = "\n".join(
+            [
+                "//J JOB (ACCT)",
+                "//S1 EXEC PGM=IEFBR14",
+                "//D1 DD DSN=A.B.C,DISP=SHR,".ljust(71) + "X",
+                "//        SPACE=(CYL,(1,1))",
+            ]
+        )
+        dd = parse_jcl(jcl).steps[0].dd_statements[0]
+        assert dd.parameters["SPACE"] == ["CYL", "(1,1)"]
+
+    def test_modern_long_line_is_not_truncated(self):
+        line = (
+            "//DD1     DD DSN=OUTPUT.DATASET.NAME,DCB=(RECFM=FB,LRECL=80,BLKSIZE=23440)"
+        )
+        assert 72 < len(line) < 80
+        from jclparser.utils import normalize_jcl_line
+
+        assert normalize_jcl_line(line) == line
+
+
+class TestCommentFieldStripping:
+    """A JCL statement's operand field ends at the first blank outside quotes
+    and parens; the rest of the record is a comment. Keeping it corrupted the
+    last parameter value and, worse, hid the trailing comma that marks a
+    continued statement -- silently dropping every continued operand."""
+
+    def test_comment_after_complete_statement_is_not_part_of_the_operand(self):
+        jcl = (
+            "//J JOB (A)\n"
+            "//S1 EXEC PGM=MYPGM               RUN THE THING\n"
+            "//D1 DD DSN=A.B,DISP=SHR          INPUT FILE\n"
+        )
+        step = parse_jcl(jcl).steps[0]
+        assert step.program == "MYPGM"
+        assert step.dd_statements[0].parameters["DISP"] == "SHR"
+
+    def test_comment_after_trailing_comma_keeps_the_continuation(self):
+        jcl = (
+            "//J JOB (A)\n"
+            "//S1 EXEC PGM=X\n"
+            "//D1 DD DSN=A.B.C,DISP=SHR,       THE INPUT FILE\n"
+            "//    SPACE=(CYL,(1,1))\n"
+        )
+        dd = parse_jcl(jcl).steps[0].dd_statements[0]
+        assert dd.parameters["SPACE"] == ["CYL", "(1,1)"]
+        assert "THE" not in str(dd.parameters)
+
+    def test_comment_on_a_continuation_record_is_stripped_too(self):
+        jcl = (
+            "//J JOB (A)\n"
+            "//S1 EXEC PGM=X\n"
+            "//D1 DD DSN=A.B,\n"
+            "//       DISP=SHR              THE DISP\n"
+        )
+        dd = parse_jcl(jcl).steps[0].dd_statements[0]
+        assert dd.parameters["DISP"] == "SHR"
+
+    def test_blank_after_comma_inside_operands_is_not_a_comment(self):
+        # Illegal per z/OS but common in the wild: the operand field carries
+        # blanks after commas.  A quoted string or KEY=VALUE after the blank
+        # means the operands are still going.
+        jcl = "//J JOB (ACCT), 'PGMR NAME',CLASS=A\n//S1 EXEC PGM=X\n"
+        job = parse_jcl(jcl)
+        assert job.parameters["CLASS"] == "A"
+
+    def test_blanks_inside_quotes_and_parens_are_kept(self):
+        jcl = (
+            "//J JOB (A)\n//S1 EXEC PGM=IKJEFT01,PARM='%REXXPGM ARG1 ARG2'  CALL REXX\n"
+        )
+        step = parse_jcl(jcl).steps[0]
+        assert step.parameters["PARM"] == "%REXXPGM ARG1 ARG2"
+
+    def test_if_statement_keeps_its_blank_delimited_syntax(self):
+        jcl = (
+            "//J JOB (A)\n"
+            "//S1 EXEC PGM=X\n"
+            "// IF (S1.RC = 0) THEN\n"
+            "//S2 EXEC PGM=Y\n"
+            "// ENDIF\n"
+        )
+        job = parse_jcl(jcl)
+        conditional = job.steps[1]
+        assert "S1.RC" in conditional.condition
+        assert [s.name for s in conditional.then_steps] == ["S2"]
+
+    def test_pend_comment_does_not_become_an_operand(self):
+        jcl = (
+            "//J JOB (A)\n"
+            "//PR PROC\n"
+            "//PS1 EXEC PGM=X\n"
+            "//    PEND      END OF PROCEDURE\n"
+            "//S1 EXEC PR\n"
+        )
+        job = parse_jcl(jcl)
+        assert [p.name for p in job.procedures] == ["PR"]
+        assert job.steps[0].procedure == "PR"
+
+    def test_garbled_comment_that_looks_like_operands_is_reported(self):
+        jcl = (
+            "//J JOB (A)\n"
+            "//S1 EXEC PGM=X\n"
+            "//D1 DD SPACE=(CYL,(1,1),RLSE), 00,RECFM=FB), ATA.VSAM.KSDS\n"
+            "//       DSN=A.B.C\n"
+        )
+        job = parse_jcl(jcl)
+        assert job.steps[0].dd_statements[0].parameters["DSN"] == "A.B.C"
+        assert any("looks like operands" in w for w in job.warnings)
+
+    def test_ordinary_comment_field_produces_no_warning(self):
+        jcl = "//J JOB (A)\n//S1 EXEC PGM=X                  RUN IT\n"
+        assert parse_jcl(jcl).warnings == []
+
+
+class TestDdNamedAfterStatementKeyword:
+    """``OUTPUT``, ``SET``, ``IF`` and friends are legal ddnames. Reading the
+    leading keyword as the operation made the whole DD statement disappear."""
+
+    def test_dd_named_output_is_a_dd_not_an_output_statement(self):
+        jcl = "//J JOB (A)\n//S1 EXEC PGM=IEBGENER\n//OUTPUT   DD SYSOUT=*\n"
+        job = parse_jcl(jcl)
+        dd = job.steps[0].get_dd("OUTPUT")
+        assert dd is not None and dd.parameters["SYSOUT"] == "*"
+        assert job.output_statements == []
+
+    def test_dd_named_set_and_if(self):
+        jcl = (
+            "//J JOB (A)\n"
+            "//S1 EXEC PGM=IEFBR14\n"
+            "//SET      DD DUMMY\n"
+            "//IF       DD DUMMY\n"
+        )
+        step = parse_jcl(jcl).steps[0]
+        assert [dd.name for dd in step.dd_statements] == ["SET", "IF"]
+
+    def test_real_output_statement_still_parses(self):
+        jcl = "//J JOB (A)\n//OUT1 OUTPUT DEST=LOCAL,CLASS=A\n//S1 EXEC PGM=X\n"
+        job = parse_jcl(jcl)
+        assert [o.name for o in job.output_statements] == ["OUT1"]
+
+    def test_unnamed_output_statement_still_parses(self):
+        jcl = "//J JOB (A)\n// OUTPUT DEST=LOCAL\n//S1 EXEC PGM=X\n"
+        job = parse_jcl(jcl)
+        assert len(job.output_statements) == 1
+
+
+class TestMisindentedStatementIsNotAContinuation:
+    """A statement whose name field starts after column 3 has a blank name
+    field, so it looked like a continuation record and was folded into (and
+    so corrupted) the statement before it."""
+
+    def test_late_name_field_exec_starts_a_new_step(self):
+        jcl = "//J JOB (A)\n//STEP1 EXEC PGM=IEFBR14\n//   STEP2 EXEC PGM=IEBGENER\n"
+        job = parse_jcl(jcl)
+        assert [s.name for s in job.steps] == ["STEP1", "STEP2"]
+        assert job.steps[0].program == "IEFBR14"
+
+    def test_late_name_field_dd_belongs_to_the_step(self):
+        jcl = "//J JOB (A)\n//STEP1 EXEC PGM=SORT\n//   SORTOUT DD DSN=A.B,DISP=SHR\n"
+        dd = parse_jcl(jcl).steps[0].get_dd("SORTOUT")
+        assert dd is not None and dd.dataset_name == "A.B"
+
+    def test_genuine_continuation_record_still_merges(self):
+        jcl = "//J JOB (A)\n//S1 EXEC PGM=X,\n//   PARM='ABC'\n"
+        assert parse_jcl(jcl).steps[0].parameters["PARM"] == "ABC"
+
+
+class TestStatementsBeforeJobStatement:
+    """SET/EXPORT/JCLLIB/INCLUDE/OUTPUT handlers all began with ``if
+    self.job:``, so in a JOB-less member -- a cataloged procedure, an
+    included member -- every one of them was dropped without a trace."""
+
+    def test_set_before_job_is_applied(self):
+        jcl = (
+            "// SET HLQ=PROD\n"
+            "//J JOB (A)\n"
+            "//S1 EXEC PGM=X\n"
+            "//D1 DD DSN=&HLQ..FILE,DISP=SHR\n"
+        )
+        job = parse_jcl(jcl)
+        assert job.set_statements["HLQ"] == "PROD"
+        assert job.steps[0].dd_statements[0].dataset_name == "PROD.FILE"
+
+    def test_later_set_wins_over_one_seen_before_the_job_card(self):
+        jcl = "// SET HLQ=OLD\n//J JOB (A)\n// SET HLQ=NEW\n//S1 EXEC PGM=X\n"
+        assert parse_jcl(jcl).set_statements["HLQ"] == "NEW"
+
+    def test_job_less_proc_member_keeps_set_include_jcllib_and_output(self):
+        jcl = (
+            "//MYPROC PROC P=A\n"
+            "// SET FOO=BAR\n"
+            "// JCLLIB ORDER=(MY.PROCLIB)\n"
+            "// EXPORT SYMLIST=(FOO)\n"
+            "//OUT1 OUTPUT CLASS=A\n"
+            "//S1 EXEC PGM=IEFBR14\n"
+            "//    PEND\n"
+        )
+        job = parse_jcl(jcl)
+        assert job.set_statements == {"FOO": "BAR"}
+        assert job.jcllib_order == ["MY.PROCLIB"]
+        assert job.exported_symbols == {"FOO"}
+        assert [o.name for o in job.output_statements] == ["OUT1"]
+
+    def test_conditional_before_job_is_kept(self):
+        builder = JobBuilder()
+        from jclparser.parser import parse_statement
+
+        builder.handle_statement(parse_statement("// IF (RC = 0) THEN", 1), 1)
+        builder.handle_statement(parse_statement("//J JOB (A)", 2), 2)
+        job = builder.finish()
+        assert len(job.conditionals) == 1
+        assert "RC" in job.conditionals[0].condition
+
+
+class TestControlStatementsRecorded:
+    """COMMAND/SCHEDULE/CNTL had empty ``pass`` branches: real statements in
+    the job stream with no trace at all in the parsed model."""
+
+    def test_command_and_schedule_are_recorded(self):
+        jcl = (
+            "//J JOB (A)\n"
+            "// SCHEDULE HOLDUNTL=('2024-01-01')\n"
+            "// COMMAND 'START XYZ'\n"
+            "//S1 EXEC PGM=X\n"
+        )
+        job = parse_jcl(jcl)
+        assert [c.type for c in job.control_statements] == ["SCHEDULE", "COMMAND"]
+
+    def test_cntl_block_records_are_kept_not_merged_into_the_statement(self):
+        jcl = (
+            "//J JOB (A)\n"
+            "//S1 EXEC PGM=X\n"
+            "//CTL CNTL\n"
+            "//  PRINTDEV BUFNO=20\n"
+            "//  ENDCNTL\n"
+            "//D1 DD SYSOUT=*\n"
+        )
+        job = parse_jcl(jcl)
+        cntl = job.control_statements[0]
+        assert cntl.type == "CNTL" and cntl.name == "CTL"
+        assert cntl.parameters["_records"] == ["//  PRINTDEV BUFNO=20"]
+        # The block must not have swallowed the DD that follows it.
+        assert job.steps[0].get_dd("D1") is not None
+
+    def test_unterminated_cntl_block_ends_at_the_next_statement_and_warns(self):
+        jcl = "//J JOB (A)\n//CTL CNTL\n//S1 EXEC PGM=IEFBR14\n"
+        job = parse_jcl(jcl)
+        assert [s.name for s in job.steps] == ["S1"]
+        assert any("no matching ENDCNTL" in w for w in job.warnings)
+
+
+class TestJes3ControlStatements:
+    """JES3 control statements share the ``//*`` prefix with comments and were
+    thrown away with them."""
+
+    def test_jes3_statements_are_captured(self):
+        jcl = (
+            "//*MAIN CLASS=A,LINES=(50,W)\n"
+            "//J JOB (A)\n"
+            "//*FORMAT PR,DDNAME=,DEST=RMT10\n"
+            "//S1 EXEC PGM=X\n"
+        )
+        job = parse_jcl(jcl)
+        names = [s.name.upper() for s in job.jes_typed_statements]
+        assert names == ["FORMAT", "MAIN"]
+        main = next(s for s in job.jes_typed_statements if s.name.upper() == "MAIN")
+        assert main.parameters["CLASS"] == "A"
+
+    def test_ordinary_comments_are_not_mistaken_for_jes3_statements(self):
+        jcl = (
+            "//J JOB (A)\n"
+            "//* MAIN PROCESSING STEP\n"
+            "//*  FORMAT THE REPORT\n"
+            "//S1 EXEC PGM=X\n"
+        )
+        job = parse_jcl(jcl)
+        assert job.jes_typed_statements == []
+        assert job.jes_statements == []
+
+    def test_jes3_route_xeq_still_typed(self):
+        jcl = "//J JOB (A)\n//*ROUTE XEQ NODE1\n//S1 EXEC PGM=X\n"
+        route = parse_jcl(jcl).jes_typed_statements[0]
+        assert route.node == "NODE1"
+
+
+class TestJobLevelXmitWarns:
+    """Job-level XMIT data has nowhere to be stored, so it is discarded -- but
+    the job now says so instead of losing the records quietly."""
+
+    def test_job_level_xmit_reports_the_discarded_data(self):
+        jcl = "//J JOB (A)\n//    XMIT DEST=NODE1\n//DATA HERE\n/*\n//S1 EXEC PGM=X\n"
+        job = parse_jcl(jcl)
+        assert any("XMIT" in w for w in job.warnings)
+
+
+class TestInStreamDataDetectionMatchesTheBuilder:
+    """The pre-scan that marks in-stream data used substring matching
+    (``" DD DATA" in line``) while the builder used the parsed operands, so
+    spacing alone could make them disagree: the data records then went through
+    statement parsing and lost their tails."""
+
+    def test_extra_blanks_before_data_keyword(self):
+        jcl = (
+            "//J JOB (A)\n"
+            "//S1 EXEC PGM=X\n"
+            "//SYSIN     DD    DATA\n"
+            "//THIS IS DATA NOT JCL\n"
+            "/*\n"
+            "//D2 DD SYSOUT=*\n"
+        )
+        step = parse_jcl(jcl).steps[0]
+        assert step.get_dd("SYSIN").inline_data == "//THIS IS DATA NOT JCL"
+        assert step.get_dd("D2") is not None
+
+    def test_extra_blanks_before_star(self):
+        jcl = (
+            "//J JOB (A)\n"
+            "//S1 EXEC PGM=X\n"
+            "//SYSIN     DD    *\n"
+            "  SORT FIELDS=COPY\n"
+            "/*\n"
+        )
+        assert parse_jcl(jcl).steps[0].get_dd("SYSIN").inline_data == (
+            "  SORT FIELDS=COPY"
+        )
+
+    def test_quoted_delimiter(self):
+        jcl = (
+            "//J JOB (A)\n"
+            "//S1 EXEC PGM=X\n"
+            "//SYSIN DD DATA,DLM='@@'\n"
+            "//STILL DATA\n"
+            "@@\n"
+            "//D2 DD SYSOUT=*\n"
+        )
+        step = parse_jcl(jcl).steps[0]
+        assert step.get_dd("SYSIN").inline_data == "//STILL DATA"
+        assert step.get_dd("D2") is not None

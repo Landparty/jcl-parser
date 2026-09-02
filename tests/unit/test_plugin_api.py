@@ -6,18 +6,18 @@ All tests should FAIL initially, then pass as implementation is added.
 """
 
 import pytest
-from typing import List
+
+from jclparser.errors import ErrorType, ValidationError
+from jclparser.model import DDStatement, Job, Statement, Step
 
 # Import the plugin system classes we expect to exist
 from jclparser.plugins import (
+    ParserConfig,
+    PluginRegistry,
     StatementPlugin,
     ValidationPlugin,
-    PluginRegistry,
-    ParserConfig,
     get_plugin_registry,
 )
-from jclparser.model import Job, Step, DDStatement, Statement
-from jclparser.errors import ValidationError, ErrorType
 
 
 # Test plugin implementations for testing
@@ -40,14 +40,14 @@ class MockStatementPlugin(StatementPlugin):
         return MockStatement(line, line_number)
 
     @property
-    def statement_types(self) -> List[str]:
+    def statement_types(self) -> list[str]:
         return ["MOCK"]
 
 
 class MockValidationPlugin(ValidationPlugin):
     """Mock validation plugin for testing"""
 
-    def validate_job(self, job: Job) -> List[ValidationError]:
+    def validate_job(self, job: Job) -> list[ValidationError]:
         errors = []
         if job.name.startswith("INVALID"):
             errors.append(
@@ -58,7 +58,7 @@ class MockValidationPlugin(ValidationPlugin):
             )
         return errors
 
-    def validate_step(self, step: Step) -> List[ValidationError]:
+    def validate_step(self, step: Step) -> list[ValidationError]:
         errors = []
         if step.program == "BADPROG":
             errors.append(
@@ -69,7 +69,7 @@ class MockValidationPlugin(ValidationPlugin):
             )
         return errors
 
-    def validate_dd(self, dd: DDStatement) -> List[ValidationError]:
+    def validate_dd(self, dd: DDStatement) -> list[ValidationError]:
         errors = []
         if dd.name == "INVALID_DD":
             errors.append(

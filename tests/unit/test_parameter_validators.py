@@ -3,8 +3,8 @@ Tests for parameter value validators.
 """
 
 from jclparser.parameter_validators import (
-    DISPValidator,
     DatasetNameValidator,
+    DISPValidator,
     ValidationResult,
 )
 

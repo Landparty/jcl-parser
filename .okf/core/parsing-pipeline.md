@@ -37,8 +37,8 @@ Input (string / file / IO)
 ```python
 import jclparser
 
-job = jclparser.parse_jcl(source)      # stages 1–5 (no validation, no PROC expansion)
-job, errors = jclparser.validate_jcl(source)   # stages 1–6
+job = jclparser.parse_jcl(source)  # stages 1–5 (no validation, no PROC expansion)
+job, errors = jclparser.validate_jcl(source)  # stages 1–6
 exploded = jclparser.explode_job(job)  # stage 7 (call separately)
 ```
 

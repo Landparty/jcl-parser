@@ -21,7 +21,7 @@ job = parse_jcl(content: str)   # returns Job | None
 
 ### 2. Validation
 ```python
-validation_errors = job.validate()   # list of validation error objects
+validation_errors = job.validate()  # list of validation error objects
 ```
 - Items are stringified with `str()`.
 - An empty list = no errors.
@@ -32,7 +32,7 @@ exploded_job = job.explode(
     max_depth=10,
     audit=True,
     strict_symbols=False,
-    loader=proc_loader,       # optional, may be None
+    loader=proc_loader,  # optional, may be None
 )
 ```
 Returns an exploded `Job` or raises `JCLParseError` (e.g. `ProcedureNotFoundError`). The adapter catches `JCLParseError` and falls back to the un-exploded job gracefully.
@@ -41,16 +41,23 @@ Returns an exploded `Job` or raises `JCLParseError` (e.g. `ProcedureNotFoundErro
 ```python
 from jclparser.proc_loader import CompositeProcedureLoader, InlineProcedureLoader
 
-loader = CompositeProcedureLoader([
-    InlineProcedureLoader(job.procedures),
-    external_loader,
-])
+loader = CompositeProcedureLoader(
+    [
+        InlineProcedureLoader(job.procedures),
+        external_loader,
+    ]
+)
 ```
 Used to prepend inline PROCs ahead of a DB-sourced external loader.
 
 ### 5. Exception types
 ```python
-from jclparser import JCLParseError, JCLSyntaxError, JCLValidationError, JCLStructureError
+from jclparser import (
+    JCLParseError,
+    JCLSyntaxError,
+    JCLValidationError,
+    JCLStructureError,
+)
 ```
 All four must be importable. The adapter catches them separately for error classification.
 
@@ -111,9 +118,9 @@ Attributes the adapter accesses on a `Step`:
 
 ```python
 adapter.parse_content(
-    content,                   # str
-    filename=filename,         # str | None (not passed to jclparser)
-    proc_loader=loader,        # optional external PROC loader
+    content,  # str
+    filename=filename,  # str | None (not passed to jclparser)
+    proc_loader=loader,  # optional external PROC loader
 )
 ```
 
@@ -126,7 +133,7 @@ adapter.parse_content(
 ```python
 {
     "program_info": {
-        "name": str,                  # job.name or "UNNAMED_JOB"
+        "name": str,  # job.name or "UNNAMED_JOB"
         "type": "JCL",
         "language_version": "JCL/MVS",
         "encoding": "utf-8",
@@ -134,17 +141,17 @@ adapter.parse_content(
         "complexity_score": float,
     },
     "structure": {
-        "sections": [...],            # job sections (from JclStructureExtractor)
-        "variables": [...],           # symbolic parameters / SET variables
-        "procedures": [...],          # PROC invocations
+        "sections": [...],  # job sections (from JclStructureExtractor)
+        "variables": [...],  # symbolic parameters / SET variables
+        "procedures": [...],  # PROC invocations
     },
     "dependencies": {
-        "includes": [dict],           # PROC references — each has "proc_name"
-        "calls": [str],               # program names from EXEC PGM= steps
-        "databases": [dict],          # DB2 dataset references
+        "includes": [dict],  # PROC references — each has "proc_name"
+        "calls": [str],  # program names from EXEC PGM= steps
+        "databases": [dict],  # DB2 dataset references
         "procedure_definitions": [...],  # inline PROC definitions
     },
-    "execution_details": [...],       # per-step detail with DD statements
+    "execution_details": [...],  # per-step detail with DD statements
     "analysis": {
         "metrics": {...},
         "issues": [...],
@@ -176,9 +183,10 @@ Same as all parsers — `backend/src/parsers/base.ParserResult`:
 ```python
 ParserResult(
     success=bool,
-    program_structure=dict,        # shape above
-    error_message=str | None,      # prefixed: "JCL_PARSE_ERROR", "SYNTAX_ERROR", "VALIDATION_ERROR", "STRUCTURE_ERROR", etc.
-    metadata=dict,                 # timing, dialect="IBM_JCL", validation_errors count, etc.
+    program_structure=dict,  # shape above
+    error_message=str
+    | None,  # prefixed: "JCL_PARSE_ERROR", "SYNTAX_ERROR", "VALIDATION_ERROR", "STRUCTURE_ERROR", etc.
+    metadata=dict,  # timing, dialect="IBM_JCL", validation_errors count, etc.
 )
 ```
 

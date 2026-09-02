@@ -1,8 +1,8 @@
 """Integration tests: parse_jcl() with enable_profiling=True."""
 
 from jclparser import parse_jcl
-from jclparser.profiling import ProfilingResult
 from jclparser.model import Job
+from jclparser.profiling import ProfilingResult
 
 _HELLO = """\
 //HELLO    JOB (ACCT),'Test',CLASS=A,MSGCLASS=X

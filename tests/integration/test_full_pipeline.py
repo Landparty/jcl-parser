@@ -5,8 +5,9 @@ Tests that all three stages work together consistently on the same JCL input.
 """
 
 import pytest
-from jclparser.parser import parse_jcl, validate_jcl
+
 from jclparser.model import Step
+from jclparser.parser import parse_jcl, validate_jcl
 
 
 @pytest.mark.integration

@@ -5,19 +5,19 @@ interface and :mod:`jclparser.program_profiles.registry` for registration
 and dispatch.
 """
 
-from .base import ProgramProfile, ProgramAnalysis
+from .base import ProgramAnalysis, ProgramProfile
 from .registry import (
-    register_profile,
-    get_profile,
-    analyze_step,
     analyze_job,
+    analyze_step,
+    get_profile,
+    register_profile,
 )
 
 __all__ = [
-    "ProgramProfile",
     "ProgramAnalysis",
-    "register_profile",
-    "get_profile",
-    "analyze_step",
+    "ProgramProfile",
     "analyze_job",
+    "analyze_step",
+    "get_profile",
+    "register_profile",
 ]

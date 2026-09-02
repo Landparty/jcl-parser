@@ -4,8 +4,9 @@ Targeting very specific uncovered paths
 """
 
 from io import StringIO
+
 from jclparser import parse_jcl
-from jclparser.model import Job, Step, DDStatement
+from jclparser.model import DDStatement, Job, Step
 
 
 class TestUltraComprehensive:

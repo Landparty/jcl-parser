@@ -1,5 +1,5 @@
-from jclparser.parser import parse_jcl
 from jclparser.model import ConditionalBlock, Step
+from jclparser.parser import parse_jcl
 
 
 def test_if_then_hierarchy():

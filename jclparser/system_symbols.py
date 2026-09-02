@@ -5,10 +5,9 @@ Provides abstract interface and implementations for resolving z/OS system symbol
 like &SYSUID, &SYSDATE, &SYSTIME during procedure explosion.
 """
 
+import os
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Dict, Optional
-import os
 
 
 class SystemSymbolProvider(ABC):
@@ -20,7 +19,7 @@ class SystemSymbolProvider(ABC):
     """
 
     @abstractmethod
-    def get_symbol(self, symbol_name: str) -> Optional[str]:
+    def get_symbol(self, symbol_name: str) -> str | None:
         """
         Get the value for a system symbol.
 
@@ -30,7 +29,6 @@ class SystemSymbolProvider(ABC):
         Returns:
             Symbol value or None if not available
         """
-        pass
 
     def has_symbol(self, symbol_name: str) -> bool:
         """
@@ -53,14 +51,14 @@ class MockSystemSymbolProvider(SystemSymbolProvider):
     sensible defaults for common symbols.
     """
 
-    def __init__(self, custom_symbols: Optional[Dict[str, str]] = None):
+    def __init__(self, custom_symbols: dict[str, str] | None = None):
         """
         Initialize mock provider.
 
         Args:
             custom_symbols: Optional dictionary of symbol name -> value mappings
         """
-        self._symbols: Dict[str, str] = {
+        self._symbols: dict[str, str] = {
             "SYSUID": "TESTUSER",
             "SYSDATE": "25/12/09",  # YY/MM/DD format
             "SYSTIME": "14:30",  # HH:MM format
@@ -75,7 +73,7 @@ class MockSystemSymbolProvider(SystemSymbolProvider):
         if custom_symbols:
             self._symbols.update(custom_symbols)
 
-    def get_symbol(self, symbol_name: str) -> Optional[str]:
+    def get_symbol(self, symbol_name: str) -> str | None:
         """Get mock symbol value"""
         return self._symbols.get(symbol_name.upper())
 
@@ -100,12 +98,12 @@ class RuntimeSystemSymbolProvider(SystemSymbolProvider):
 
     def __init__(
         self,
-        userid: Optional[str] = None,
-        jobid: Optional[str] = None,
-        jobname: Optional[str] = None,
-        node: Optional[str] = None,
-        sysplex: Optional[str] = None,
-        clone: Optional[str] = None,
+        userid: str | None = None,
+        jobid: str | None = None,
+        jobname: str | None = None,
+        node: str | None = None,
+        sysplex: str | None = None,
+        clone: str | None = None,
     ):
         """
         Initialize runtime provider.
@@ -128,7 +126,7 @@ class RuntimeSystemSymbolProvider(SystemSymbolProvider):
         self.clone = clone
 
         # Build symbol map once at init time (date/time captured at construction)
-        now = datetime.now()
+        now = datetime.now()  # noqa: DTZ005 — &SYSDATE/&SYSTIME are local time
         self._symbol_map = {
             "SYSUID": self.userid.upper()[:8],  # Max 8 chars
             "SYSDATE": now.strftime("%y/%m/%d"),  # YY/MM/DD
@@ -143,7 +141,7 @@ class RuntimeSystemSymbolProvider(SystemSymbolProvider):
         if self.clone:
             self._symbol_map["SYSCLONE"] = self.clone
 
-    def get_symbol(self, symbol_name: str) -> Optional[str]:
+    def get_symbol(self, symbol_name: str) -> str | None:
         """Get runtime symbol value"""
         return self._symbol_map.get(symbol_name.upper())
 
@@ -157,7 +155,7 @@ class EnvironmentSystemSymbolProvider(SystemSymbolProvider):
     """
 
     def __init__(
-        self, prefix: str = "JCL_SYS_", fallback: Optional[SystemSymbolProvider] = None
+        self, prefix: str = "JCL_SYS_", fallback: SystemSymbolProvider | None = None
     ):
         """
         Initialize environment provider.
@@ -169,7 +167,7 @@ class EnvironmentSystemSymbolProvider(SystemSymbolProvider):
         self.prefix = prefix
         self.fallback = fallback or RuntimeSystemSymbolProvider()
 
-    def get_symbol(self, symbol_name: str) -> Optional[str]:
+    def get_symbol(self, symbol_name: str) -> str | None:
         """Get symbol from environment or fallback"""
         # Try environment variable first
         env_var = f"{self.prefix}{symbol_name.upper()}"
@@ -183,7 +181,7 @@ class EnvironmentSystemSymbolProvider(SystemSymbolProvider):
 
 
 # Default provider for convenience
-_default_provider: Optional[SystemSymbolProvider] = None
+_default_provider: SystemSymbolProvider | None = None
 
 
 def get_default_provider() -> SystemSymbolProvider:

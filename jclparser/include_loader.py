@@ -163,7 +163,7 @@ def resolve_includes(
     libraries: list[str] | None = None,
     max_depth: int = 8,
     _depth: int = 0,
-    _collected: "list[str] | None" = None,
+    _collected: list[str] | None = None,
 ) -> str:
     """
     Expand ``// INCLUDE MEMBER=name`` statements by inlining member content.
@@ -283,8 +283,7 @@ def _extract_include_member(line: str) -> str | None:
 
     name_part = params_part[member_idx + 7 :].strip()
     # Strip optional surrounding parentheses
-    if name_part.startswith("("):
-        name_part = name_part[1:]
+    name_part = name_part.removeprefix("(")
     # Read identifier characters up to whitespace, comma, or closing paren
     name: list[str] = []
     for ch in name_part:

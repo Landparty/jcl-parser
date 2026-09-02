@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..errors import ValidationError, ErrorType, ErrorSeverity
+from ..errors import ErrorSeverity, ErrorType, ValidationError
 from .base import LintRule
 from .config import LintConfig
 from .rules import BUILTIN_RULES
@@ -47,7 +47,7 @@ def all_rules() -> list[LintRule]:
     return list(_RULES)
 
 
-def lint_job(job: "Job", config: LintConfig | None = None) -> list[ValidationError]:
+def lint_job(job: Job, config: LintConfig | None = None) -> list[ValidationError]:
     """Run every enabled :class:`LintRule` against *job* and collect findings."""
     cfg = config or LintConfig()
     findings: list[ValidationError] = []
@@ -133,9 +133,9 @@ def to_sarif(errors: list[ValidationError], tool_name: str = "jclparser") -> dic
 
 
 __all__ = [
-    "register_rule",
-    "unregister_rule",
     "all_rules",
     "lint_job",
+    "register_rule",
     "to_sarif",
+    "unregister_rule",
 ]

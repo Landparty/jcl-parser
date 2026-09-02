@@ -5,12 +5,13 @@ These tests validate end-to-end behavior against acceptance criteria.
 All tests should FAIL initially, then pass as implementation is added.
 """
 
-import pytest
 import time
 
+import pytest
+
 # Import the main jclparser module and expected classes
-from jclparser import parse_jcl, validate_jcl, get_plugin_registry
-from jclparser.errors import JCLSyntaxError, JCLValidationError, ErrorType
+from jclparser import get_plugin_registry, parse_jcl, validate_jcl
+from jclparser.errors import ErrorType, JCLSyntaxError, JCLValidationError
 from jclparser.plugins import StatementPlugin
 
 
@@ -259,11 +260,14 @@ class TestComplexJCLFeatures:
         assert "DCB" in output_dd.parameters
         dcb_param = output_dd.parameters["DCB"]
 
-        # DCB might be parsed as string or dictionary depending on implementation
+        # DCB may be a raw string, a subfield list (the parser's normal shape
+        # for a parenthesised value), or a mapping.
         if isinstance(dcb_param, str):
             assert "LRECL=80" in dcb_param
             assert "BLKSIZE=800" in dcb_param
             assert "RECFM=FB" in dcb_param
+        elif isinstance(dcb_param, list):
+            assert dcb_param == ["LRECL=80", "BLKSIZE=800", "RECFM=FB"]
         else:  # Dictionary format
             assert dcb_param["LRECL"] == "80"
             assert dcb_param["BLKSIZE"] == "800"
@@ -392,8 +396,9 @@ class TestPerformanceValidation:
     def test_memory_usage_reasonable(self):
         """GIVEN large JCL file WHEN parsed THEN memory usage reasonable"""
         try:
-            import psutil
             import os
+
+            import psutil
         except ImportError:
             pytest.skip("psutil not installed")
 

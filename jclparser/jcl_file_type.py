@@ -13,7 +13,7 @@ This module follows the KISS (Keep It Simple, Stupid) principle:
 import logging
 from enum import Enum
 from pathlib import Path
-from typing import Union, IO, Optional
+from typing import IO
 
 from .utils import read_source
 
@@ -52,7 +52,7 @@ class FileType(Enum):
     UNKNOWN = "UNKNOWN"  # File type cannot be determined
 
 
-def detect_file_type(source: Union[str, Path, IO]) -> FileType:
+def detect_file_type(source: str | Path | IO) -> FileType:
     """
     Detect whether a file contains JCL or PROC by checking for JOB card.
 
@@ -116,7 +116,7 @@ def detect_file_type_from_content(content: str) -> FileType:
         return FileType.PROC
 
 
-def is_jcl_file(source: Union[str, Path, IO]) -> bool:
+def is_jcl_file(source: str | Path | IO) -> bool:
     """
     Check if a file is a JCL file (contains JOB card).
 
@@ -140,7 +140,7 @@ def is_jcl_file(source: Union[str, Path, IO]) -> bool:
         return False
 
 
-def is_proc_file(source: Union[str, Path, IO]) -> bool:
+def is_proc_file(source: str | Path | IO) -> bool:
     """
     Check if a file is a PROC file (no JOB card).
 
@@ -169,7 +169,7 @@ def is_proc_file(source: Union[str, Path, IO]) -> bool:
 # ============================================================================
 
 
-def _find_first_statement_type(content: str) -> Optional[str]:
+def _find_first_statement_type(content: str) -> str | None:
     """
     Find the type of the first valid JCL statement in content.
 
@@ -214,7 +214,7 @@ def _find_first_statement_type(content: str) -> Optional[str]:
     return None
 
 
-def _extract_statement_type(line: str) -> Optional[str]:
+def _extract_statement_type(line: str) -> str | None:
     """
     Extract the statement type from a JCL line.
 
