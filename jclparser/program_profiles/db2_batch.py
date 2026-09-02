@@ -1,4 +1,5 @@
-"""Profile for DB2 batch SQL processors (``DSNTEP2`` / ``DSNTEP4`` / ``DSNTIAD``).
+"""Profile for DB2 batch SQL processors (``DSNTEP2`` / ``DSNTEP4`` / ``DSNTIAD``
+/ ``DSNTIAUL``).
 
 These programs are usually driven by the DSN command processor and read their
 work from ``SYSIN`` (dynamic SQL) — and occasionally name an application
@@ -15,7 +16,7 @@ from .base import ProgramAnalysis, ProgramProfile
 
 
 class DB2BatchProfile(ProgramProfile):
-    program_names = frozenset({"DSNTEP2", "DSNTEP4", "DSNTIAD"})
+    program_names = frozenset({"DSNTEP2", "DSNTEP4", "DSNTIAD", "DSNTIAUL"})
 
     def analyze(self, step) -> ProgramAnalysis:
         combined = collect_control_text(step)

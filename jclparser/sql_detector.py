@@ -20,6 +20,7 @@ DB2_PROGRAMS: frozenset[str] = frozenset(
         "DSNTEP2",  # DB2 batch SQL processor
         "DSNTEP4",  # DB2 batch SQL processor (extended)
         "DSNTIAD",  # DB2 interactive SQL
+        "DSNTIAUL",  # DB2 sample unload utility
         "IKJEFT01",  # TSO batch - commonly used to run DB2 commands
         "IKJEFT1A",  # TSO batch (alias)
         "IKJEFT1B",  # TSO batch (alias)

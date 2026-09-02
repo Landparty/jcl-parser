@@ -4,6 +4,12 @@ Control statements are read from ``SYSIN`` (or, when absent, ``SYSLIN``):
 ``INCLUDE`` pulls in an object/load module, ``ENTRY`` sets the entry point,
 ``NAME`` names the output load module member, and ``LIBRARY``/``ALIAS``
 add search libraries and alternate names.  Output lands on ``SYSLMOD``.
+
+Also matches ``IEWBLINK`` (the modern Binder entry point) and the
+load-and-go Program Loader — ``IEWLDRGO``/``HEWLDRGO``, commonly invoked
+under the alias ``LOADER`` — which accepts the same INCLUDE/LIBRARY/ENTRY
+control statements but loads and executes the module directly instead of
+producing a permanent ``SYSLMOD`` member.
 """
 
 from __future__ import annotations
@@ -36,7 +42,9 @@ def _control_text(step: Step) -> str:
 
 
 class BinderProfile(ProgramProfile):
-    program_names = frozenset({"IEWL", "HEWL"})
+    program_names = frozenset(
+        {"IEWL", "HEWL", "IEWBLINK", "IEWLDRGO", "HEWLDRGO", "LOADER"}
+    )
 
     def analyze(self, step: Step) -> ProgramAnalysis:
         text = _control_text(step)

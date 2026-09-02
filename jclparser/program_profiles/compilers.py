@@ -1,8 +1,10 @@
 """Profile for language-translator (compiler) steps.
 
 Covers the common z/OS compilers invoked directly via ``EXEC PGM=``:
-COBOL (``IGYCRCTL``), PL/I (``IEL1CL``, ``IBMZPLI``), and High Level
-Assembler (``ASMA90``).  These programs do not read a command-language
+COBOL (``IGYCRCTL``, and the legacy OS/VS COBOL ``IKFCBL00``), PL/I
+(``IEL1CL``, ``IBMZPLI``), Assembler (``ASMA90`` High Level Assembler and
+the older Assembler H ``IEV90``), and the z/OS XL C/C++ compiler driver
+(``CCNDRVR``).  These programs do not read a command-language
 control stream the way utilities do — the "control" is the source itself
 on ``SYSIN`` plus copybook/include libraries on ``SYSLIB``.  The profile
 reports which of those DDs are present and where the compiled object
@@ -21,9 +23,12 @@ if TYPE_CHECKING:
 
 _COMPILER_LABELS = {
     "IGYCRCTL": "COBOL",
+    "IKFCBL00": "COBOL",
     "IEL1CL": "PL/I",
     "IBMZPLI": "PL/I",
     "ASMA90": "Assembler",
+    "IEV90": "Assembler",
+    "CCNDRVR": "C/C++",
 }
 
 
