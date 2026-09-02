@@ -364,5 +364,158 @@ class TestFTP:
         assert "PUT LOCAL.FILE" in notes
 
 
+class TestProgramAliases:
+    """Alternate program names that route to an existing profile class."""
+
+    def test_binder_aliases(self):
+        for name in ("IEWBLINK", "LOADER", "IEWLDRGO", "HEWLDRGO"):
+            assert get_profile(name).__class__.__name__ == "BinderProfile"
+
+    def test_sort_alias(self):
+        assert get_profile("SYNCSORT").__class__.__name__ == "SortProfile"
+
+    def test_icetool_alias_reports_own_program_name(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=SYNCTOOL\n"
+            "//TOOLIN   DD *\n"
+            "  COUNT FROM(IN1)\n"
+            "/*\n"
+            "//IN1      DD DSN=IN.FILE,DISP=SHR\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert results[0].program == "SYNCTOOL"
+        assert "SYNCTOOL" in results[0].summary
+
+    def test_db2_batch_alias(self):
+        assert get_profile("DSNTIAUL").__class__.__name__ == "DB2BatchProfile"
+
+    def test_compiler_aliases(self):
+        assert get_profile("CCNDRVR").__class__.__name__ == "CompilerProfile"
+        assert get_profile("IKFCBL00").__class__.__name__ == "CompilerProfile"
+        assert get_profile("IEV90").__class__.__name__ == "CompilerProfile"
+
+
+class TestDSNUTILB:
+    def test_reorg_and_runstats_against_tablespace(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=DSNUTILB,PARM='DSN1,UTILITY'\n"
+            "//SYSIN    DD *\n"
+            "UTIL1    REORG TABLESPACE DB1.TS1\n"
+            "UTIL2    RUNSTATS TABLESPACE DB1.TS1\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert results[0].program == "DSNUTILB"
+        notes = " | ".join(results[0].notes)
+        assert "REORG TABLESPACE DB1.TS1" in notes
+        assert "RUNSTATS TABLESPACE DB1.TS1" in notes
+
+    def test_no_sysin_graceful(self):
+        src = "//MYJOB    JOB  (ACCT)\n//STEP1    EXEC PGM=DSNUTILB\n"
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert "no recognised" in results[0].summary
+
+
+class TestBPXBATCH:
+    def test_pgm_mode_extracts_target_and_args(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=BPXBATCH,PARM='PGM /u/prod/bin/myprog arg1 arg2'\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        result = results[0]
+        assert result.invoked_programs == ["MYPROG"]
+        notes = " | ".join(result.notes)
+        assert "PGM /u/prod/bin/myprog" in notes
+        assert "args: arg1 arg2" in notes
+
+    def test_sh_mode_reports_command(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=BPXBATCH,PARM='SH echo hello'\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert results[0].invoked_programs == []
+        assert "SH echo hello" in " | ".join(results[0].notes)
+
+    def test_no_parm_graceful(self):
+        src = "//MYJOB    JOB  (ACCT)\n//STEP1    EXEC PGM=BPXBATCH\n"
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert "no PARM" in results[0].summary
+
+    def test_parenthesised_parm_list_does_not_crash(self):
+        """PARM=(sub,parm,...) parses as a list, not a string — the profile
+        must not call .split() on it directly."""
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=BPXBATCH,PARM=('PGM','/bin/prog','arg1')\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert results[0].invoked_programs == ["PROG"]
+
+
+class TestIEBCOMPR:
+    def test_compares_sysut1_and_sysut2(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEBCOMPR\n"
+            "//SYSUT1   DD DSN=OLD.FILE,DISP=SHR\n"
+            "//SYSUT2   DD DSN=NEW.FILE,DISP=SHR\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert "compares OLD.FILE vs NEW.FILE" in results[0].notes
+        assert {e.dd_name for e in results[0].dataset_events} == {"SYSUT1", "SYSUT2"}
+        assert all(e.action == "OPEN_SHARED" for e in results[0].dataset_events)
+
+    def test_no_sysut_graceful(self):
+        src = "//MYJOB    JOB  (ACCT)\n//STEP1    EXEC PGM=IEBCOMPR\n"
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert "no SYSUT1/SYSUT2" in results[0].summary
+
+
+class TestIEHINITT:
+    def test_initt_with_vol_and_owner(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEHINITT\n"
+            "//SYSIN    DD *\n"
+            "  INITT VOL=SER=TAPE01,OWNER=SYS1,NUMBTAPE=1\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        notes = " | ".join(results[0].notes)
+        assert "VOL=TAPE01" in notes
+        assert "OWNER=SYS1" in notes
+
+    def test_no_sysin_graceful(self):
+        src = "//MYJOB    JOB  (ACCT)\n//STEP1    EXEC PGM=IEHINITT\n"
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert len(results) == 1
+        assert "no recognised" in results[0].summary
+
+
 def test_unknown_program_still_returns_none():
     assert get_profile("SOMECUSTOMPGM") is None

@@ -1,5 +1,8 @@
 """Profile for ``ICETOOL`` — the DFSORT batch toolkit.
 
+Also matches ``SYNCTOOL``, Syncsort's ICETOOL-compatible batch toolkit,
+which reads the same ``TOOLIN`` operator syntax.
+
 ICETOOL reads a sequence of operator statements from ``TOOLIN`` (one
 operator per logical statement), each naming its input/output DDs via
 ``FROM(ddname)`` / ``TO(ddname)`` / ``USING(member)``.  Common operators:
@@ -60,7 +63,7 @@ def _toolin_text(step: Step) -> str:
 
 
 class ICETOOLProfile(ProgramProfile):
-    program_names = frozenset({"ICETOOL"})
+    program_names = frozenset({"ICETOOL", "SYNCTOOL"})
 
     def analyze(self, step: Step) -> ProgramAnalysis:
         text = _toolin_text(step)
@@ -79,13 +82,14 @@ class ICETOOLProfile(ProgramProfile):
             detail = f" {' '.join(parts)}" if parts else ""
             notes.append(f"{operator}{detail}")
 
+        program = step.program or "ICETOOL"
         summary = (
-            f"ICETOOL: {len(notes)} operator(s)"
+            f"{program}: {len(notes)} operator(s)"
             if notes
-            else "ICETOOL with no recognised TOOLIN operators"
+            else f"{program} with no recognised TOOLIN operators"
         )
         return ProgramAnalysis(
-            program="ICETOOL",
+            program=program,
             step_name=step.name or "",
             summary=summary,
             dataset_events=[],

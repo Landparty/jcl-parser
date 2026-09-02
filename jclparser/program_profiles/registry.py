@@ -73,17 +73,21 @@ def analyze_job(job: Job) -> list[ProgramAnalysis]:
 def _register_builtins() -> None:
     from .adrdssu import ADRDSSUProfile
     from .binder import BinderProfile
+    from .bpxbatch import BPXBATCHProfile
     from .compilers import CompilerProfile
     from .db2_batch import DB2BatchProfile
     from .dfsrrc00 import DFSRRC00Profile
+    from .dsnutilb import DSNUTILBProfile
     from .ftp import FTPProfile
     from .icetool import ICETOOLProfile
     from .idcams import IDCAMSProfile
+    from .iebcompr import IEBCOMPRProfile
     from .iebdg import IEBDGProfile
     from .iebgener import ICEGENERProfile, IEBCOPYProfile, IEBGENERProfile
     from .iebptpch import IEBPTPCHProfile
     from .iebupdte import IEBUPDTEProfile
     from .iefbr14 import IEFBR14Profile
+    from .iehinitt import IEHINITTProfile
     from .iehlist import IEHLISTProfile
     from .iehprogm import IEHPROGMProfile
     from .ikjeft01 import IKJEFT01Profile
@@ -110,6 +114,10 @@ def _register_builtins() -> None:
     register_profile(CompilerProfile())
     register_profile(IRXJCLProfile())
     register_profile(FTPProfile())
+    register_profile(DSNUTILBProfile())
+    register_profile(BPXBATCHProfile())
+    register_profile(IEBCOMPRProfile())
+    register_profile(IEHINITTProfile())
 
 
 _register_builtins()

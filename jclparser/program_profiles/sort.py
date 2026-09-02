@@ -1,7 +1,8 @@
 """Profile for DFSORT / IBM Sort utilities.
 
 The IBM sort is commonly invoked as ``SORT``, ``ICEMAN``, ``DFSORT``, or
-``SORTD``.  The SYSIN control stream uses ``SORT FIELDS=(…)`` with optional
+``SORTD``, and the third-party Syncsort product under the compatible name
+``SYNCSORT``.  The SYSIN control stream uses ``SORT FIELDS=(…)`` with optional
 ``INCLUDE``, ``OMIT``, ``INREC``, ``OUTREC`` statements.  The profile only
 does a shallow parse — enough to surface the *fact* that the step sorts
 and which filters it applies — but does not attempt to validate field
@@ -23,7 +24,7 @@ _RE_MERGE = re.compile(r"\bMERGE\s+FIELDS\s*=", re.IGNORECASE)
 
 
 class SortProfile(ProgramProfile):
-    program_names = frozenset({"SORT", "DFSORT", "ICEMAN", "SORTD"})
+    program_names = frozenset({"SORT", "DFSORT", "ICEMAN", "SORTD", "SYNCSORT"})
 
     def analyze(self, step) -> ProgramAnalysis:
         text = _sysin_text(step) or ""
