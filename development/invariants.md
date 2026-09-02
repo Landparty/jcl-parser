@@ -1,17 +1,17 @@
 ---
 title: Key Invariants
-updated: 2026-06-27
-sources: LegacyLens team, 2026-06-27
+updated: 2026-09-02
+sources: LegacyLens team, 2026-06-27; parser silent-drop audit, 2026-09-02
 ---
 
 # Key Invariants
 
-14 non-obvious behaviors that bite contributors. Read before touching any parsing code.
+16 non-obvious behaviors that bite contributors. Read before touching any parsing code.
 
 ---
 
-**1. Column 71 is the continuation column.**
-JCL content occupies columns 1–71. Column 72 is sometimes a sequence number. `ContinuationLineHandler` enforces this — it merges multi-line statements before any parsing occurs. **Never pass pre-stripped lines** to `parse_jcl()`; doing so breaks continuation detection.
+**1. Statement content stops at column 71.**
+JCL content occupies columns 1–71. Column 72 holds the *continuation indicator* (any non-blank character when the statement continues on the next record) and columns 73–80 the sequence/identifier field. `normalize_jcl_line()` strips both from fixed-format records — an 80-column record always, and a 72-character record whose column 71 is blank and column 72 is not (a record whose sequence field was trimmed). Shorter lines are modern text-editor JCL and are never truncated. `ContinuationLineHandler` then merges multi-line statements before any parsing occurs. **Never pass pre-stripped lines** to `parse_jcl()`; doing so breaks continuation detection.
 
 ---
 
@@ -82,7 +82,17 @@ Every `pytest` run enforces `--cov-fail-under=90`. If you add a new module, add 
 
 ---
 
-**14. `builtin_procs.py` contains non-verbatim templates.**
+**14. The comment field ends the operands at the first blank.**
+A statement's operand field ends at the first blank outside quotes and parentheses; the rest of the record is a free-form comment (`//STEP1 EXEC PGM=X    RUN THE THING`). `split_comment_field()` in `_statement_parser.py` removes it *before* continuation merging — a comment after a trailing comma would otherwise hide the comma and every continued operand would be lost. Two carve-outs: `IF`/`THEN`/`ELSE`/`ENDIF` are blank-delimited by syntax and are never touched, and a blank that follows a comma is treated as still inside the operand field when what comes next is a quoted string, a `(`, or a `KEY=VALUE` token (`//J JOB (ACCT), 'PGMR',CLASS=A` — illegal per z/OS, common in the wild). A removed comment that contains an `=` is reported on `job.warnings` rather than discarded quietly.
+
+---
+
+**15. A statement keyword in the name field is still a name.**
+`OUTPUT`, `SET`, `IF`, `DATA` and every other operation keyword are legal ddnames and step names. `//OUTPUT DD SYSOUT=*` is a DD named OUTPUT, not an OUTPUT statement — a *second* token that is itself an operation keyword settles which field is which (`_is_named_statement()`). The same rule rescues a statement whose name field starts after column 3 (`//   STEP2 EXEC PGM=X`), which would otherwise look like a continuation record and be folded into the statement before it.
+
+---
+
+**16. `builtin_procs.py` contains non-verbatim templates.**
 The built-in IBM utility PROC templates (IMS, DB2, COBOL) are **structural approximations**, not exact copies of the IBM-supplied PROCs. They are sufficient for static analysis and PROC expansion in tests, but must not be submitted to a real mainframe.
 
 ---

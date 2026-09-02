@@ -57,6 +57,196 @@ _PARAMETER_PARSER = None
 _OPERATOR_PREFIXES: frozenset = frozenset("¬^~!<>")
 
 
+#: Statement types whose operands are blank-delimited (``IF (A) THEN``), so the
+#: "first blank at paren depth 0 ends the operand field" comment rule does not
+#: hold for them.
+_BLANK_DELIMITED_TYPES: frozenset[str] = frozenset({"IF", "THEN", "ELSE", "ENDIF"})
+
+#: Statement types that take no operands at all — anything in their operand
+#: field is a comment (``//  PEND  END OF PROC``).
+_NO_OPERAND_TYPES: frozenset[str] = frozenset({"PEND", "ENDCNTL"})
+
+
+def _is_named_statement(tokens: list[str], name_field_present: bool) -> bool:
+    """Return True when ``tokens[0]`` is a name field and ``tokens[1]`` the operation.
+
+    Two real-world records need this:
+
+    * ``//OUTPUT   DD SYSOUT=*`` — ``OUTPUT`` is a perfectly legal ddname (so
+      are ``SET``, ``IF``, ``DATA`` and every other operation keyword).  Read
+      naively, the leading keyword looks like the operation and the whole DD
+      statement disappears.
+    * ``//   STEP2 EXEC PGM=X`` — a statement whose name field starts after
+      column 3.  Its blank name field makes it look like a continuation record,
+      which would fold it into the preceding statement.
+
+    In both cases a *second* token that is itself an operation keyword settles
+    it: the first token is the name.
+    """
+    if len(tokens) < 2 or tokens[1].upper() not in _STATEMENT_TYPES:
+        return False
+    if name_field_present:
+        return True
+    return tokens[0].upper() not in _STATEMENT_TYPES
+
+
+def _operand_field(line: str, group_operation: str = "") -> tuple[int, str] | None:
+    """Locate the operand field of a JCL statement record.
+
+    Returns ``(index_into_line, operation)`` where *index_into_line* is where
+    the operand field starts and *operation* is the upper-cased operation
+    token (``DD``, ``EXEC``, ...).  Returns ``None`` when *line* is not a JCL
+    statement record or has no operation token at all.
+
+    A record whose name field is blank and whose first token is neither a
+    recognised statement type nor the name of a misindented statement is a
+    continuation record: its operands resume at that token and its operation is
+    *group_operation* — the operation of the statement it continues, which only
+    the caller knows.
+
+    On the parse hot path, so it works with ``str.split`` (the remainder of a
+    bounded split is a suffix of *line*, which gives the index directly)
+    rather than scanning character by character.
+    """
+    if not line.startswith("//") or line[2:3] == "*":
+        return None
+    content = line[2:]
+    stripped = content.lstrip()
+    if not stripped:
+        return None
+
+    if len(stripped) == len(content):
+        # Name field present: the operation is the second token.
+        parts = stripped.split(None, 2)
+        if len(parts) < 2:
+            return None
+        operation = parts[1].upper()
+        rest = parts[2] if len(parts) > 2 else ""
+    else:
+        head = stripped.split(None, 1)
+        token = head[0].upper()
+        tail = head[1] if len(head) > 1 else ""
+        if token in _STATEMENT_TYPES:
+            operation = token
+            rest = tail
+        elif _is_named_statement(stripped.split(None, 2), False):
+            # Misindented statement (``//   STEP2 EXEC PGM=X``): the first
+            # token is its name field, the second its operation.
+            after_name = tail.split(None, 1)
+            operation = after_name[0].upper()
+            rest = after_name[1] if len(after_name) > 1 else ""
+        else:
+            # Continuation record — operands resume right here.
+            return (len(line) - len(stripped), group_operation.upper())
+
+    return (len(line) - len(rest), operation)
+
+
+def statement_operation(line: str, group_operation: str = "") -> str:
+    """Return the upper-cased operation token of a JCL statement record.
+
+    Returns ``""`` for comments, non-JCL records and records with no
+    operation token.
+    """
+    found = _operand_field(line, group_operation)
+    return found[1] if found is not None else ""
+
+
+def _resumes_operands(text: str) -> bool:
+    """Return True if *text*, following a trailing comma and blanks, looks like
+    more operands rather than a comment.
+
+    ``//JOB1 JOB (ACCT), 'PGMR',CLASS=A`` puts blanks inside the operand field —
+    illegal per z/OS but common in the wild — whereas
+    ``//DD1 DD DSN=A.B,   COPY THE FILE`` is a comment on a continued
+    statement.  A quoted string, an opening paren, or a ``KEY=VALUE`` token
+    means the operand field is still going.
+    """
+    if text[:1] in ("'", "("):
+        return True
+    token = text.split(None, 1)[0]
+    return "=" in token.split(",")[0]
+
+
+def _find_comment_start(operands: str) -> int | None:
+    """Index of the comment field inside *operands*, or ``None`` if there is none.
+
+    The operand field ends at the first blank that is outside quotes and
+    outside parentheses; everything after it is the comment field (z/OS JCL
+    Reference, "Comment field").
+    """
+    if " " not in operands and "\t" not in operands:
+        # No blank at all: the operand field runs to the end of the record.
+        return None
+    depth = 0
+    in_quotes = False
+    i = 0
+    n = len(operands)
+    while i < n:
+        char = operands[i]
+        if char == "'":
+            if in_quotes and i + 1 < n and operands[i + 1] == "'":
+                i += 2
+                continue
+            in_quotes = not in_quotes
+        elif not in_quotes:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            elif char.isspace() and depth <= 0:
+                rest = operands[i:].lstrip()
+                if not rest:
+                    return None
+                if operands[:i].rstrip().endswith(",") and _resumes_operands(rest):
+                    i = n - len(rest)
+                    continue
+                return i
+        i += 1
+    return None
+
+
+def split_comment_field(line: str, group_operation: str = "") -> tuple[str, str]:
+    """Split a JCL statement record into ``(statement, comment)``.
+
+    In JCL a statement's operand field ends at the first blank outside quotes
+    and parentheses; the remainder of the record is a free-form comment.  The
+    comment must be removed before continuation merging, otherwise a comment
+    after a trailing comma hides the comma (breaking continuation detection and
+    dropping the continued operands) and a comment after a complete statement
+    is absorbed into the last parameter value.
+
+    *group_operation* is the operation of the statement this record continues;
+    it is only consulted for continuation records (blank name field, first
+    token not a statement type).  Records this function cannot interpret are
+    returned unchanged, with an empty comment.
+    """
+    found = _operand_field(line, group_operation)
+    if found is None:
+        return line, ""
+    start, operation = found
+    if operation in _BLANK_DELIMITED_TYPES:
+        return line, ""
+    operands = line[start:]
+    if not operands.strip():
+        return line, ""
+    if operation in _NO_OPERAND_TYPES:
+        return line[:start].rstrip(), operands.strip()
+    cut = _find_comment_start(operands)
+    if cut is None:
+        return line, ""
+    return (line[:start] + operands[:cut]).rstrip(), operands[cut:].strip()
+
+
+def strip_comment_field(line: str, group_operation: str = "") -> str:
+    """Return *line* without its trailing comment field.
+
+    Thin wrapper over :func:`split_comment_field` for callers that do not need
+    the comment text.
+    """
+    return split_comment_field(line, group_operation)[0]
+
+
 def parse_statement(line: str, line_number: int = 0) -> Statement | None:
     """
     Parse individual JCL statement for syntax analysis.
@@ -112,13 +302,16 @@ def parse_statement(line: str, line_number: int = 0) -> Statement | None:
     content = line[2:]
 
     # Handle continuation lines - these start with spaces after // BUT check if it's actually a statement without name
+    name_field_present = bool(content) and not content[0].isspace()
     if content.startswith(" ") and content.strip():
         # Check if this might be a statement without a name field (like // SET, // IF, // EXEC, // DD, etc.)
         content_stripped = content.strip()
         _cs_parts = content_stripped.split()
         first_token = _cs_parts[0].upper() if _cs_parts else ""
         # All valid JCL statement types that can appear without a name field
-        if first_token not in _STATEMENT_TYPES:
+        if first_token not in _STATEMENT_TYPES and not _is_named_statement(
+            _cs_parts, False
+        ):
             # This is a true continuation line - return None
             return None
 
@@ -140,7 +333,9 @@ def parse_statement(line: str, line_number: int = 0) -> Statement | None:
     _cs_parts2 = content_stripped.split()
     first_token = _cs_parts2[0] if _cs_parts2 else ""
 
-    if first_token.upper() in _STATEMENT_TYPES:
+    if first_token.upper() in _STATEMENT_TYPES and not _is_named_statement(
+        _cs_parts2, name_field_present
+    ):
         # No name field - statement starts directly with type
         name_part = ""
         rest = content_stripped

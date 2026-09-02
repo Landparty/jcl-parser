@@ -275,3 +275,57 @@ def test_jobparm_parsing():
     assert dd1.has_inline_data
     # Ensure inner /* (delimiter) was not confused with JES statement
     assert "Data line 1" in dd1.inline_data
+
+
+def test_production_annotated_job_loses_nothing():
+    """Production-shape JCL: 80-column records with sequence numbers, comment
+    fields on most statements, a column-72 continuation indicator, a JES3
+    ``//*MAIN`` card, a ddname called OUTPUT and a CNTL block.
+
+    Every one of those used to corrupt or silently drop something: comment
+    text ended up inside dataset names, the column-72 indicator renamed the
+    next parameter, ``//OUTPUT DD`` disappeared into a phantom OUTPUT
+    statement, and the CNTL block's record was merged into its own statement.
+    """
+    from jclparser.model import iter_execution_steps
+
+    job = parse_jcl(FIXTURES_DIR / "production_annotated.jcl")
+
+    assert job.name == "PRDPAY01"
+    assert job.parameters["CLASS"] == "A"
+    assert job.parameters["REGION"] == "0M"
+
+    # Comment fields never reach the operands.
+    assert job.set_statements == {"HLQ": "PROD.PAYROLL", "CYCLE": "M01"}
+    assert job.jcllib_order == ["PROD.PROCLIB", "SYS1.PROCLIB"]
+
+    steps = {step.name: step for step in iter_execution_steps(job.steps)}
+    assert set(steps) == {"STEP010", "STEP020", "STEP030", "STEP040", "STEP050"}
+    assert steps["STEP020"].program == "IEBGENER"
+
+    # Column-72 continuation indicator did not swallow the DISP that follows.
+    sortout = steps["STEP010"].get_dd("SORTOUT")
+    assert sortout.dataset_name == "PROD.PAYROLL.SORTED.M01"
+    assert sortout.parameters["DISP"] == ["NEW", "CATLG", "DELETE"]
+    assert sortout.parameters["UNIT"] == "SYSDA"
+    assert "DCB" in sortout.parameters
+
+    # In-stream data survives intact.
+    sysin = steps["STEP010"].get_dd("SYSIN")
+    assert "SORT FIELDS=(1,9,CH,A)" in sysin.inline_data
+
+    # A DD literally named OUTPUT is a DD, not an OUTPUT statement.
+    assert steps["STEP020"].get_dd("OUTPUT") is not None
+    assert [out.name for out in job.output_statements] == ["RPTOUT"]
+
+    # PROC call with an override, inside an IF/ELSE.
+    assert steps["STEP030"].procedure == "PAYPROC"
+    assert "PS1.AUDIT" in steps["STEP030"].dd_overrides
+
+    # JES3 control card and CNTL block are both recorded.
+    assert any(s.name.upper() == "MAIN" for s in job.jes_typed_statements)
+    cntl = job.control_statements[0]
+    assert cntl.type == "CNTL" and "PRINTDEV" in cntl.parameters["_records"][0]
+
+    # Nothing needed a warning: this job is clean JCL.
+    assert job.warnings == []

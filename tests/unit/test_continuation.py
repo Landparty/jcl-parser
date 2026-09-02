@@ -413,17 +413,18 @@ class TestNormalizeLongLines:
         # Verify the dataset name is intact
         assert "AWS.M2.CARDDEMO.STATEMNT.PS" in str(params["DSN"])
 
-    def test_creastmt_job_corrupted_line_raises_syntax_error(self):
-        """Regression: CREASTMT JCL with garbled continuation line must raise JCLSyntaxError.
+    def test_creastmt_job_corrupted_line_reports_garbled_text(self):
+        """Regression: CREASTMT JCL with a garbled continuation line.
 
         The STMTFILE DD in STEP040 has garbage text on one continuation line:
             //         SPACE=(CYL,(1,1),RLSE), 00,RECFM=FB), ATA.VSAM.KSDS
-        The trailing ` 00,RECFM=FB), ATA.VSAM.KSDS` is corrupted content that
-        produces an unmatched closing parenthesis.  The parser must raise a
-        JCLSyntaxError rather than silently producing wrong output.
+        Everything after the blank that follows ``RLSE),`` sits in the record's
+        comment field, so z/OS reads the statement as ``SPACE=(CYL,(1,1),RLSE),``
+        continued on the next record — and so does this parser.  The clean
+        operands must all survive, and because the discarded text looks like
+        operands rather than prose it must be reported on ``job.warnings``
+        instead of vanishing.
         """
-        from jclparser.errors import JCLSyntaxError
-
         jcl = textwrap.dedent("""\
             //CREASTMT JOB 'Create Statement',CLASS=A,MSGCLASS=H,MSGLEVEL=(1,1),
             //         NOTIFY=&SYSUID,TIME=1440
@@ -435,10 +436,19 @@ class TestNormalizeLongLines:
             //         SPACE=(CYL,(1,1),RLSE), 00,RECFM=FB), ATA.VSAM.KSDS
             //         DSN=AWS.M2.CARDDEMO.STATEMNT.PS
             """)
-        import pytest as _pytest
+        job = parse_jcl(jcl)
 
-        with _pytest.raises(JCLSyntaxError, match="[Uu]nmatched parenthes"):
-            parse_jcl(jcl)
+        dd = job.steps[0].dd_statements[0]
+        assert dd.name == "STMTFILE"
+        assert dd.parameters["DSN"] == "AWS.M2.CARDDEMO.STATEMNT.PS"
+        assert dd.parameters["UNIT"] == "SYSDA"
+        assert "DISP" in dd.parameters and "DCB" in dd.parameters
+        assert "SPACE" in dd.parameters
+        # The garbled tail is reported, not silently dropped.
+        assert any(
+            "ATA.VSAM.KSDS" in warning and "line 8" in warning.lower()
+            for warning in job.warnings
+        ), job.warnings
 
     def test_creastmt_job_clean_parses_fully(self):
         """Regression: full CREASTMT JCL without the corrupted line must parse cleanly.

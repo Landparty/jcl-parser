@@ -9,7 +9,12 @@ from dataclasses import dataclass
 import logging
 import re
 
-from ._statement_parser import _STATEMENT_TYPES
+from ._statement_parser import (
+    _STATEMENT_TYPES,
+    _is_named_statement,
+    split_comment_field,
+    statement_operation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +65,12 @@ class ContinuationLineHandler:
 
     def __init__(self):
         self.context = ContinuationContext()
+        #: ``(index_in_input_list, comment_text)`` for every stripped comment
+        #: field that still looks like it holds operands (it contains an
+        #: ``=``).  Populated by :meth:`merge_continuation_lines`; the parser
+        #: turns these into job warnings so a truncated or garbled statement
+        #: is never dropped without a trace.
+        self.suspect_comments: List[Tuple[int, str]] = []
 
     def _has_implicit_continuation(self, previous_line: str) -> bool:
         """Check if previous line ends with comma (implicit continuation)."""
@@ -96,7 +107,11 @@ class ContinuationLineHandler:
         if not line.startswith("//"):
             return False
         content = line[2:]
-        return bool(content) and not content[0].isspace()
+        if bool(content) and not content[0].isspace():
+            return True
+        # ``//   STEP2 EXEC PGM=X`` — a statement whose name field starts late.
+        # Its second token being an operation keyword gives it away.
+        return _is_named_statement(content.split(), False)
 
     def is_continuation_line(
         self,
@@ -133,6 +148,9 @@ class ContinuationLineHandler:
             if has_implicit_continuation or has_unclosed_context:
                 return True
 
+            if self._looks_like_new_statement(line):
+                return False
+
             first_keyword = self._get_first_keyword(line)
             if first_keyword and first_keyword not in self.JCL_KEYWORDS:
                 return True
@@ -148,6 +166,18 @@ class ContinuationLineHandler:
 
         return False
 
+    def _strip_comment(self, line: str, group_operation: str, line_num: int) -> str:
+        """Strip *line*'s comment field, recording suspicious ones.
+
+        A comment field containing an ``=`` is more likely to be truncated or
+        garbled operands than prose, so it is remembered in
+        :attr:`suspect_comments` for the caller to report.
+        """
+        statement, comment = split_comment_field(line, group_operation)
+        if "=" in comment:
+            self.suspect_comments.append((line_num, comment))
+        return statement
+
     def merge_continuation_lines(self, lines: List[str]) -> List[Tuple[str, int]]:
         """
         Merge continuation lines into complete statements.
@@ -159,6 +189,7 @@ class ContinuationLineHandler:
             List of (merged_line, original_line_number) tuples
         """
         merged = []
+        self.suspect_comments = []
         i = 0
 
         while i < len(lines):
@@ -176,6 +207,12 @@ class ContinuationLineHandler:
                 merged.append((line, original_line_num))
                 i += 1
                 continue
+
+            # Strip the statement's comment field before anything else: a
+            # comment after a trailing comma otherwise hides the comma and the
+            # continued operands are lost (see split_comment_field).
+            group_operation = statement_operation(line)
+            line = self._strip_comment(line, group_operation, original_line_num)
 
             # Start building merged line
             merged_line = line.rstrip()
@@ -214,6 +251,13 @@ class ContinuationLineHandler:
                 # Stop merging if we hit an empty line
                 if not next_stripped:
                     break
+
+                # A continuation record only has a comment field of its own
+                # when the statement so far is syntactically closed (the
+                # blank that starts a comment would otherwise be inside the
+                # quoted string or parenthesised list being continued).
+                if not cached_ctx.in_quotes and cached_ctx.paren_depth == 0:
+                    next_line = self._strip_comment(next_line, group_operation, j + 1)
 
                 # Check if next line is a continuation, passing cached context
                 # to avoid re-scanning the full (growing) merged_line.

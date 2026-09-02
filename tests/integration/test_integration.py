@@ -259,11 +259,14 @@ class TestComplexJCLFeatures:
         assert "DCB" in output_dd.parameters
         dcb_param = output_dd.parameters["DCB"]
 
-        # DCB might be parsed as string or dictionary depending on implementation
+        # DCB may be a raw string, a subfield list (the parser's normal shape
+        # for a parenthesised value), or a mapping.
         if isinstance(dcb_param, str):
             assert "LRECL=80" in dcb_param
             assert "BLKSIZE=800" in dcb_param
             assert "RECFM=FB" in dcb_param
+        elif isinstance(dcb_param, list):
+            assert dcb_param == ["LRECL=80", "BLKSIZE=800", "RECFM=FB"]
         else:  # Dictionary format
             assert dcb_param["LRECL"] == "80"
             assert dcb_param["BLKSIZE"] == "800"

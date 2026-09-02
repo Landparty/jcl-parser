@@ -116,6 +116,21 @@ class JobBuilder:
         #: statement, which is legal per z/OS; flushed once job exists.
         self.pending_jes_statements: list[str] = []
         self.pending_jes_typed: list[Any] = []
+        #: Statements that carry job-level information but were seen before the
+        #: JOB statement — or in a JOB-less member such as a cataloged
+        #: procedure, where no JOB statement ever arrives.  They used to be
+        #: dropped on the floor; they are flushed onto the Job in finish().
+        self.pending_sets: dict[str, str] = {}
+        self.pending_exported: set[str] = set()
+        self.pending_jcllib: list[str] = []
+        self.pending_includes: list[str] = []
+        self.pending_outputs: list[OutputStatement] = []
+        self.pending_conditionals: list[ConditionalBlock] = []
+        self.pending_steps: list[Step | ConditionalBlock] = []
+        self.pending_control: list[Statement] = []
+        #: The open ``CNTL`` block, whose program control records are collected
+        #: verbatim until its ``ENDCNTL``.
+        self.current_cntl: Statement | None = None
 
     # ------------------------------------------------------------------ #
     # Line-level handling (before statement parsing)
@@ -158,14 +173,27 @@ class JobBuilder:
         return True
 
     def handle_comment_line(self, line: str, line_num: int) -> None:
-        """Recognise JES3 ``//*ROUTE XEQ`` control statements before dropping
-        the comment line."""
-        if line.strip().startswith("//*") and self.job is not None:
-            from .jes_statements import parse_jes3_route_xeq
+        """Recognise JES3 ``//*COMMAND`` control statements (``//*MAIN``,
+        ``//*ROUTE XEQ``, ...) before dropping the comment line.
 
-            jes3 = parse_jes3_route_xeq(line, line_num)
-            if jes3 is not None:
-                self.job.jes_typed_statements.append(jes3)
+        They share the ``//*`` prefix with comments, so without this they would
+        be discarded along with them.  Statements seen before the JOB card are
+        buffered and flushed by :meth:`finish`.
+        """
+        if not line.strip().startswith("//*"):
+            return
+        from .jes_statements import parse_jes3_control
+
+        jes3 = parse_jes3_control(line, line_num)
+        if jes3 is None:
+            return
+        raw_text = line.strip()
+        if self.job is not None:
+            self.job.jes_typed_statements.append(jes3)
+            self.job.jes_statements.append(raw_text)
+        else:
+            self.pending_jes_typed.append(jes3)
+            self.pending_jes_statements.append(raw_text)
 
     # ------------------------------------------------------------------ #
     # Statement dispatch
@@ -203,15 +231,14 @@ class JobBuilder:
         elif stmt.type == "NULL":
             # NULL statement (//) - just ignore, used as delimiter
             pass
-        elif stmt.type == "COMMAND":
-            # COMMAND statement - operator commands, just ignore
-            pass
-        elif stmt.type in ["CNTL", "ENDCNTL"]:
-            # CNTL/ENDCNTL statements - utility control, just ignore
-            pass
-        elif stmt.type == "SCHEDULE":
-            # SCHEDULE statement - scheduling control, no model representation
-            pass
+        elif stmt.type in ("COMMAND", "SCHEDULE", "CNTL"):
+            # No richer model representation, but they are real statements —
+            # record them verbatim rather than discarding them.
+            self._on_control(stmt)
+        elif stmt.type == "ENDCNTL":
+            # Closes the CNTL block opened by _on_control; the block itself is
+            # already recorded, so there is nothing more to keep.
+            self.current_cntl = None
         elif stmt.type == "UNKNOWN":
             self._on_unknown(stmt, line_num)
         elif stmt.type == "XMIT":
@@ -333,63 +360,67 @@ class JobBuilder:
         self.current_step = None
 
     def _on_set(self, stmt: Statement) -> None:
-        # SET symbol=value statement
-        if self.job:
-            # For SET statements, parameters are in the format SYMBOL=VALUE
-            for key, value in stmt.parameters.items():
-                if not is_positional_key(key):
-                    self.job.add_set(
-                        key, _resolve_set_value(value, self.job.set_statements)
-                    )
-                else:
-                    # Positional parameter might be SYMBOL=VALUE without keyword
-                    param_val = value
-                    if "=" in param_val:
-                        sym, val = param_val.split("=", 1)
-                        self.job.add_set(
-                            sym.strip(),
-                            _resolve_set_value(val.strip(), self.job.set_statements),
-                        )
+        # SET symbol=value statement.  A SET before the JOB statement (or in a
+        # JOB-less member) is buffered rather than dropped; finish() flushes it.
+        symbols = self.job.set_statements if self.job else self.pending_sets
+
+        def _record(symbol: str, value: str) -> None:
+            resolved = _resolve_set_value(value, symbols)
+            if self.job:
+                self.job.add_set(symbol, resolved)
+            else:
+                self.pending_sets[symbol] = resolved
+
+        # For SET statements, parameters are in the format SYMBOL=VALUE
+        for key, value in stmt.parameters.items():
+            if not is_positional_key(key):
+                _record(key, value)
+            else:
+                # Positional parameter might be SYMBOL=VALUE without keyword
+                param_val = value
+                if "=" in param_val:
+                    sym, val = param_val.split("=", 1)
+                    _record(sym.strip(), val.strip())
 
     def _on_export(self, stmt: Statement) -> None:
         # EXPORT SYMLIST=(A,B,...)  or  EXPORT SYMLIST=*
-        if self.job:
-            symlist = stmt.parameters.get("SYMLIST")
-            names: list[str] = []
-            if isinstance(symlist, list):
-                names = [str(n).strip().upper() for n in symlist if n]
-            elif isinstance(symlist, str):
-                names = [
-                    n.strip().upper()
-                    for n in symlist.strip("()").split(",")
-                    if n.strip()
-                ]
-            for n in names:
-                self.job.exported_symbols.add(n)
+        symlist = stmt.parameters.get("SYMLIST")
+        names: list[str] = []
+        if isinstance(symlist, list):
+            names = [str(n).strip().upper() for n in symlist if n]
+        elif isinstance(symlist, str):
+            names = [
+                n.strip().upper() for n in symlist.strip("()").split(",") if n.strip()
+            ]
+        sink = self.job.exported_symbols if self.job else self.pending_exported
+        for n in names:
+            sink.add(n)
 
     def _on_jcllib(self, stmt: Statement) -> None:
         # JCLLIB ORDER=(lib1,lib2,...)
-        if self.job and "ORDER" in stmt.parameters:
-            order_value = stmt.parameters["ORDER"]
-            # ORDER parameter might already be parsed as a list
-            if isinstance(order_value, list):
-                self.job.jcllib_order.extend(order_value)
-            elif isinstance(order_value, str):
-                libs = order_value.strip("()").split(",")
-                self.job.jcllib_order.extend([lib.strip() for lib in libs])
+        if "ORDER" not in stmt.parameters:
+            return
+        order_value = stmt.parameters["ORDER"]
+        sink = self.job.jcllib_order if self.job else self.pending_jcllib
+        # ORDER parameter might already be parsed as a list
+        if isinstance(order_value, list):
+            sink.extend(order_value)
+        elif isinstance(order_value, str):
+            libs = order_value.strip("()").split(",")
+            sink.extend([lib.strip() for lib in libs])
 
     def _on_include(self, stmt: Statement) -> None:
         # INCLUDE MEMBER=name
-        if self.job:
-            member = stmt.parameters.get("MEMBER") or stmt.parameters.get(
-                f"{POSITIONAL_PARAM_PREFIX}0"
-            )
-            if member:
-                self.job.includes.append(member)
+        member = stmt.parameters.get("MEMBER") or stmt.parameters.get(
+            f"{POSITIONAL_PARAM_PREFIX}0"
+        )
+        if member:
+            sink = self.job.includes if self.job else self.pending_includes
+            sink.append(member)
 
     def _on_conditional(self, stmt: Statement, line_num: int) -> None:
         # Conditional logic - track conditionals properly
-        if stmt.type == "IF" and self.job:
+        if stmt.type == "IF":
             condition_parts = []
             if stmt.name and stmt.name != "IF":
                 condition_parts.append(stmt.name)
@@ -406,7 +437,10 @@ class JobBuilder:
                 condition_ast=parse_condition(condition),
                 line_number=stmt.line_number,
             )
-            self.job.add_conditional(conditional)
+            if self.job is not None:
+                self.job.add_conditional(conditional)
+            else:
+                self.pending_conditionals.append(conditional)
             if self.conditional_stack:
                 active_cond, active_branch = self.conditional_stack[-1]
                 if active_branch == "THEN":
@@ -415,8 +449,10 @@ class JobBuilder:
                     active_cond.add_else_step(conditional)
             elif self.current_procedure is not None:
                 self.current_procedure.steps.append(conditional)
-            else:
+            elif self.job is not None:
                 self.job.steps.append(conditional)
+            else:
+                self.pending_steps.append(conditional)
             self.conditional_stack.append((conditional, "THEN"))
         elif stmt.type == "THEN":
             if self.conditional_stack:
@@ -462,8 +498,21 @@ class JobBuilder:
 
     def _on_output(self, stmt: Statement) -> None:
         # OUTPUT statement - JES output descriptor; promote to typed model
-        if self.job:
-            self.job.output_statements.append(OutputStatement.from_statement(stmt))
+        sink = self.job.output_statements if self.job else self.pending_outputs
+        sink.append(OutputStatement.from_statement(stmt))
+
+    def _on_control(self, stmt: Statement) -> None:
+        """Record a COMMAND / SCHEDULE / CNTL statement verbatim."""
+        if stmt.type == "CNTL":
+            stmt.parameters.setdefault("_records", [])
+            self.current_cntl = stmt
+        sink = self.job.control_statements if self.job else self.pending_control
+        sink.append(stmt)
+
+    def handle_control_data(self, line: str) -> None:
+        """Collect a program control record from inside a CNTL/ENDCNTL block."""
+        if self.current_cntl is not None:
+            self.current_cntl.parameters["_records"].append(line)
 
     def _on_unknown(self, stmt: Statement, line_num: int) -> None:
         # Unknown statement type - log but continue processing
@@ -501,6 +550,10 @@ class JobBuilder:
             self.current_dd = None
             self.in_inline_data = True
             self.inline_data_lines = []
+            self._warnings_sink().append(
+                f"Line {stmt.line_number}: job-level XMIT has no step to attach "
+                f"its data to; the transmitted records were discarded"
+            )
 
     # ------------------------------------------------------------------ #
     # Finalisation
@@ -534,6 +587,21 @@ class JobBuilder:
             job.jes_statements.extend(self.pending_jes_statements)
         if self.pending_jes_typed:
             job.jes_typed_statements.extend(self.pending_jes_typed)
+
+        # Statements seen before the JOB statement (or in a JOB-less member)
+        # are attached now.  Later definitions of the same SET symbol win, so
+        # buffered values only fill in symbols the job does not already define.
+        for symbol, value in self.pending_sets.items():
+            job.set_statements.setdefault(symbol, value)
+        job.exported_symbols |= self.pending_exported
+        job.jcllib_order[:0] = self.pending_jcllib
+        for member in self.pending_includes:
+            if member not in job.includes:
+                job.includes.append(member)
+        job.output_statements[:0] = self.pending_outputs
+        job.conditionals[:0] = self.pending_conditionals
+        job.steps[:0] = self.pending_steps
+        job.control_statements[:0] = self.pending_control
 
         # orphaned_dds is only ever non-empty here when the whole job had no
         # EXEC statement at all (the first EXEC always flushes and clears the

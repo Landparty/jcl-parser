@@ -24,14 +24,21 @@ def normalize_jcl_line(line: str) -> str:
     """
     Normalize JCL line by removing extra whitespace and handling continuations.
 
-    Strips mainframe sequence numbers from columns 73-80.  In the standard
-    80-column JCL record format columns 73-80 are identifier/sequence fields
-    that must not be interpreted as JCL content.
+    Strips mainframe sequence numbers from columns 73-80 and the column-72
+    continuation indicator.  In the standard 80-column JCL record format
+    columns 1-71 hold the statement, column 72 holds a non-blank character
+    when the statement continues on the next record, and columns 73-80 are
+    identifier/sequence fields.  None of those must be interpreted as JCL
+    content.
 
     Truncation is only applied when the raw line is at least 80 characters,
     indicating a true mainframe fixed-width record.  Lines shorter than 80
     characters are assumed to come from a modern text editor where all
-    characters are actual JCL content and must not be truncated.
+    characters are actual JCL content and must not be truncated — with one
+    exception: a record of exactly 72 characters whose column 71 is blank and
+    whose column 72 is not is a fixed-format record that had its trailing
+    sequence field trimmed, so its column-72 character is a continuation
+    indicator rather than content.
 
     Args:
         line: Raw JCL line
@@ -39,11 +46,15 @@ def normalize_jcl_line(line: str) -> str:
     Returns:
         Normalized line
     """
-    # Strip mainframe sequence numbers (cols 73-80, 0-indexed 72-79).
-    # Only do this for full 80-column mainframe records; shorter lines are
-    # modern text-editor JCL where every character is content.
+    # Strip mainframe sequence numbers (cols 73-80, 0-indexed 72-79) and the
+    # column-72 continuation indicator (0-indexed 71).  Only do this for full
+    # 80-column mainframe records; shorter lines are modern text-editor JCL
+    # where every character is content.
     if len(line) >= 80:
-        line = line[:72]
+        line = line[:71]
+    elif len(line) == 72 and line[70] == " " and not line[71].isspace():
+        # Sequence field trimmed away, continuation indicator left behind.
+        line = line[:71]
 
     # Remove trailing whitespace but preserve leading spaces for continuation detection
     line = line.rstrip()
