@@ -93,6 +93,51 @@ class TestIKJEFT01InvokedPrograms:
         results = analyze_job(job)
         assert results[0].invoked_programs == ["BILLRUN"]
 
+    def test_run_program_in_parm_surfaced_as_invoked(self):
+        """The DSN command stream can ride PARM= instead of SYSTSIN.
+
+        `SYSTSIN DD DUMMY` alongside a PARM-borne command is a normal way to
+        run one program under the TSO batch driver, and reading only the DD
+        misses the real program entirely.
+        """
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//MQCONS   EXEC PGM=IKJEFT01,REGION=4M,\n"
+            "//         PARM='DSN SYSTEM(DB2P) RUN PROGRAM(DEPTMQC) "
+            "PLAN(DEPTPLAN)'\n"
+            "//SYSTSIN  DD  DUMMY\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert results[0].invoked_programs == ["DEPTMQC"]
+
+    def test_parm_and_systsin_are_both_read(self):
+        """A step may carry a command in each place; neither hides the other,
+        and `extract_invoked_programs` de-duplicates a program named twice."""
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IKJEFT01,\n"
+            "//         PARM='DSN SYSTEM(DB2P) RUN PROGRAM(FROMPARM)'\n"
+            "//SYSTSIN  DD *\n"
+            "  RUN PROGRAM(FROMDD) PLAN(APLAN)\n"
+            "/*\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert results[0].invoked_programs == ["FROMPARM", "FROMDD"]
+
+    def test_parm_without_a_command_invokes_nothing(self):
+        """An ordinary PARM on the driver is not a TSO command -- reading it
+        must not manufacture an invocation."""
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IKJEFT01,PARM='%MYCLIST PARM1 PARM2'\n"
+            "//SYSTSIN  DD  DUMMY\n"
+        )
+        job = jp.parse_jcl(src)
+        results = analyze_job(job)
+        assert results[0].invoked_programs == []
+
     def test_no_invocation_leaves_list_empty(self):
         src = (
             "//MYJOB    JOB  (ACCT)\n"
