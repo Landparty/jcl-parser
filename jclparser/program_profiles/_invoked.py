@@ -110,13 +110,42 @@ def extract_invoked_programs(text: str | None) -> list[InvokedProgram]:
 
 
 def collect_control_text(step) -> str:
-    """Join the SYSTSIN/SYSIN in-stream data of a TSO/DB2 driver *step*."""
+    """Join the control text of a TSO/DB2 driver *step*.
+
+    That is the in-stream data of its SYSTSIN/SYSIN DD -- and its ``PARM``,
+    which carries exactly the same TSO command stream when the caller has
+    nothing else to put in it::
+
+        //RUNIT EXEC PGM=IKJEFT01,
+        //      PARM='DSN SYSTEM(DB2P) RUN PROGRAM(MYPROG) PLAN(MYPLAN)'
+        //SYSTSIN DD DUMMY
+
+    Reading only the DD misses the real program in that shape entirely, and
+    ``SYSTSIN DD DUMMY`` alongside a PARM-borne command is common enough on
+    a real site to leave a visible hole in the dependency graph.
+    """
     texts: list[str] = []
+    parm = _parm_text(step)
+    if parm:
+        texts.append(parm)
     for dd_name in ("SYSTSIN", "SYSIN"):
         dd = step.get_dd(dd_name)
         if dd and dd.inline_data:
             texts.append(dd.inline_data)
     return "\n".join(texts)
+
+
+def _parm_text(step) -> str:
+    """The step's ``PARM`` as one string, whatever shape the parser left it in.
+
+    ``PARM=(sub,parm)`` arrives as a list and ``PARM='text'`` as a plain
+    string; both are joined to a single line so the command scanners above
+    see the same text either way.
+    """
+    raw = step.parameters.get("PARM")
+    if isinstance(raw, list):
+        return " ".join(str(part) for part in raw)
+    return str(raw) if raw else ""
 
 
 def invoked_and_sql_notes(combined: str) -> tuple[list[InvokedProgram], list[str]]:
