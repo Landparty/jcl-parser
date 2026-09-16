@@ -3,22 +3,25 @@ type: Subsystem
 title: Validation
 description: Two independent validation layers — structural (post-parse job checks) and parameter (DD/EXEC parameter checks) — plus lint rules in SARIF format.
 tags: [validation, lint, errors, advanced]
-timestamp: 2026-06-28T00:00:00Z
+timestamp: 2026-09-16T00:00:00Z
 ---
 
 # Overview
 
-Two layers, both optional. `validate_jcl()` runs both in one call. The return is always `(Job, list[ParseError])` — never a boolean.
+Two layers, both optional. `validate_jcl()` runs both in one call and returns a flat
+`list[ParseError]` — never a boolean, and **not** a `(Job, errors)` tuple. It discards the
+`Job` it parsed internally, so parse separately if you need the model as well.
 
 # Structural Validation
 
 Implemented in `jclparser/validators.py`.
 
 ```python
-from jclparser import validate_jcl, ErrorSeverity
+from jclparser import parse_jcl, validate_jcl, ErrorSeverity
 
-job, errors = validate_jcl(source, level=ValidationLevel.STANDARD)
+errors = validate_jcl(source, level="structure")  # level is a plain str
 hard_errors = [e for e in errors if e.severity == ErrorSeverity.ERROR]
+job = parse_jcl(source)  # separate call — validate_jcl does not hand back the Job
 ```
 
 Or on an already-parsed job:
@@ -28,11 +31,18 @@ errors = job.validate()
 
 ## Validation Levels
 
-| Level | Description |
-|-------|-------------|
-| `BASIC` | Minimum JCL syntax correctness |
-| `STANDARD` | Default — common structural rules |
-| `STRICT` | All rules including advisory warnings |
+`ValidationLevel` (in `jclparser.plugins`) has exactly three members. There is no
+`STANDARD` and no `STRICT`.
+
+| Member | `validate_jcl(level=...)` string | Description |
+|--------|----------------------------------|-------------|
+| `ValidationLevel.BASIC` | `"basic"` (default) | Parse-time syntax/structure errors only |
+| `ValidationLevel.STRUCTURE` | `"structure"` | Adds `job.validate()` structural rules |
+| `ValidationLevel.SEMANTIC` | `"semantic"` | Adds registered `ValidationPlugin` checks |
+
+`validate_jcl()` compares `level` against the **raw strings** above. `ValidationLevel` is a
+plain `Enum`, not a `StrEnum`, so passing `ValidationLevel.STRUCTURE` silently matches
+nothing and degrades to basic validation — pass the string.
 
 ## What It Checks
 
@@ -70,7 +80,7 @@ ok, msg = validate_dataset_name("SYS1.PARMLIB")  # True, None
 | `JCLSyntaxError` | Malformed JCL that cannot be parsed at all |
 | `JCLValidationError` | Structural rule raised to exception level |
 | `JCLStructureError` | Missing required structural element (e.g., JOB card absent) |
-| `JCLParseError` | Generic parent — catches all four |
+| `JCLParseError` | Generic parent — catches all of the above. Not re-exported from `jclparser`; import from `jclparser.errors` |
 
 # Dataset Lifecycle Validation
 
@@ -96,6 +106,6 @@ Built-in rule IDs follow `JCL-LINT-NNN`. Custom rules extend `LintRule` ABC.
 
 # Citations
 
-[1] [advanced/validation.md](validation.md) — full validation doc with examples
+[1] [development/invariants.md](../development/invariants.md) — invariant 7 (validate_jcl return shape)
 [2] [api/public-api.md](../api/public-api.md) — Tier 1/2 validation export table
 [3] [integration/backend-contract.md](../integration/backend-contract.md) — how backend uses `job.validate()`

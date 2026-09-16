@@ -96,7 +96,7 @@ Attributes the adapter accesses on a `Step`:
 | `step.name` | `str` | Step name |
 | `step.program` | `str \| None` | PGM= value from EXEC statement |
 | `step.is_exploded` | `bool` | True if this step was expanded from a PROC |
-| `step.is_proc_invocation` | `bool` | True if step invokes a PROC (pre-explosion) |
+| `step.is_procedure` | `bool` (property) | True if step invokes a PROC (pre-explosion). Was documented as `step.is_proc_invocation`; no such attribute exists on `Step` — reading it raises `AttributeError` |
 | `step.procedure` | `str \| None` | PROC name if this is a PROC call |
 | `step.original_proc_call` | `str \| None` | Original PROC invocation name |
 | `step.parameters` | `dict` | Step parameters |

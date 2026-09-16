@@ -3,7 +3,7 @@ type: API Reference
 title: jclparser Public API
 description: All exports from jclparser/__init__.py, organized by stability tier; only Tier 1 should be used in new external integrations.
 tags: [api, stability, exports]
-timestamp: 2026-06-28T00:00:00Z
+timestamp: 2026-09-16T00:00:00Z
 ---
 
 # Overview
@@ -20,12 +20,15 @@ Will not be removed or signature-broken without a major version bump.
 |--------|-------------|
 | `parse_jcl(source, ...)` | Main entry — parses JCL string/file/IO; returns `Job` |
 | `parse(source, ...)` | Alias for `parse_jcl` |
-| `validate_jcl(source, ...)` | `parse_jcl` + structural checks; returns `(Job, list[ParseError])` |
-| `parse_statement(line, ...)` | Parse a single JCL statement line in isolation |
+| `validate_jcl(source, level="basic")` | `parse_jcl(strict_mode=True)` + structural checks; returns a flat `list[ParseError]` (empty when valid). `level` is a plain `str`: `"basic"` / `"structure"` / `"semantic"` |
+| `parse_statement(line, line_number=0)` | Parse a single JCL statement line in isolation; returns `Statement \| None` |
 
 ## Model Classes
 
 `Job`, `Step`, `DDStatement`, `Parameter`, `Statement`, `OutputStatement`
+
+`ConditionalBlock` and `Procedure` are part of the model but are **not** re-exported from
+`jclparser` — import them from `jclparser.model`.
 
 ## Error / Enum Types
 
@@ -52,9 +55,18 @@ Stable but may evolve. Key groups:
 
 # Tier 3 — Internal
 
-May be removed without notice: `MockSystemSymbolProvider`, `InlineProcedureLoader`, `JCLLIBProcedureLoader`, `FunctionProfile`, `ProfilingResult`.
+May be removed without notice. Three of the five are **not** re-exported from the
+`jclparser` top level and must be imported from their defining module:
+
+| Name | Top-level export? | Import from |
+|------|-------------------|-------------|
+| `MockSystemSymbolProvider` | no | `jclparser.system_symbols` |
+| `InlineProcedureLoader` | no | `jclparser.proc_loader` |
+| `JCLLIBProcedureLoader` | no | `jclparser.proc_loader` |
+| `FunctionProfile` | yes | `jclparser` or `jclparser.profiling` |
+| `ProfilingResult` | yes | `jclparser` or `jclparser.profiling` |
 
 # Citations
 
-[1] [api/public-api.md](public-api.md) — full export tables with descriptions
+[1] [core/data-model.md](../core/data-model.md) — field-level detail for the model classes
 [2] [api/cli-reference.md](cli-reference.md) — CLI subcommands

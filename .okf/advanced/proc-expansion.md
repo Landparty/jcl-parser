@@ -3,7 +3,7 @@ type: Subsystem
 title: PROC Expansion
 description: explode_job() replaces PROC invocations with their full step content and substitutes &SYMBOL parameters; always a separate call from parse_jcl().
 tags: [proc, explosion, symbol-substitution, advanced]
-timestamp: 2026-07-24T00:00:00Z
+timestamp: 2026-09-16T00:00:00Z
 ---
 
 # Overview
@@ -39,11 +39,18 @@ except ProcedureNotFoundError as e:
 
 # Explosion Options
 
+Signature: `explode_job(job, proc_loader=None, max_depth=10, max_steps=0, audit=True,
+system_provider=None, strict_symbols=False)`. The `Job.explode()` method takes the same
+options but names the loader `loader=`, not `proc_loader=`.
+
 | Option | Default | Effect |
 |--------|---------|--------|
-| `max_depth` | 10 | Raises `ExplosionDepthError` if exceeded |
-| `audit` | False | Populates `job.explosion_audit` and `job.explosion_map` |
-| `strict_symbols` | False | If True, raises `UndefinedSymbolError` for unknown `&SYMBOLS` |
+| `proc_loader` | `None` | Loader chain; `None` builds the default chain below |
+| `max_depth` | `10` | Raises `ExplosionDepthError` if nesting exceeds it |
+| `max_steps` | `0` (unlimited) | Cap on total expanded steps; raises `JCLStructureError` if exceeded |
+| `audit` | **`True`** | Populates `job.explosion_audit` and `job.explosion_map` |
+| `system_provider` | `None` | `SystemSymbolProvider` for `&SYSUID`-style system symbols |
+| `strict_symbols` | `False` | If True, raises `UndefinedSymbolError` for unknown `&SYMBOLS` |
 
 # Audit Data (when audit=True)
 
@@ -88,6 +95,6 @@ Both paths carry an *added* DD (a name not present in the proc) onto the step �
 
 # Citations
 
-[1] [advanced/proc-expansion.md](proc-expansion.md) — full detail with loader chaining examples
+[1] [api/public-api.md](../api/public-api.md) — Tier 2 loader and explosion exports
 [2] [core/parsing-pipeline.md](../core/parsing-pipeline.md) — stage 7 context
 [3] [integration/backend-contract.md](../integration/backend-contract.md) — how the backend chains loaders
