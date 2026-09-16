@@ -45,7 +45,7 @@ Input (string / file / IO)
 import jclparser
 
 job = jclparser.parse_jcl(source)  # stages 1–5 (no validation, no PROC expansion)
-errors = jclparser.validate_jcl(source, level="structure")  # stage 6 -> list[ParseError]
+errors = jclparser.validate_jcl(source, level="structure")  # stage 6, list[ParseError]
 exploded = jclparser.explode_job(job)  # stage 7 (call separately)
 ```
 
