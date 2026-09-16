@@ -3,7 +3,7 @@ type: Pipeline
 title: JCL Parsing Pipeline
 description: Seven-stage pipeline that transforms raw JCL text into a structured Job object; stages 1, 2, and 4 are mandatory.
 tags: [parsing, pipeline, core]
-timestamp: 2026-06-30T00:00:00Z
+timestamp: 2026-09-16T00:00:00Z
 ---
 
 # Overview
@@ -25,9 +25,16 @@ Input (string / file / IO)
 # Key Behaviors
 
 - `parse_jcl()` **never** expands PROCs — call `explode_job()` separately.
-- Comment lines (`//`) become `Statement(type="COMMENT")` in `job.statements`; they are not dropped.
+- Comment lines (`//*`) are **dropped** — there is no `job.statements` field and no
+  `Statement(type="COMMENT")` in the model. The one exception is a JES3 `//*ROUTE XEQ`
+  card, recorded in `job.jes_typed_statements` before the comment is discarded. See
+  [development/invariants.md](../development/invariants.md) #8.
 - JES control statements (`/*JOBPARM`, `/*ROUTE`) are handled in `jes_statements.py`, not in `job.steps`.
-- `validate_jcl()` returns `(Job, list[ParseError])` — not a boolean. Always unpack.
+- `validate_jcl(source, level="basic")` returns a **flat `list[ParseError]`** (empty when
+  valid) — not a boolean and not a `(Job, errors)` tuple. It parses with
+  `strict_mode=True` internally and discards the `Job`; parse the source separately if
+  you need both. `level` is a plain string — `"basic"` (syntax only), `"structure"`,
+  or `"semantic"`.
 - SET symbols resolve left-to-right; a SET cannot reference a later SET.
 - Column 71 is the continuation column. Never pass pre-stripped lines.
 - Stage 4 is split across five modules (behavior unchanged, layout only): `parser.py` holds the public API (`parse_jcl`, `validate_jcl`, `parse_statement` re-export) and the core loop; `_statement_parser.py` holds single-line statement/parameter parsing; `_job_builder.py` holds `JobBuilder` (the per-statement-type dispatch state machine); `_model_factories.py` holds the `Statement -> Job/Step/DDStatement` factories and SET-value helpers; `_post_parse.py` holds the post-parse passes (external PROC loading, `OUTPUT=*.name` refs, SET substitution, strict DD structure). All historical `jclparser.parser` and `jclparser._job_builder` imports still work via re-exports.
@@ -38,12 +45,12 @@ Input (string / file / IO)
 import jclparser
 
 job = jclparser.parse_jcl(source)  # stages 1–5 (no validation, no PROC expansion)
-job, errors = jclparser.validate_jcl(source)  # stages 1–6
+errors = jclparser.validate_jcl(source, level="structure")  # stage 6, list[ParseError]
 exploded = jclparser.explode_job(job)  # stage 7 (call separately)
 ```
 
 # Citations
 
-[1] [core/parsing-pipeline.md](parsing-pipeline.md) — full pipeline doc with per-stage notes
+[1] [core/data-model.md](data-model.md) — the Job object this pipeline produces
 [2] [advanced/proc-expansion.md](../advanced/proc-expansion.md) — stage 7 detail
 [3] [advanced/validation.md](../advanced/validation.md) — stage 6 detail

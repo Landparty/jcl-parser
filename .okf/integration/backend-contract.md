@@ -3,7 +3,7 @@ type: Integration Contract
 title: Backend Adapter Contract
 description: Stability contract between jcl-parser and backend/src/parsers/jcl/parser.py (JCLLegacyParser); changes to listed attributes are breaking changes.
 tags: [integration, backend, contract, vendoring]
-timestamp: 2026-07-24T12:00:00Z
+timestamp: 2026-09-16T00:00:00Z
 ---
 
 # Overview
@@ -23,7 +23,7 @@ The backend imports from `backend/_vendor/jcl-parser/`.
 ## 1. parse_jcl
 
 ```python
-job = parse_jcl(content: str)   # returns Job | None; raises JCLSyntaxError | JCLValidationError | JCLStructureError | JCLParseError
+job = parse_jcl(content: str)   # returns Job (never None); raises JCLSyntaxError | JCLValidationError | JCLStructureError
 ```
 
 ## 2. job.validate()
@@ -63,7 +63,15 @@ loader = CompositeProcedureLoader(
 
 ## Step
 
-`step.name`, `step.program`, `step.is_exploded`, `step.is_proc_invocation`, `step.procedure`, `step.original_proc_call`, `step.parameters`, `step.line_number`, `step.dd_statements`
+`step.name`, `step.program`, `step.is_exploded`, `step.procedure`, `step.is_procedure`,
+`step.original_proc_call`, `step.parameters`, `step.line_number`, `step.dd_statements`
+
+> **Correction (2026-09-16):** this contract, and `interface-contract.md` at the repo
+> root, previously listed `step.is_proc_invocation`. **No such attribute exists on
+> `Step`** — and none ever has in this repo's history, so any adapter code reading it
+> raises `AttributeError`. The equivalent is the `step.is_procedure` property
+> (`step.procedure is not None`). Verify the backend adapter against this before the
+> next vendor sync.
 
 ## DD
 
@@ -104,6 +112,6 @@ The adapter produces this dict for `ParserResult`:
 
 # Citations
 
-[1] [integration/backend-contract.md](backend-contract.md) — full contract doc
+[1] [../../interface-contract.md](../../interface-contract.md) — the source contract this mirrors
 [2] [advanced/proc-expansion.md](../advanced/proc-expansion.md) — loader chaining detail
 [3] [api/public-api.md](../api/public-api.md) — importable names and tiers

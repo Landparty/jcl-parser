@@ -5,6 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > **Docs hooks:** Run `git config core.hooksPath .githooks` once after cloning to enable the pre-commit staleness check. A Claude Code `PostToolUse` hook also fires inline on Edit/Write. See `.claude/settings.json`.
 >
 > **Documentation index:** [`.okf/index.md`](.okf/index.md) — OKF knowledge bundle; start here for all reference topics (pipeline, API tiers, PROC chain, invariants, task → file map, backend contract).
+>
+> **One doc tree only.** `index.md`, `log.md`, `core/`, `api/`, `advanced/`, `development/` and
+> `integration/` at the repo root are a **pre-OKF duplicate** that predates the `.okf/` bundle.
+> They are stale and unlinked — do not edit or cite them; every reference link above points into
+> `.okf/`. (Doc updates have twice landed in the root copy instead of the bundle, most recently
+> in `e739f1d`; that is why the bundle missed the 2026-09-02 parser fixes.)
 
 ## Project Overview
 
@@ -70,7 +76,7 @@ Input (string / file / IO)
   → Job object
 ```
 
-See [`core/parsing-pipeline.md`](core/parsing-pipeline.md) for the full step-by-step data flow, [`api/public-api.md`](api/public-api.md) for all API tier tables, [`advanced/proc-expansion.md`](advanced/proc-expansion.md) for the PROC loader chain, and [`development/development-workflow.md`](development/development-workflow.md) for the common task → file map.
+See [`.okf/core/parsing-pipeline.md`](.okf/core/parsing-pipeline.md) for the full step-by-step data flow, [`.okf/api/public-api.md`](.okf/api/public-api.md) for all API tier tables, [`.okf/advanced/proc-expansion.md`](.okf/advanced/proc-expansion.md) for the PROC loader chain, and [`.okf/development/workflow.md`](.okf/development/workflow.md) for the common task → file map.
 
 ### Key modules
 
@@ -95,7 +101,7 @@ See [`core/parsing-pipeline.md`](core/parsing-pipeline.md) for the full step-by-
 | `cli.py` | `jcl-parser` CLI — `steps`, `procs`, `detect`, `metrics`, `lint`, `datasets`, `sql`, `analyze`, `paths` |
 | `builtin_procs.py` | Last-resort IBM utility PROC templates (IMS, DB2, COBOL) |
 
-Full inventory with line counts: [`development/development-workflow.md`](development/development-workflow.md).
+Full inventory with line counts: [`.okf/development/workflow.md`](.okf/development/workflow.md).
 
 ### Public API tiers
 
@@ -103,7 +109,7 @@ Full inventory with line counts: [`development/development-workflow.md`](develop
 - **Tier 2 (advanced):** `explode_job`, loader classes, `detect_file_type`, `parse_condition`, SQL detection, lint/metrics/RC-analysis APIs, plugin system.
 - **Tier 3 (internal):** `MockSystemSymbolProvider`, individual loader types, `FunctionProfile`/`ProfilingResult`.
 
-Full tables: [`api/public-api.md`](api/public-api.md).
+Full tables: [`.okf/api/public-api.md`](.okf/api/public-api.md).
 
 ### External PROC loading
 
@@ -119,7 +125,7 @@ Set `JCL_PROCLIB_PATH` env var or pass `proc_base_path` to `parse_jcl()`. Layout
 6. **Coverage floor is 90%** — every `pytest` run enforces it. Add tests alongside any new module.
 7. **A statement's operand field ends at the first blank** outside quotes/parens — the rest is a comment field, stripped before continuation merging (`split_comment_field()`). `IF`/`THEN`/`ELSE`/`ENDIF` are exempt.
 
-Full list (16 invariants): [`development/invariants.md`](development/invariants.md).
+Full list (19 invariants): [`.okf/development/invariants.md`](.okf/development/invariants.md).
 
 ## Test Structure
 
