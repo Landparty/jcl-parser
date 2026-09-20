@@ -18,7 +18,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ..dataset_lifecycle import DatasetEvent
+from ..dataset_lifecycle import (
+    DatasetEvent,
+    _action_from_disp,
+    _parse_disp_tokens,
+)
 
 if TYPE_CHECKING:
     from ..model import Step
@@ -70,6 +74,43 @@ class ProgramProfile(ABC):
         raise NotImplementedError
 
 
+def _dd_event(
+    step: Step,
+    dd_name: str,
+    dd,
+    *,
+    default_status: str,
+) -> DatasetEvent:
+    """Build a :class:`DatasetEvent` for *dd* from the DISP the JCL states.
+
+    A profile knows what its program *does* with a DD — IEBGENER reads
+    SYSUT1 and writes SYSUT2 — but not on what terms, and the two are
+    separate facts.  ``//SYSUT2 DD DSN=OUT,DISP=MOD`` appends to an existing
+    dataset; reporting it as ``ALLOCATE``/``NEW`` because SYSUT2 is "the
+    output" tells a lifecycle consumer the step creates the dataset, which
+    is how a dataset written by an earlier step reads as clobbered here.
+
+    So the action and the status both come from the DD's own DISP, through
+    the same :func:`_action_from_disp` mapping
+    :func:`~jclparser.dataset_lifecycle.analyze_dataset_lifecycle` uses, and
+    *default_status* only fills in for a DD that states no DISP at all (or
+    states one that has not been substituted yet, e.g. ``DISP=&STATUS``, in
+    which case the unresolved token is still reported verbatim).
+    """
+    status, _, _ = _parse_disp_tokens(dd.disposition)
+    status = status or default_status
+    action = _action_from_disp(status)
+    if action == "UNKNOWN":
+        action = _action_from_disp(default_status)
+    return DatasetEvent(
+        step_name=step.name or "",
+        dd_name=dd_name,
+        action=action,
+        disp_status=status,
+        line_number=dd.line_number,
+    )
+
+
 def _sysin_text(step: Step) -> str | None:
     """Return the inline data from the step's SYSIN DD, or None if absent."""
     dd = step.get_dd("SYSIN")
@@ -78,4 +119,4 @@ def _sysin_text(step: Step) -> str | None:
     return dd.inline_data
 
 
-__all__ = ["ProgramAnalysis", "ProgramProfile", "_sysin_text"]
+__all__ = ["ProgramAnalysis", "ProgramProfile", "_dd_event", "_sysin_text"]

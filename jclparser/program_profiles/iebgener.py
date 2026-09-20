@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..dataset_lifecycle import DatasetEvent, _parse_disp_tokens
-from .base import ProgramAnalysis, ProgramProfile
+from ..dataset_lifecycle import DatasetEvent
+from .base import ProgramAnalysis, ProgramProfile, _dd_event
 
 if TYPE_CHECKING:
     from ..model import Step
@@ -25,28 +25,11 @@ def _copy_utility_analysis(step: Step, program: str) -> ProgramAnalysis:
     notes: list[str] = []
 
     if sysut1 and sysut1.dataset_name:
-        status, _, _ = _parse_disp_tokens(sysut1.disposition)
-        events.append(
-            DatasetEvent(
-                step_name=step.name or "",
-                dd_name="SYSUT1",
-                action="OPEN_SHARED",
-                disp_status=status or "SHR",
-                line_number=sysut1.line_number,
-            )
-        )
+        events.append(_dd_event(step, "SYSUT1", sysut1, default_status="SHR"))
         notes.append(f"reads {sysut1.dataset_name}")
 
     if sysut2 and sysut2.dataset_name:
-        events.append(
-            DatasetEvent(
-                step_name=step.name or "",
-                dd_name="SYSUT2",
-                action="ALLOCATE",
-                disp_status="NEW",
-                line_number=sysut2.line_number,
-            )
-        )
+        events.append(_dd_event(step, "SYSUT2", sysut2, default_status="NEW"))
         notes.append(f"writes {sysut2.dataset_name}")
 
     summary = (

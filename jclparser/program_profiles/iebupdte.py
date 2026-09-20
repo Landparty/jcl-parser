@@ -12,8 +12,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from ..dataset_lifecycle import DatasetEvent, _parse_disp_tokens
-from .base import ProgramAnalysis, ProgramProfile, _sysin_text
+from ..dataset_lifecycle import DatasetEvent
+from .base import ProgramAnalysis, ProgramProfile, _dd_event, _sysin_text
 
 if TYPE_CHECKING:
     from ..model import Step
@@ -40,26 +40,9 @@ class IEBUPDTEProfile(ProgramProfile):
         sysut1 = step.get_dd("SYSUT1")
         sysut2 = step.get_dd("SYSUT2")
         if sysut1 and sysut1.dataset_name:
-            status, _, _ = _parse_disp_tokens(sysut1.disposition)
-            events.append(
-                DatasetEvent(
-                    step_name=step.name or "",
-                    dd_name="SYSUT1",
-                    action="OPEN_SHARED",
-                    disp_status=status or "SHR",
-                    line_number=sysut1.line_number,
-                )
-            )
+            events.append(_dd_event(step, "SYSUT1", sysut1, default_status="SHR"))
         if sysut2 and sysut2.dataset_name:
-            events.append(
-                DatasetEvent(
-                    step_name=step.name or "",
-                    dd_name="SYSUT2",
-                    action="ALLOCATE",
-                    disp_status="NEW",
-                    line_number=sysut2.line_number,
-                )
-            )
+            events.append(_dd_event(step, "SYSUT2", sysut2, default_status="NEW"))
 
         summary = (
             f"IEBUPDTE: {len(notes)} member operation(s)"
