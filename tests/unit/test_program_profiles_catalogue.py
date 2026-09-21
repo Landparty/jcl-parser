@@ -519,3 +519,113 @@ class TestIEHINITT:
 
 def test_unknown_program_still_returns_none():
     assert get_profile("SOMECUSTOMPGM") is None
+
+
+class TestDDEventsFollowTheStatedDisposition:
+    """A profile knows what its program does with a DD, not on what terms.
+
+    ``DatasetEvent.action``/``disp_status`` used to be hardcoded per DD role
+    — SYSUT1 ``OPEN_SHARED``, SYSUT2 ``ALLOCATE``/``NEW`` — regardless of the
+    DISP the JCL actually stated. ``analyze_dataset_lifecycle`` branches on
+    exactly those keywords, so a ``DISP=MOD`` append read as a fresh
+    allocation and a ``DISP=OLD`` read read as a shared one.
+    """
+
+    def test_mod_output_is_an_extend_not_an_allocate(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEBGENER\n"
+            "//SYSUT1   DD DSN=IN.FILE,DISP=OLD\n"
+            "//SYSUT2   DD DSN=OUT.FILE,DISP=MOD\n"
+        )
+        events = {
+            e.dd_name: e for e in analyze_job(jp.parse_jcl(src))[0].dataset_events
+        }
+        assert (events["SYSUT1"].action, events["SYSUT1"].disp_status) == (
+            "OPEN_EXCLUSIVE",
+            "OLD",
+        )
+        assert (events["SYSUT2"].action, events["SYSUT2"].disp_status) == (
+            "EXTEND",
+            "MOD",
+        )
+
+    def test_new_output_is_still_an_allocate(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEBGENER\n"
+            "//SYSUT1   DD DSN=IN.FILE,DISP=SHR\n"
+            "//SYSUT2   DD DSN=OUT.FILE,DISP=(NEW,CATLG,DELETE)\n"
+        )
+        events = {
+            e.dd_name: e for e in analyze_job(jp.parse_jcl(src))[0].dataset_events
+        }
+        assert events["SYSUT1"].action == "OPEN_SHARED"
+        assert (events["SYSUT2"].action, events["SYSUT2"].disp_status) == (
+            "ALLOCATE",
+            "NEW",
+        )
+
+    def test_a_dd_with_no_disp_falls_back_to_the_role_default(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEBGENER\n"
+            "//SYSUT1   DD DSN=IN.FILE\n"
+            "//SYSUT2   DD DSN=OUT.FILE\n"
+        )
+        events = {
+            e.dd_name: e for e in analyze_job(jp.parse_jcl(src))[0].dataset_events
+        }
+        assert (events["SYSUT1"].action, events["SYSUT1"].disp_status) == (
+            "OPEN_SHARED",
+            "SHR",
+        )
+        assert (events["SYSUT2"].action, events["SYSUT2"].disp_status) == (
+            "ALLOCATE",
+            "NEW",
+        )
+
+    def test_an_unsubstituted_symbolic_keeps_the_role_default_action(self):
+        """``DISP=&STATUS`` is reported verbatim, not mapped to UNKNOWN."""
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=ICEGENER\n"
+            "//SYSUT1   DD DSN=IN.FILE,DISP=(&STATUS,CATLG,DELETE)\n"
+            "//SYSUT2   DD DSN=OUT.FILE,DISP=(NEW,CATLG,DELETE)\n"
+        )
+        events = {
+            e.dd_name: e for e in analyze_job(jp.parse_jcl(src))[0].dataset_events
+        }
+        assert events["SYSUT1"].disp_status == "&STATUS"
+        assert events["SYSUT1"].action == "OPEN_SHARED"
+
+    def test_iebcompr_reads_exclusively_when_the_dd_says_old(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEBCOMPR\n"
+            "//SYSUT1   DD DSN=OLD.FILE,DISP=OLD\n"
+            "//SYSUT2   DD DSN=NEW.FILE,DISP=SHR\n"
+        )
+        events = {
+            e.dd_name: e for e in analyze_job(jp.parse_jcl(src))[0].dataset_events
+        }
+        assert events["SYSUT1"].action == "OPEN_EXCLUSIVE"
+        assert events["SYSUT2"].action == "OPEN_SHARED"
+
+    def test_iebupdte_update_in_place_is_an_extend(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEBUPDTE\n"
+            "//SYSUT1   DD DSN=PROD.SRCLIB,DISP=SHR\n"
+            "//SYSUT2   DD DSN=PROD.SRCLIB,DISP=MOD\n"
+            "//SYSIN    DD *\n"
+            "./ ADD NAME=MEMBER1\n"
+            "/*\n"
+        )
+        events = {
+            e.dd_name: e for e in analyze_job(jp.parse_jcl(src))[0].dataset_events
+        }
+        assert (events["SYSUT2"].action, events["SYSUT2"].disp_status) == (
+            "EXTEND",
+            "MOD",
+        )

@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..dataset_lifecycle import DatasetEvent
-from .base import ProgramAnalysis, ProgramProfile
+from .base import ProgramAnalysis, ProgramProfile, _dd_event
 
 if TYPE_CHECKING:
     from ..model import Step
@@ -30,15 +30,9 @@ class IEBCOMPRProfile(ProgramProfile):
         sysut2 = step.get_dd("SYSUT2")
         for dd_name, dd in (("SYSUT1", sysut1), ("SYSUT2", sysut2)):
             if dd and dd.dataset_name:
-                events.append(
-                    DatasetEvent(
-                        step_name=step.name or "",
-                        dd_name=dd_name,
-                        action="OPEN_SHARED",
-                        disp_status="SHR",
-                        line_number=dd.line_number,
-                    )
-                )
+                # IEBCOMPR only ever reads, but on whatever terms the DD
+                # states -- DISP=OLD is an exclusive open, not a shared one.
+                events.append(_dd_event(step, dd_name, dd, default_status="SHR"))
 
         if sysut1 and sysut1.dataset_name and sysut2 and sysut2.dataset_name:
             notes.append(f"compares {sysut1.dataset_name} vs {sysut2.dataset_name}")
