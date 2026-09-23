@@ -646,10 +646,10 @@ class TestCExecDynamic:
         assert job.set_statements.get("FICHIER") == "HELLOC"
 
     def test_exec_pgm_is_symbol(self):
-        """PGM=&FICHIER — program name is an unresolved SET symbol."""
+        """PGM=&FICHIER — the job's SET FICHIER=HELLOC resolves the program name,
+        the same way it resolves PARM= and DD DSN= references."""
         job = parse_jcl(FIXTURES / "c_exec_dynamic.jcl")
-        # parse_jcl returns the raw (unresolved) value
-        assert job.steps[0].program == "&FICHIER"
+        assert job.steps[0].program == "HELLOC"
         assert job.steps[0].name == "RUNPRM"
 
     def test_standard_dump_dds(self):

@@ -36,6 +36,7 @@ Input (string / file / IO)
   you need both. `level` is a plain string — `"basic"` (syntax only), `"structure"`,
   or `"semantic"`.
 - SET symbols resolve left-to-right; a SET cannot reference a later SET.
+- The post-parse SET pass resolves `DD DSN=`/`DISP=`, EXEC parameters (`PARM=`), and `Step.program` / `Step.procedure` (`EXEC PGM=&NAME`, `EXEC &PROC`), including steps nested in `IF`/`ELSE`; a symbol it cannot resolve is left as written in `program`/`procedure`.
 - Column 71 is the continuation column. Never pass pre-stripped lines.
 - Stage 4 is split across five modules (behavior unchanged, layout only): `parser.py` holds the public API (`parse_jcl`, `validate_jcl`, `parse_statement` re-export) and the core loop; `_statement_parser.py` holds single-line statement/parameter parsing; `_job_builder.py` holds `JobBuilder` (the per-statement-type dispatch state machine); `_model_factories.py` holds the `Statement -> Job/Step/DDStatement` factories and SET-value helpers; `_post_parse.py` holds the post-parse passes (external PROC loading, `OUTPUT=*.name` refs, SET substitution, strict DD structure). All historical `jclparser.parser` and `jclparser._job_builder` imports still work via re-exports.
 
