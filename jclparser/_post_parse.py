@@ -288,3 +288,18 @@ def resolve_set_symbols(job: Job) -> None:
             job.warnings.append(
                 f"Line {_step.line_number}: Step {_step.name or '(unnamed)'}: {_msg}"
             )
+        # PGM= and the PROC name are lifted out of ``parameters`` into their
+        # own attributes, so the pass above never reached them: ``SET
+        # PGMNAME=X`` + ``EXEC PGM=&PGMNAME`` left the program as the literal
+        # "&PGMNAME". A symbol that stays unresolved is left as written.
+        for _attr in ("program", "procedure"):
+            _name_val = getattr(_step, _attr, None)
+            if isinstance(_name_val, str) and "&" in _name_val:
+                _substituted = substitute_symbols(
+                    _name_val,
+                    _set_scope,
+                    allow_undefined=True,
+                    collapse_double_amp=False,
+                )
+                if not _has_unresolved_symbol_ref(_substituted):
+                    setattr(_step, _attr, _substituted)

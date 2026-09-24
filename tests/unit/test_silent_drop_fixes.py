@@ -410,6 +410,37 @@ class TestExecParmSymbolResolution:
         assert job.warnings == []
 
 
+class TestExecProgramAndProcSymbolResolution:
+    """PGM= and the PROC name are lifted out of ``Step.parameters`` into
+    ``Step.program`` / ``Step.procedure``, so the SET pass that resolves the
+    other EXEC parameters never reached them: ``EXEC PGM=&PGMNAME`` kept the
+    literal "&PGMNAME" and consumers linked the job to a phantom program."""
+
+    def test_set_symbol_in_pgm_is_resolved(self):
+        jcl = "//J JOB 1\n// SET PGMNAME=PAYROLL\n//S1 EXEC PGM=&PGMNAME\n"
+        assert parse_jcl(jcl).steps[0].program == "PAYROLL"
+
+    def test_set_symbol_in_proc_name_is_resolved(self):
+        jcl = "//J JOB 1\n// SET P=SORTPROC\n//S1 EXEC &P\n"
+        assert parse_jcl(jcl).steps[0].procedure == "SORTPROC"
+
+    def test_step_inside_if_block_is_resolved(self):
+        jcl = (
+            "//J JOB 1\n"
+            "// SET PGMNAME=PAYROLL\n"
+            "//S0 EXEC PGM=IEFBR14\n"
+            "// IF (S0.RC = 0) THEN\n"
+            "//S1 EXEC PGM=&PGMNAME\n"
+            "// ENDIF\n"
+        )
+        block = parse_jcl(jcl).steps[1]
+        assert block.then_steps[0].program == "PAYROLL"
+
+    def test_undefined_symbol_in_pgm_is_left_as_written(self):
+        jcl = "//J JOB 1\n// SET FOO=BAR\n//S1 EXEC PGM=&UNDEF\n"
+        assert parse_jcl(jcl).steps[0].program == "&UNDEF"
+
+
 class TestExplodeJobPreservesWarnings:
     """explode_job() rebuilds a new Job from the parsed one; the metadata
     copy loop forwarded unresolved_output_refs/sql_detections/jes_statements/
