@@ -125,7 +125,10 @@ def _create_step_from_statement(stmt: Statement) -> Step:
 
 def _create_dd_from_statement(stmt: Statement) -> DDStatement:
     """Create DDStatement object from DD statement"""
+    # DSNAME= is the long form of DSN=; either one names the dataset.
     dataset_name = stmt.parameters.get("DSN")
+    if dataset_name is None:
+        dataset_name = stmt.parameters.get("DSNAME")
     disposition = stmt.parameters.get("DISP")
 
     return DDStatement(

@@ -1,5 +1,8 @@
 # Update Log
 
+## 2026-09-26
+* **Fix**: `_model_factories._create_dd_from_statement` now reads `DSNAME=` (the long form of `DSN=`) into `DDStatement.dataset_name` when no `DSN=` is coded. Only `DSN` was read, so `//DD1 DD DSNAME=A.B` had `dataset_name=None` and the dataset vanished from every inventory and from PROC explosion's symbol substitution. The CLI `steps` DD listing also stops echoing `DSNAME` as an extra parameter. Regression tests: `tests/unit/test_dd_dsname_alias.py`.
+
 ## 2026-09-23
 * **Fix**: `_post_parse.resolve_set_symbols` now also resolves job-level SET symbols in `Step.program` (`EXEC PGM=&NAME`) and `Step.procedure` (`EXEC &PROC`), including steps inside `IF`/`ELSE` blocks. `PGM=` and the PROC name are lifted out of `Step.parameters`, so the pass that resolved `PARM=`/`DSN=` never reached them and the program stayed the literal `&PGMNAME` — the LegacyLens backend linked the job to a phantom program of that name. A symbol that stays unresolved is left as written. `tests/integration/test_metalbobinou_examples.py::TestCExecDynamic::test_exec_pgm_is_symbol` pinned the raw value and now expects the resolved `HELLOC`. Regression tests: `tests/unit/test_silent_drop_fixes.py::TestExecProgramAndProcSymbolResolution`.
 
