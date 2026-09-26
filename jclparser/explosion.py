@@ -30,6 +30,13 @@ logger = logging.getLogger(__name__)
 # Single-pass pattern: matches && (escaped ampersand) OR &SYMBOL with optional trailing period
 _SYMBOL_SUB_PATTERN = re.compile(r"&&|&([A-Z0-9@#$]+)\.?")
 
+# A symbol value may itself reference symbols (``HLQ=&SYSUID``); this bounds
+# how deep those nested references are followed, which also stops a cycle.
+_MAX_NESTED_SUBSTITUTION = 8
+
+# A value ending in a bare ``&NAME`` reference (not the ``&&NAME`` literal).
+_TRAILING_SYMBOL_REF = re.compile(r"(?<!&)&[A-Z0-9@#$]+$")
+
 
 def _clone_conditional(
     block: ConditionalBlock,
@@ -197,6 +204,7 @@ def _make_replacer(
     warnings: list[str] | None = None,
     collapse_double_amp: bool = True,
     keep_undefined: Callable[[str], bool] | None = None,
+    _depth: int = 0,
 ):
     """Create a regex replacer function for symbol substitution."""
 
@@ -221,6 +229,25 @@ def _make_replacer(
                 )
             return ""
         logger.debug("resolved &%s -> %s", symbol_name, value)
+        if "&" in value and _depth < _MAX_NESTED_SUBSTITUTION:
+            # The value references other symbols (``HLQ=&SYSUID``): resolve
+            # those too. One still undefined is left as written for a later
+            # pass (e.g. explode_job() resolving system symbols).
+            value = _SYMBOL_SUB_PATTERN.sub(
+                _make_replacer(
+                    scope,
+                    strict=False,
+                    allow_undefined=True,
+                    source_text=value,
+                    collapse_double_amp=False,
+                    _depth=_depth + 1,
+                ),
+                value,
+            )
+        if _TRAILING_SYMBOL_REF.search(value):
+            # Splicing a bare ``&SYSUID`` in front of ``.DATA`` would make that
+            # period the reference's delimiter; give it its own.
+            value += "."
         return value
 
     return _replacer

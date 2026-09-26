@@ -265,7 +265,9 @@ def resolve_set_symbols(job: Job) -> None:
     # SET MYTEMP=&&WORK) is NOT excluded -- it has nothing left to
     # resolve, it just happens to contain an escaped literal ampersand.
     _resolved_symbols = {
-        k: v for k, v in _raw.items() if not _has_unresolved_symbol_ref(v)
+        k: v
+        for k, v in _raw.items()
+        if not _has_unresolved_symbol_ref(v, ignore=is_system_symbol_name)
     }
     _set_scope = SymbolScope(set_symbols=_resolved_symbols)
     for _dd in job.get_dd_statements():

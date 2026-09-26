@@ -41,3 +41,61 @@ class TestDsnameAlias:
         exploded = explode_job(job)
         (step,) = [s for s in exploded.steps if getattr(s, "program", None)]
         assert step.get_dd("IN").dataset_name == "TEST.INPUT"
+
+
+class TestDsnameInContext:
+    """DSNAME= behaves exactly like DSN= wherever a DD can appear."""
+
+    H = "//TEST JOB (ACCT),'TEST'\n"
+
+    def test_dsname_on_concatenated_dd(self):
+        job = parse_jcl(
+            self.H + "//S1 EXEC PGM=P\n"
+            "//IN DD DSNAME=A.ONE,DISP=SHR\n"
+            "//   DD DSNAME=A.TWO,DISP=SHR\n"
+        )
+        assert [d.dataset_name for d in job.steps[0].dd_statements] == [
+            "A.ONE",
+            "A.TWO",
+        ]
+
+    def test_dsname_with_member(self):
+        job = parse_jcl(
+            self.H + "//S1 EXEC PGM=P\n//IN DD DSNAME=A.PDS(MEM),DISP=SHR\n"
+        )
+        assert job.steps[0].get_dd("IN").dataset_name == "A.PDS(MEM)"
+
+    def test_dsname_temporary_dataset(self):
+        job = parse_jcl(
+            self.H + "//S1 EXEC PGM=P\n//T1 DD DSNAME=&&WORK,DISP=(NEW,PASS)\n"
+        )
+        dd = job.steps[0].get_dd("T1")
+        assert dd.dataset_name == "&&WORK"
+        assert dd.is_temporary()
+
+    def test_dsn_wins_when_both_are_coded(self):
+        job = parse_jcl(
+            self.H + "//S1 EXEC PGM=P\n//IN DD DSN=WIN.DS,DSNAME=LOSE.DS,DISP=SHR\n"
+        )
+        assert job.steps[0].get_dd("IN").dataset_name == "WIN.DS"
+
+    def test_dsname_on_procstep_override(self):
+        job = parse_jcl(
+            self.H + "//MYPROC PROC\n"
+            "//PS1 EXEC PGM=R\n"
+            "//IN DD DSN=ORIG.DS,DISP=SHR\n"
+            "// PEND\n"
+            "//S1 EXEC MYPROC\n"
+            "//PS1.IN DD DSNAME=OVERRIDE.DS,DISP=OLD\n"
+        )
+        (step,) = [s for s in explode_job(job).steps if getattr(s, "program", None)]
+        dd = step.get_dd("IN")
+        assert (dd.dataset_name, dd.disposition) == ("OVERRIDE.DS", "OLD")
+
+    def test_dsname_set_symbol_resolved_at_parse(self):
+        job = parse_jcl(
+            self.H + "// SET HLQ=PROD\n"
+            "//S1 EXEC PGM=P\n"
+            "//IN DD DSNAME=&HLQ..INPUT,DISP=SHR\n"
+        )
+        assert job.steps[0].get_dd("IN").dataset_name == "PROD.INPUT"
