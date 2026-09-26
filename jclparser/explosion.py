@@ -7,10 +7,10 @@ support for nested procedures, circular dependency detection, and audit logging.
 
 import logging
 import re
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
-from collections.abc import Callable
 from typing import Any
 
 from .errors import (
