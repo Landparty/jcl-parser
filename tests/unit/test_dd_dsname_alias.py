@@ -41,4 +41,3 @@ class TestDsnameAlias:
         exploded = explode_job(job)
         (step,) = [s for s in exploded.steps if getattr(s, "program", None)]
         assert step.get_dd("IN").dataset_name == "TEST.INPUT"
-
