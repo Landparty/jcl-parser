@@ -1,6 +1,7 @@
 # Update Log
 
 ## 2026-09-26
+* **Fix**: `_post_parse.resolve_set_symbols` no longer blanks z/OS system symbols. With any `// SET` in the job it elided every symbol no SET defined, `&SYSUID` included, so `DSN=&SYSUID..WORK.DATA` became `.WORK.DATA` before `explode_job()` could resolve it from its `SystemSymbolProvider`. New `system_symbols.is_system_symbol_name()` (reserved `SYS` prefix + the JES dynamic date/time/job symbols) is passed as the new `keep_undefined=` predicate of `substitute_symbols` / `substitute_parameters_dict` / `substitute_dd_statement`, which leaves an undefined symbol it accepts as written. Other undefined symbols are still elided with a warning (pinned by `test_bug_fixes.py::TestSetSymbolSubstitution::test_undefined_symbol_left_as_is`). Regression tests: `tests/unit/test_system_symbols_set_pass.py`.
 * **Fix**: `_model_factories._create_dd_from_statement` now reads `DSNAME=` (the long form of `DSN=`) into `DDStatement.dataset_name` when no `DSN=` is coded. Only `DSN` was read, so `//DD1 DD DSNAME=A.B` had `dataset_name=None` and the dataset vanished from every inventory and from PROC explosion's symbol substitution. The CLI `steps` DD listing also stops echoing `DSNAME` as an extra parameter. Regression tests: `tests/unit/test_dd_dsname_alias.py`.
 
 ## 2026-09-23

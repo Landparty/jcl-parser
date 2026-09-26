@@ -223,6 +223,7 @@ def resolve_set_symbols(job: Job) -> None:
         substitute_parameters_dict,
         substitute_symbols,
     )
+    from .system_symbols import is_system_symbol_name
 
     # Pre-resolve the symbol table so every value is fully expanded before
     # we apply it to DD dataset names.  On each pass we substitute symbols
@@ -257,7 +258,10 @@ def resolve_set_symbols(job: Job) -> None:
     # Propagating a raw "&B." value into a DD dataset_name would leave a
     # literal token in the output; instead, strict=False below will
     # silently elide those unresolvable references (they become empty
-    # string) and warn. A value that legitimately contains "&&" (e.g.
+    # string) and warn. System symbols (&SYSUID, &LYYMMDD, ...) are the
+    # exception: no SET defines them, but explode_job() resolves them from
+    # its SystemSymbolProvider, so blanking them here would destroy
+    # ``DSN=&SYSUID..WORK`` before that pass runs (keep_undefined below). A value that legitimately contains "&&" (e.g.
     # SET MYTEMP=&&WORK) is NOT excluded -- it has nothing left to
     # resolve, it just happens to contain an escaped literal ampersand.
     _resolved_symbols = {
@@ -271,6 +275,7 @@ def resolve_set_symbols(job: Job) -> None:
             strict=False,
             warnings=job.warnings,
             collapse_double_amp=False,
+            keep_undefined=is_system_symbol_name,
         )
 
     from .model import iter_execution_steps
@@ -283,6 +288,7 @@ def resolve_set_symbols(job: Job) -> None:
             strict=False,
             warnings=_step_warnings,
             collapse_double_amp=False,
+            keep_undefined=is_system_symbol_name,
         )
         for _msg in _step_warnings:
             job.warnings.append(

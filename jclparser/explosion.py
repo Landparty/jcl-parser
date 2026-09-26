@@ -10,6 +10,7 @@ import re
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
+from collections.abc import Callable
 from typing import Any
 
 from .errors import (
@@ -195,6 +196,7 @@ def _make_replacer(
     source_text: str = "",
     warnings: list[str] | None = None,
     collapse_double_amp: bool = True,
+    keep_undefined: Callable[[str], bool] | None = None,
 ):
     """Create a regex replacer function for symbol substitution."""
 
@@ -206,7 +208,9 @@ def _make_replacer(
         # here (with full source context) rather than inside scope.resolve().
         value = scope.resolve(symbol_name, strict=False)
         if value is None:
-            if allow_undefined:
+            if allow_undefined or (
+                keep_undefined is not None and keep_undefined(symbol_name)
+            ):
                 return m.group(0)  # leave as-is
             if strict:
                 raise UndefinedSymbolError(symbol_name, source_text=source_text)
@@ -229,6 +233,7 @@ def substitute_symbols(
     allow_undefined: bool = False,
     warnings: list[str] | None = None,
     collapse_double_amp: bool = True,
+    keep_undefined: Callable[[str], bool] | None = None,
 ) -> str:
     """
     Substitute symbolic parameters in text.
@@ -249,6 +254,10 @@ def substitute_symbols(
             symbols without touching temporary-dataset names (which use the
             "&&NAME" idiom, detected via ``DDStatement.is_temporary()``) should
             pass False here.
+        keep_undefined: Optional predicate on a symbol name; an undefined
+            symbol it accepts is left as written instead of being blanked,
+            so a later pass (e.g. ``explode_job()`` resolving system
+            symbols) can still resolve it.
 
     Returns:
         Text with symbols substituted
@@ -266,6 +275,7 @@ def substitute_symbols(
             source_text=text,
             warnings=warnings,
             collapse_double_amp=collapse_double_amp,
+            keep_undefined=keep_undefined,
         ),
         text,
     )
@@ -394,6 +404,7 @@ def substitute_parameters_dict(
     allow_undefined: bool = False,
     warnings: list[str] | None = None,
     collapse_double_amp: bool = True,
+    keep_undefined: Callable[[str], bool] | None = None,
 ) -> dict[str, Any]:
     """
     Substitute symbols in parameter dictionary.
@@ -424,6 +435,7 @@ def substitute_parameters_dict(
                 allow_undefined=allow_undefined,
                 warnings=warnings,
                 collapse_double_amp=collapse_double_amp,
+                keep_undefined=keep_undefined,
             )
         elif isinstance(value, (list, tuple)):
             result[key] = [
@@ -434,6 +446,7 @@ def substitute_parameters_dict(
                     allow_undefined=allow_undefined,
                     warnings=warnings,
                     collapse_double_amp=collapse_double_amp,
+                    keep_undefined=keep_undefined,
                 )
                 if isinstance(v, str)
                 else v
@@ -447,6 +460,7 @@ def substitute_parameters_dict(
                 allow_undefined=allow_undefined,
                 warnings=warnings,
                 collapse_double_amp=collapse_double_amp,
+                keep_undefined=keep_undefined,
             )
         else:
             result[key] = value
@@ -476,6 +490,7 @@ def substitute_dd_statement(
     allow_undefined: bool = False,
     warnings: list[str] | None = None,
     collapse_double_amp: bool = True,
+    keep_undefined: Callable[[str], bool] | None = None,
 ) -> None:
     """
     Substitute symbols in DD statement (in-place).
@@ -507,6 +522,7 @@ def substitute_dd_statement(
             allow_undefined=allow_undefined,
             warnings=local_warnings,
             collapse_double_amp=collapse_double_amp,
+            keep_undefined=keep_undefined,
         )
         dd.dataset_name = _strip_empty_member(dd.dataset_name)
 
@@ -524,6 +540,7 @@ def substitute_dd_statement(
                     allow_undefined=allow_undefined,
                     warnings=local_warnings,
                     collapse_double_amp=collapse_double_amp,
+                    keep_undefined=keep_undefined,
                 )
                 if isinstance(v, str)
                 else v
@@ -537,6 +554,7 @@ def substitute_dd_statement(
                 allow_undefined=allow_undefined,
                 warnings=local_warnings,
                 collapse_double_amp=collapse_double_amp,
+                keep_undefined=keep_undefined,
             )
 
     # Substitute all parameters
@@ -546,6 +564,7 @@ def substitute_dd_statement(
         strict=strict,
         allow_undefined=allow_undefined,
         collapse_double_amp=collapse_double_amp,
+        keep_undefined=keep_undefined,
     )
 
     # Note: inline_data intentionally NOT substituted (data content preserved)
