@@ -439,6 +439,13 @@ class JobBuilder:
         if member:
             sink = self.job.includes if self.job else self.pending_includes
             sink.append(member)
+            # Found members are expanded before the parse loop runs, so an
+            # INCLUDE that reaches here could not be loaded.
+            self._warnings_sink().append(
+                f"Line {stmt.line_number}: INCLUDE member {member} not found in "
+                "the JCLLIB / procedure libraries; its statements are missing "
+                "from the job"
+            )
 
     def _on_conditional(self, stmt: Statement, line_num: int) -> None:
         # Conditional logic - track conditionals properly
