@@ -18,10 +18,18 @@ from dataclasses import dataclass
 
 from ..sql_detector import detect_sql_in_text
 
-# DSN subcommand: RUN PROGRAM(PROGA) PLAN(PLANA) ...
+# DSN subcommand: RUN PROGRAM(PROGA) PLAN(PLANA) ...  TSO accepts the keyword
+# abbreviated (``PROG``), the name quoted (``PROGRAM('PROGA')``), and the
+# operands in any order (``RUN PLAN(P) PROGRAM(PROGA)``).
 _RE_RUN_PROGRAM = re.compile(
-    r"\bRUN\s+PROGRAM\s*\(\s*([A-Za-z0-9@#$]+)\s*\)", re.IGNORECASE
+    r"\bRUN\b[^\n]*?\bPROG(?:R|RA|RAM)?\s*\(\s*'?([A-Za-z0-9@#$]+)'?\s*\)",
+    re.IGNORECASE,
 )
+
+# TSO comment: ``/* ... */``, or ``/*`` to the end of the line.
+_RE_TSO_COMMENT = re.compile(r"/\*.*?(?:\*/|$)", re.MULTILINE)
+# TSO continuation: a trailing ``-`` or ``+`` joins the next line.
+_RE_TSO_CONTINUATION = re.compile(r"[-+][ \t]*\r?\n")
 
 # TSO command: CALL 'HLQ.LOADLIB(MEMBER)' / CALL MEMBER / CALL *(MEMBER)
 _RE_CALL = re.compile(r"\bCALL\s+(?:'([^']*)'|(\S+))", re.IGNORECASE)
@@ -78,6 +86,15 @@ def _resolve_call_target(raw: str) -> str | None:
     return None
 
 
+def _normalize_control_text(text: str) -> str:
+    """Drop TSO comments and join continued lines, so each command is whole.
+
+    Comments go first: a comment line ending in ``-`` is not a continuation.
+    """
+    text = _RE_TSO_COMMENT.sub(" ", text)
+    return _RE_TSO_CONTINUATION.sub(" ", text)
+
+
 def extract_invoked_programs(text: str | None) -> list[InvokedProgram]:
     """Return the programs named in *text* via RUN PROGRAM / CALL, de-duplicated.
 
@@ -86,6 +103,7 @@ def extract_invoked_programs(text: str | None) -> list[InvokedProgram]:
     """
     if not text:
         return []
+    text = _normalize_control_text(text)
 
     found: list[InvokedProgram] = []
     seen: set[str] = set()

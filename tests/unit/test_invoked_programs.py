@@ -7,6 +7,8 @@ TSO / DSN wrappers.
 
 from __future__ import annotations
 
+import pytest
+
 import jclparser as jp
 from jclparser.program_profiles import analyze_job, get_profile
 from jclparser.program_profiles._invoked import extract_invoked_programs
@@ -171,3 +173,41 @@ class TestDB2BatchInvokedPrograms:
         assert results[0].invoked_programs == ["RPTGEN"]
         notes = " | ".join(results[0].notes)
         assert "embedded SQL" in notes
+
+
+class TestTsoControlTextForms:
+    """Real SYSTSIN spellings of RUN PROGRAM that used to be missed.
+
+    TSO accepts an abbreviated keyword (``PROG``), a ``-``/``+`` continuation
+    anywhere between operands, and a quoted name; and a ``/* ... */`` TSO
+    comment is not a command -- it used to yield a phantom program.
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            " RUN PROG(DB2PGM) PLAN(P)\n",
+            " RUN PROGR(DB2PGM) PLAN(P)\n",
+            " RUN -\n   PROGRAM(DB2PGM) PLAN(P)\n",
+            " RUN +\n PROG(DB2PGM) +\n PLAN(P)\n",
+            " RUN PROGRAM('DB2PGM') PLAN(P)\n",
+        ],
+    )
+    def test_run_program_variants(self, text):
+        assert [p.name for p in extract_invoked_programs(text)] == ["DB2PGM"]
+
+    def test_commented_out_run_is_not_a_program(self):
+        text = "/* RUN PROGRAM(OLDPGM) PLAN(P) */\n RUN PROGRAM(NEWPGM) PLAN(P)\n"
+        assert [p.name for p in extract_invoked_programs(text)] == ["NEWPGM"]
+
+    def test_unterminated_comment_ends_at_line_end(self):
+        text = " RUN PROGRAM(REALPGM) /* nightly run\n END\n"
+        assert [p.name for p in extract_invoked_programs(text)] == ["REALPGM"]
+
+    def test_commented_out_call_is_not_a_program(self):
+        text = " /* CALL 'OLD.LOAD(OLDPGM)' */\n CALL 'NEW.LOAD(NEWPGM)'\n"
+        assert [p.name for p in extract_invoked_programs(text)] == ["NEWPGM"]
+
+    def test_plan_and_parms_are_not_programs(self):
+        text = " RUN PLAN(PLANX) PROGRAM(DB2PGM) PARMS('/A-B')\n"
+        assert [p.name for p in extract_invoked_programs(text)] == ["DB2PGM"]
