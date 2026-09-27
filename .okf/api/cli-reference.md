@@ -37,7 +37,9 @@ jcl-parser FILE paths                    # RC feasibility path analysis
 
 These are not argparse subcommands — they are matched case-insensitively against the first positional `query` token inside `main()`. `detect` is checked before parsing the file (no parse needed); the rest run after `parse_jcl()` (and after `--explode`, if given).
 
-A bare step name (`jcl-parser FILE PAYSTEP`) or `STEP.DDNAME` falls through to step/DD lookup; an unmatched query token is tried as a step name first, then as a DD name searched across all steps.
+A bare step name (`jcl-parser FILE PAYSTEP`) or `STEP.DDNAME` falls through to step/DD lookup: the whole token is tried as a step name first (so exploded names like `CALL.PS` work with `--explode`), then — if it contains a dot — split on the **last** dot into step and DD (`CALL.PS.SYSIN`), else searched as a DD name across all steps. (Fixed 2026-09-27: it split on the first dot, so no exploded step or its DDs could be queried.)
+
+Flags may appear anywhere, including between `FILE` and the query (`jcl-parser FILE --json steps`); `main()` uses `parse_intermixed_args` (fixed 2026-09-27: that ordering used to exit 2 with `unrecognized arguments`).
 
 ## Flags
 

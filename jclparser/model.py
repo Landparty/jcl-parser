@@ -455,6 +455,9 @@ class Step:
         is_exploded: True if this step was generated from procedure explosion
         original_proc_call: Original procedure call step name (if exploded)
         dd_overrides: DD overrides for qualified DD names (PROC.STEP.DD format)
+        dd_override_concatenations: For a qualified override key in
+            ``dd_overrides``, the unnamed DDs coded after it -- overrides of
+            the 2nd, 3rd, ... members of that DD's concatenation, in order
     """
 
     name: str | None = None
@@ -467,6 +470,9 @@ class Step:
     is_exploded: bool = False
     original_proc_call: str | None = None
     dd_overrides: dict[str, DDStatement] = field(default_factory=dict)
+    dd_override_concatenations: dict[str, list[DDStatement]] = field(
+        default_factory=dict
+    )
 
     @property
     def is_procedure(self) -> bool:

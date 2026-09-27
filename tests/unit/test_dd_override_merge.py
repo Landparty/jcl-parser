@@ -78,3 +78,35 @@ class TestDDOverrideMerge:
         dd = _dds(PROC + "//PS.D3    DD DCB=LRECL=80\n")["D3"]
         assert dd.inline_data == "PROC DATA"
         assert dd.parameters["DCB"] == "LRECL=80"
+
+
+@pytest.mark.unit
+class TestDCBSubparameterOverride:
+    """An overriding DCB= changes only the DCB subparameters it codes."""
+
+    def test_dcb_override_keeps_uncoded_subparameters(self):
+        dd = _dds(PROC + "//PS.D1    DD DCB=LRECL=133\n")["D1"]
+        assert dd.parameters["DCB"] == ["RECFM=FB", "LRECL=133"]
+        assert dd.dcb.recfm == "FB"
+        assert dd.dcb.lrecl == 133
+
+    def test_dcb_override_adds_new_subparameter(self):
+        dd = _dds(PROC + "//PS.D1    DD DCB=(BLKSIZE=0)\n")["D1"]
+        assert dd.parameters["DCB"] == ["RECFM=FB", "LRECL=80", "BLKSIZE=0"]
+
+    def test_dcb_subparameter_with_no_value_is_nullified(self):
+        dd = _dds(PROC + "//PS.D1    DD DCB=(LRECL=,BLKSIZE=0)\n")["D1"]
+        assert dd.parameters["DCB"] == ["RECFM=FB", "BLKSIZE=0"]
+
+    def test_unqualified_dcb_override_merges_too(self):
+        dd = _dds(PROC + "//D1       DD DCB=RECFM=VB\n")["D1"]
+        assert dd.parameters["DCB"] == ["RECFM=VB", "LRECL=80"]
+
+    def test_dcb_override_positional_model_replaces_procs(self):
+        jcl = PROC.replace("DCB=(RECFM=FB,LRECL=80)", "DCB=(OLD.MODEL,LRECL=80)")
+        dd = _dds(jcl + "//PS.D1    DD DCB=(NEW.MODEL,RECFM=FB)\n")["D1"]
+        assert dd.parameters["DCB"] == ["NEW.MODEL", "LRECL=80", "RECFM=FB"]
+
+    def test_single_subparameter_string_form_is_kept(self):
+        dd = _dds(PROC + "//PS.D2    DD DCB=BLKSIZE=0\n")["D2"]
+        assert dd.parameters["DCB"] == "BLKSIZE=0"

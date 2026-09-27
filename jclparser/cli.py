@@ -129,7 +129,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Write cProfile binary to PATH (.prof file)",
     )
 
-    args = parser.parse_args(argv)
+    # Intermixed: flags may sit between FILE and the query tokens
+    # ("FILE --explode steps"); plain parse_args() hands the whole positional
+    # run to FILE/query before the flag and then rejects "steps".
+    args = parser.parse_intermixed_args(argv)
     path = Path(args.file)
 
     if not path.exists():
@@ -257,14 +260,14 @@ def main(argv: list[str] | None = None) -> int:
                 _print_procs(job, proc_path=args.proc_path)
         return 0
 
-    # STEP.DDNAME — split on first dot only; the remainder is the full DD name
-    # (JCL DD names don't contain dots, but this is safe for any input)
-    if "." in query:
-        step_name, dd_name = query.split(".", 1)
-        return _print_step_dd(job, step_name, dd_name, json_out)
-
-    # Try as step name first
+    # Try as step name first -- an exploded step name ("CALLER.PROCSTEP")
+    # contains a dot itself, so this must come before the STEP.DDNAME split.
     step = job.get_step(query.upper())
+    if step is None and "." in query:
+        # STEP.DDNAME -- split on the *last* dot: a DD name never contains a
+        # dot, but an exploded step name does ("CALLER.PROCSTEP.DDNAME").
+        step_name, dd_name = query.rsplit(".", 1)
+        return _print_step_dd(job, step_name, dd_name, json_out)
     if step is not None:
         if json_out:
             print(json.dumps(_step_to_dict(step), indent=2))
@@ -909,6 +912,10 @@ def _step_to_dict(step: Step) -> dict[str, Any]:
         "is_exploded": step.is_exploded,
         "original_proc_call": step.original_proc_call,
         "dd_overrides": {k: _dd_to_dict(v) for k, v in step.dd_overrides.items()},
+        "dd_override_concatenations": {
+            k: [_dd_to_dict(dd) for dd in v]
+            for k, v in step.dd_override_concatenations.items()
+        },
     }
 
 

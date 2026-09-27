@@ -270,7 +270,20 @@ def resolve_set_symbols(job: Job) -> None:
         if not _has_unresolved_symbol_ref(v, ignore=is_system_symbol_name)
     }
     _set_scope = SymbolScope(set_symbols=_resolved_symbols)
-    for _dd in job.get_dd_statements():
+    from .model import iter_execution_steps
+
+    # PROCSTEP.DDNAME overrides (and their concatenation members) are job-level
+    # JCL too; they live outside ``dd_statements``, so get_dd_statements()
+    # alone left ``&HLQ`` unresolved in them even after explosion.
+    _override_dds = [
+        _dd
+        for _step in iter_execution_steps(job.steps)
+        for _dd in [
+            *_step.dd_overrides.values(),
+            *(m for ms in _step.dd_override_concatenations.values() for m in ms),
+        ]
+    ]
+    for _dd in [*job.get_dd_statements(), *_override_dds]:
         substitute_dd_statement(
             _dd,
             _set_scope,
@@ -279,8 +292,6 @@ def resolve_set_symbols(job: Job) -> None:
             collapse_double_amp=False,
             keep_undefined=is_system_symbol_name,
         )
-
-    from .model import iter_execution_steps
 
     for _step in iter_execution_steps(job.steps):
         _step_warnings: list[str] = []

@@ -106,6 +106,9 @@ class JobBuilder:
         self.orphaned_dds: list[DDStatement] = []
         #: True while accumulating JOBLIB concatenation lines
         self.in_joblib_concat = False
+        #: Qualified name (``PROCSTEP.DDNAME``) of the override DD the current
+        #: step's unnamed DDs concatenate onto, or None
+        self.concat_override_key: str | None = None
         #: Warnings collected before the JOB statement is seen (no job.warnings
         #: yet to append to); flushed onto job.warnings once the Job object exists.
         self.pending_warnings: list[str] = []
@@ -286,6 +289,7 @@ class JobBuilder:
 
         self.current_step = _create_step_from_statement(stmt)
         self.in_joblib_concat = False  # JOBLIB concatenation ends at first EXEC
+        self.concat_override_key = None
 
         # Attach any orphaned DDs to this first step
         if self.orphaned_dds:
@@ -331,11 +335,20 @@ class JobBuilder:
                 # Store as override on the current step, keeping the
                 # qualified name for matching during explosion.
                 self.current_step.dd_overrides[stmt.name] = current_dd
+                self.concat_override_key = stmt.name
             else:
                 # Regular DD statement
                 self.current_step.add_dd(current_dd)
+        elif not stmt.name and self.concat_override_key is not None:
+            # An unnamed DD after a PROCSTEP.DDNAME override overrides the
+            # next member of that DD's concatenation; added to the step's own
+            # DDs it was appended after the PROC step's last DD instead.
+            self.current_step.dd_override_concatenations.setdefault(
+                self.concat_override_key, []
+            ).append(current_dd)
         else:
             # Regular DD statement
+            self.concat_override_key = None
             self.current_step.add_dd(current_dd)
 
         # Check for inline data marker (only for non-override DDs)
