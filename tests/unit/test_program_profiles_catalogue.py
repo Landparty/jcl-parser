@@ -629,3 +629,36 @@ class TestDDEventsFollowTheStatedDisposition:
             "EXTEND",
             "MOD",
         )
+
+
+class TestIDCAMSContinuedCommands:
+    """IDCAMS commands continued with ``-``, listed, or abbreviated."""
+
+    def test_continued_delete_list_and_abbreviation(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IDCAMS\n"
+            "//SYSPRINT DD SYSOUT=*\n"
+            "//SYSIN    DD *\n"
+            "  /* CLEAN UP -\n"
+            "  DELETE -\n"
+            "     MY.OLD.DSN PURGE\n"
+            "  DELETE (A.B.C D.E(MEM)) NONVSAM\n"
+            "  DEL X.Y.Z\n"
+            "  ALTER -\n"
+            "     MY.DSN NEWNAME(MY.NEW)\n"
+            "/*\n"
+        )
+        result = analyze_job(jp.parse_jcl(src))[0]
+        deletes = [n for n in result.notes if n.startswith("IDCAMS DELETE")]
+        assert deletes == [
+            "IDCAMS DELETE MY.OLD.DSN",
+            "IDCAMS DELETE A.B.C",
+            "IDCAMS DELETE D.E(MEM)",
+            "IDCAMS DELETE X.Y.Z",
+        ]
+        assert "IDCAMS ALTER MY.DSN" in result.notes
+        assert [e.action for e in result.dataset_events] == ["DELETE"] * 4
+        # raw_control is still the SYSIN text as coded.
+        assert result.raw_control is not None
+        assert "DELETE -\n" in result.raw_control

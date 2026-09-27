@@ -233,25 +233,19 @@ class TestParserEdgeCases:
         assert node.value == 0
 
     def test_bare_number_with_operator_and_rc(self):
-        """Reversed form: '4 GT RC' (lines 393-405)."""
+        """Reversed form: '4 GT RC' means RC LT 4 (operator mirrored)."""
         node = parse_condition("4 GT RC")
         assert isinstance(node, ReturnCodeCondition)
         assert node.value == 4
-        assert node.operator == "GT"
+        assert node.operator == "LT"
 
     def test_bare_number_with_operator_no_rc(self):
-        """Bare number with operator but no 'RC' keyword after it (lines 393-407).
+        """Bare number with operator but no 'RC' after it is unparseable.
 
-        The consumed operator ('GT') is discarded when 'RC' doesn't follow it.
-        The fallback at line 405-407 always returns operator='EQ'.
-        Using 'GT' (not 'EQ') to verify the operator is from the fallback,
-        not from the consumed token.
+        Dropping the operator and reading '4 GT' as 'RC EQ 4' would invent
+        a different condition, so the caller falls back to the raw string.
         """
-        node = parse_condition("4 GT")
-        assert isinstance(node, ReturnCodeCondition)
-        assert node.value == 4
-        # The consumed GT is discarded; fallback always returns EQ
-        assert node.operator == "EQ"
+        assert parse_condition("4 GT") is None
 
     def test_unrecognized_atom_returns_none(self):
         """Unrecognized atom raises ValueError (line 409) caught by parse_condition (line 441)."""

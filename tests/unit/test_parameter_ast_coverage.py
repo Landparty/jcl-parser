@@ -192,3 +192,46 @@ class TestDCBValidation:
         dcb = parser.parse_dcb("BLKSIZE=99999")
         errors = dcb.validate()
         assert any("BLKSIZE" in e for e in errors)
+
+
+class TestDCBRecfmValidation:
+    """Every valid RECFM combination passes; nonsense ones are still caught."""
+
+    @pytest.mark.parametrize(
+        "recfm",
+        [
+            "F",
+            "FA",
+            "FB",
+            "FBA",
+            "FBM",
+            "FBS",
+            "FBSA",
+            "FS",
+            "V",
+            "VA",
+            "VB",
+            "VBA",
+            "VBS",
+            "VBSA",
+            "VS",
+            "U",
+            "UA",
+            "UM",
+            "UT",
+            "D",
+            "DB",
+            "DBA",
+        ],
+    )
+    def test_valid_recfm(self, parser, recfm):
+        errors = parser.parse_dcb(f"RECFM={recfm}").validate()
+        assert not any("RECFM" in e for e in errors)
+
+    @pytest.mark.parametrize("recfm", ["UB", "XB", "FAM", "BF", "US"])
+    def test_invalid_recfm(self, parser, recfm):
+        errors = parser.parse_dcb(f"RECFM={recfm}").validate()
+        assert any("RECFM" in e for e in errors)
+
+    def test_blksize_zero_is_system_determined(self, parser):
+        assert parser.parse_dcb("RECFM=FB,LRECL=80,BLKSIZE=0").validate() == []

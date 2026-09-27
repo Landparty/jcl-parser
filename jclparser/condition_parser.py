@@ -215,6 +215,17 @@ _SYMBOL_KEYWORDS: dict[str, str] = {
     "~": "NOT",
 }
 
+# The operator that keeps a comparison true with its operands swapped:
+# ``4 LT RC`` is ``RC GT 4``.
+_MIRRORED_OP: dict[str, str] = {
+    "EQ": "EQ",
+    "NE": "NE",
+    "LT": "GT",
+    "GT": "LT",
+    "LE": "GE",
+    "GE": "LE",
+}
+
 # Two-character operator prefixes (characters that combine with = / < / >)
 _TWO_CHAR_OP_STARTS = frozenset("¬^~!<>")
 
@@ -428,7 +439,9 @@ class _Parser:
             # compared; reading it as 0 would invent a different condition.
             raise ValueError(f"Expected a numeric RC value, got {val_tok!r}")
 
-        # Bare number — treat as anonymous RC comparison: value op rc  (rare)
+        # Bare number first: ``value op [STEP.]RC`` (rare).  The operands are
+        # the other way round, so the operator is mirrored -- ``4 LT RC``
+        # holds when RC is greater than 4, i.e. ``RC GT 4``.
         if _RE_DIGITS.match(attr):
             op_tok = self._peek()
             op = _OP_MAP.get(op_tok.upper()) if op_tok else None
@@ -436,11 +449,16 @@ class _Parser:
                 self._consume()
                 # After the operator the user may have written "RC" or a step ref
                 next_tok = self._peek()
-                if next_tok and next_tok.upper() == "RC":
+                ref = next_tok.upper() if next_tok else ""
+                if ref == "RC" or ref.endswith(".RC"):
                     self._consume()
+                    ref_step = ref[: -len(".RC")] if ref != "RC" else None
                     return ReturnCodeCondition(
-                        step_name=step_name, operator=op, value=int(attr)
+                        step_name=ref_step or None,
+                        operator=_MIRRORED_OP[op],
+                        value=int(attr),
                     )
+                raise ValueError(f"Expected RC after {attr} {op_tok}, got {next_tok!r}")
             # Fallback: single number, treat as RC EQ value
             return ReturnCodeCondition(
                 step_name=step_name, operator="EQ", value=int(attr)
