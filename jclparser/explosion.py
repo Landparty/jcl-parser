@@ -82,6 +82,7 @@ def _clone_dd_statement(dd: DDStatement) -> DDStatement:
         line_number=dd.line_number,
     )
     new_dd.output_refs = dd.output_refs
+    new_dd.coded_dataset_name = dd.coded_dataset_name
     return new_dd
 
 
@@ -550,8 +551,10 @@ def substitute_dd_statement(
     """
     local_warnings: list[str] | None = [] if warnings is not None else None
 
-    # Substitute dataset name
+    # Substitute dataset name, remembering the name as first coded
     if dd.dataset_name:
+        if dd.coded_dataset_name is None and "&" in dd.dataset_name:
+            dd.coded_dataset_name = dd.dataset_name
         dd.dataset_name = substitute_symbols(
             dd.dataset_name,
             scope,
@@ -663,6 +666,9 @@ def _merge_dd_override(base: DDStatement, override: DDStatement) -> DDStatement:
     if _DD_SOURCE_KEYS.intersection(override.parameters):
         for key in _DD_SOURCE_KEYS:
             params.pop(key, None)
+    else:
+        # The data source (and so the coded dataset name) is the PROC DD's.
+        clone.coded_dataset_name = base.coded_dataset_name
     for key, value in clone.parameters.items():
         if value == "":
             params.pop(key, None)

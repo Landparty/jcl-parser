@@ -31,7 +31,9 @@ class HardcodedHLQRule(LintRule):
                 dsn = dd.dataset_name
                 if not dsn or dsn.startswith("&&"):
                     continue
-                if "&" in dsn:
+                # A name built from symbols (&HLQ..DATA) is what this rule
+                # asks for, even after SET / PROC substitution resolved it.
+                if "&" in dsn or "&" in (dd.coded_dataset_name or ""):
                     continue
                 # Only warn on real (production-looking) names — at least two
                 # qualifiers — to avoid being noisy on tiny test JCL.

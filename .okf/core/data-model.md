@@ -81,6 +81,7 @@ the codebase; use `step.procedure` / `step.is_procedure`.
 |-------|------|-------|
 | `name` | `str` | DD name, max 8 chars |
 | `dataset_name` | `str \| None` | `DSN=` value, or `DSNAME=` (its long form) when no `DSN=` is coded |
+| `coded_dataset_name` | `str \| None` | The dataset name as coded, before SET / PROC symbol substitution (`&HLQ..DATA` while `dataset_name` reads `PROD.DATA`); `None` when the coded name had no symbols. Not part of `==` or `repr` |
 | `disposition` | `str \| None` | `DISP=` raw string |
 | `parameters` | `dict[str, Any]` | DSN, DISP, SPACE, DCB, SYSOUT… |
 | `inline_data` | `str \| None` | Content between `DD *` and `/*`, as **one string** (there is no `instream_data` list). Data records after a step with no `DD *` / `DD DATA` ahead of them get an implicit `SYSIN` DD (`parameters={"*": True}`), as JES does, plus a `job.warnings` entry |

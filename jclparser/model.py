@@ -253,6 +253,10 @@ class DDStatement:
     output_refs: list[OutputStatement] = field(
         default_factory=list, repr=False, compare=False
     )
+    #: The dataset name as coded, before any symbol substitution (e.g.
+    #: ``"&HLQ..DATA"`` when :attr:`dataset_name` now reads ``"PROD.DATA"``).
+    #: ``None`` when the coded name had no symbols to substitute.
+    coded_dataset_name: str | None = field(default=None, repr=False, compare=False)
 
     # Cached parsed parameters (not included in __init__)
     _dcb_parsed: DCBParameter | None = field(
