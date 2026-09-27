@@ -27,6 +27,7 @@ import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from .errors import JCLStructureError
 from .utils import _read_file_with_fallback, is_within_directory
 
 logger = logging.getLogger(__name__)
@@ -164,6 +165,9 @@ def resolve_includes(
     max_depth: int = 8,
     _depth: int = 0,
     _collected: list[str] | None = None,
+    max_lines: int = 1_000_000,
+    _active: frozenset[str] = frozenset(),
+    _budget: list[int] | None = None,
 ) -> str:
     """
     Expand ``// INCLUDE MEMBER=name`` statements by inlining member content.
@@ -186,12 +190,23 @@ def resolve_includes(
         _collected: If provided, member names that were successfully
             expanded are appended to this list (internal — callers may
             pass an empty list to collect all resolved member names).
+        max_lines: Maximum number of member lines inlined in total. Fan-out
+            (a member including another several times, at every level)
+            grows exponentially with depth, so depth alone is no bound.
+        _active: Members being expanded above this level (internal). An
+            INCLUDE of one of them is recursive and is left intact.
+        _budget: Remaining line budget shared across levels (internal).
 
     Returns:
         JCL text with all resolvable INCLUDE statements expanded.
+
+    Raises:
+        JCLStructureError: If expansion would inline more than *max_lines*.
     """
     if _depth >= max_depth:
         return content
+    if _budget is None:
+        _budget = [max_lines]
 
     result: list[str] = []
     for line in content.splitlines(keepends=True):
@@ -200,9 +215,19 @@ def resolve_includes(
         # are never mistaken for JCL statements.
         statement_line = line.rstrip("\r\n")
         member = _extract_include_member(statement_line)
-        if member is not None:
+        if member is not None and member in _active:
+            logger.warning(
+                "INCLUDE member %r is recursive; leaving statement intact", member
+            )
+        elif member is not None:
             member_content = loader.load_member(member, libraries)
             if member_content is not None:
+                _budget[0] -= member_content.count("\n") + 1
+                if _budget[0] < 0:
+                    raise JCLStructureError(
+                        f"INCLUDE expansion exceeds {max_lines:,} lines "
+                        f"(at member {member})"
+                    )
                 if _collected is not None:
                     _collected.append(member)
                 logger.debug("resolved INCLUDE member %r (depth %d)", member, _depth)
@@ -213,6 +238,9 @@ def resolve_includes(
                     max_depth=max_depth,
                     _depth=_depth + 1,
                     _collected=_collected,
+                    max_lines=max_lines,
+                    _active=_active | {member},
+                    _budget=_budget,
                 )
                 # Ensure the inlined content ends with a newline
                 if not expanded.endswith("\n"):

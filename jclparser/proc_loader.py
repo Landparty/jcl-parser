@@ -208,6 +208,14 @@ class JCLLIBProcedureLoader(ProcedureLoader):
         # Construct library path
         library_path = self.base_path / library
 
+        # JCLLIB ORDER comes from the JCL being parsed: an absolute or ``..``
+        # library must not escape the configured base directory. Checked
+        # lexically, so a library the operator symlinked into base_path works.
+        if not Path(os.path.abspath(library_path)).is_relative_to(
+            os.path.abspath(self.base_path)
+        ):
+            return None
+
         if not library_path.exists() or not library_path.is_dir():
             return None
 

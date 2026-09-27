@@ -34,7 +34,7 @@ timestamp: 2026-09-16T00:00:00Z
 
 11. **Vendoring is always manual.** Changes to `jclparser/` are not auto-propagated. Always run `rm -rf ../backend/_vendor/jcl-parser/jclparser && cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser` after changes — plain `cp -r` nests into `jclparser/jclparser/` and silently leaves stale files in place when the destination already exists (discovered 2026-07-24: it left the backend's vendored copy missing `_job_builder.py`/`_model_factories.py`/`_post_parse.py` for two PRs).
 
-12. **`--version` reads from `jclparser.__version__`.** Update **both** `pyproject.toml:version` and `jclparser/__init__.py:__version__` together on release.
+12. **`--version` reads from `jclparser.__version__`.** It must equal `pyproject.toml:version`. release-please updates both (the `__init__.py` line carries `# x-release-please-version`); a test enforces the match (it had drifted to 1.1.0 while the package was 1.4.0).
 
 13. **Coverage must not drop below 90%.** `pytest` enforces `--cov-fail-under=90`. Add tests alongside any new module in the same commit.
 

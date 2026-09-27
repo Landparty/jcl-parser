@@ -4,7 +4,10 @@
   "include-component-in-tag": false,
   "packages": {
     ".": {
-      "package-name": "jcl-parser"
+      "package-name": "jcl-parser",
+      "extra-files": [
+        "jclparser/__init__.py"
+      ]
     }
   }
 }

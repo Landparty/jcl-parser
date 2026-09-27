@@ -153,9 +153,8 @@ class JobBuilder:
         """
         if not self.in_inline_data:
             return False
-        if line.strip() == self.current_delimiter or line.strip().startswith(
-            self.current_delimiter
-        ):
+        # Only a delimiter in columns 1-2 ends the data (see _merge_source_lines).
+        if line.startswith(self.current_delimiter):
             # End of inline data
             self._flush_inline_data()
             return True
@@ -354,6 +353,12 @@ class JobBuilder:
             self.inline_data_lines = []
             has_dlm = "DLM" in current_dd.parameters
             current_delimiter = current_dd.parameters.get("DLM", "/*")
+            if not isinstance(current_delimiter, str):
+                raise JCLSyntaxError(
+                    f"DLM= must be a one- or two-character delimiter, got "
+                    f"{jcl_value_text(current_delimiter)}",
+                    line_num,
+                )
             # Handle quoted delimiter
             if current_delimiter.startswith("'") and current_delimiter.endswith("'"):
                 current_delimiter = current_delimiter[1:-1]

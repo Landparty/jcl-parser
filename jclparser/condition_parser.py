@@ -493,5 +493,7 @@ def parse_condition(condition_str: str) -> ConditionNode | None:
             return None
         parser = _Parser(tokens)
         return parser.parse()
-    except (ValueError, TypeError, IndexError, AttributeError):
+    except (ValueError, TypeError, IndexError, AttributeError, RecursionError):
+        # RecursionError: nesting (parentheses, NOT chains) deeper than the
+        # recursive-descent parser can follow; fall back to the raw string.
         return None

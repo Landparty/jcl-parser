@@ -137,7 +137,9 @@ def _merge_source_lines(
 
     for i, line in enumerate(lines):
         if in_inline_data:
-            if line.strip() == delimiter or line.strip().startswith(delimiter):
+            # The delimiter only counts in columns 1-2: an indented ``/*`` is
+            # data (a C, REXX or SQL comment in SYSIN).
+            if line.startswith(delimiter):
                 # The delimiter record belongs to the in-stream data block
                 # (it is not a JCL statement) — mark it and stop collecting.
                 inline_data_indices.add(i)
@@ -276,6 +278,16 @@ def _instream_delimiter(operands: str) -> tuple[str, bool] | None:
     if has_dlm:
         dlm_start = upper_operands.index("DLM=") + 4
         dlm_end = dlm_start
+        if operands[dlm_start : dlm_start + 1] == "'":
+            # Quoted: ``DLM='$)'`` may hold ``,`` or ``)``; ``''`` is a quote.
+            dlm_end += 1
+            while dlm_end < len(operands):
+                if operands[dlm_end] == "'":
+                    if operands[dlm_end + 1 : dlm_end + 2] != "'":
+                        dlm_end += 1
+                        break
+                    dlm_end += 1
+                dlm_end += 1
         while dlm_end < len(upper_operands) and upper_operands[dlm_end] not in (
             ",) \t\r\n"
         ):

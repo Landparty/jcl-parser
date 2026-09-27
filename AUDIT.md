@@ -1,8 +1,12 @@
 # jclparser — Codebase Audit & Refactor Plan
 
 **Date:** 2026-09-27 · **Commit audited:** `55f4339` (main) · **Scope:** `jclparser/` (61 modules, 13.8k LOC), `tests/` (103 files, 27.5k LOC), build/CI/docs.
-**Status:** Read-only audit. No production code was changed. Every finding below was reproduced
-with a script or command, except where marked **requires validation**.
+**Status:** Every finding below was reproduced with a script or command, except where marked
+**requires validation**. The audit itself changed no production code.
+
+> **Update (same PR, second commit):** the patch-release batch in §8 is now fixed: **C1–C6, H1, H2, H5, M3**.
+> Each fix has a regression test in `tests/unit/test_audit_patch_fixes.py`, and `.okf/log.md` has
+> the details. Everything else below is still open.
 
 ## How this was measured
 
@@ -181,4 +185,4 @@ C6 scores lower than some High items but is listed as Critical because it is a r
 2. **Tooling (about 1 day):** H3, H4, M7, M9 and M10, which make future drift visible.
 3. **Structural (1–2 weeks, incremental):** H7 (one tokenizer, one in-stream detector), then H6, H8 and M5. Replace coverage-driven tests with property-based tests (M8) as each area is touched.
 
-*No production files were modified by this audit. Awaiting review before any code changes.*
+*Step 1 of the sequencing (patch release) is implemented in this PR. Steps 2 and 3 await review before any further code changes.*

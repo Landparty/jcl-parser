@@ -108,7 +108,14 @@ EXEC keyword parameters coded on an `EXEC procname` statement (`ACCT`, `ADDRSPC`
 | `ProcedureNotFoundError` | PROC not in any loader |
 | `CircularProcedureError` | PROC A calls PROC B which calls PROC A |
 | `ExplosionDepthError` | Nesting deeper than `max_depth` |
-| `UndefinedSymbolError` | `&SYMBOL` undefined (only with `strict_symbols=True`) |
+| `UndefinedSymbolError` | `&SYMBOL` undefined (only with `strict_symbols=True`; applies to plain steps' EXEC parameters as well as PROC steps) |
+| `JCLStructureError` | A symbol's nested values expand to more than `_MAX_NESTED_EXPANSION_CHARS` (1,000,000) characters in one substitution |
+
+**Expansion bounds.** A symbol whose value refers back to itself (`A='&A'`, directly or via other
+symbols) is a cycle: the reference is left as written instead of being re-expanded. Fan-out over
+distinct symbols is capped by the character budget above. `JCLLIB ORDER=` libraries must stay
+inside the loader's base path (checked lexically, so an operator-symlinked library still works):
+an absolute or `..` library is skipped.
 
 # Citations
 

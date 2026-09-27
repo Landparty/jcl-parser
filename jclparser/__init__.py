@@ -20,7 +20,7 @@ application, for example::
 import logging as _logging
 
 # Package metadata
-__version__ = "1.1.0"
+__version__ = "1.4.0"  # x-release-please-version
 __author__ = "JCL Parser Team"
 __description__ = "Parse IBM JCL scripts into Python objects"
 
@@ -49,6 +49,7 @@ from .errors import (
     ErrorSeverity,
     ErrorType,
     ExplosionDepthError,
+    JCLParseError,
     JCLStructureError,
     JCLSyntaxError,
     JCLValidationError,
@@ -171,6 +172,7 @@ __all__ = [  # noqa: RUF022 — grouped by API tier, not alphabetically
     "Parameter",
     "Statement",
     "OutputStatement",
+    "JCLParseError",
     "JCLSyntaxError",
     "JCLValidationError",
     "JCLStructureError",
