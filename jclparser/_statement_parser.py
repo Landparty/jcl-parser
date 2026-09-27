@@ -607,13 +607,14 @@ def _extract_jcllib_order(content: str) -> list[str]:
     statement in *content*.  Recognises the same syntactic forms as the main
     parser (no label, ``//JCLLIB``, and ``//LABEL JCLLIB``).
 
-    This is a best-effort single-line scan — ORDER values split across JCL
-    continuation lines are not resolved here.  The result is used to pass a
-    library list to :func:`~jclparser.include_loader.resolve_includes` before
-    the full parse begins.
+    A parenthesised ORDER list continued onto following ``//`` records is
+    followed until its closing ``)``.  The result is used to pass a library
+    list to :func:`~jclparser.include_loader.resolve_includes` before the full
+    parse begins.
     """
     libraries: list[str] = []
-    for line in content.splitlines():
+    lines = content.splitlines()
+    for index, line in enumerate(lines):
         line = line.lstrip()
         if not line.startswith("//") or line.startswith("//*"):
             continue
@@ -640,9 +641,20 @@ def _extract_jcllib_order(content: str) -> list[str]:
         order_idx = upper_params.find("ORDER=")
         if order_idx == -1:
             continue
-        rest = params_part[order_idx + 6 :].strip()
-        # Strip surrounding parentheses if present
+        # The operand field ends at the first blank; the rest is a comment.
+        rest = (params_part[order_idx + 6 :].split(None, 1) or [""])[0]
         if rest.startswith("("):
+            # Follow the list onto continuation records (``//`` then blank)
+            # until it closes.
+            follow = index + 1
+            while ")" not in rest and follow < len(lines):
+                cont = lines[follow]
+                follow += 1
+                if cont.startswith("//*"):
+                    continue
+                if not cont.startswith("// ") or not cont[2:].strip():
+                    break
+                rest += cont[2:].split(None, 1)[0]
             end = rest.find(")")
             rest = rest[1:end] if end != -1 else rest[1:]
         for lib in rest.split(","):

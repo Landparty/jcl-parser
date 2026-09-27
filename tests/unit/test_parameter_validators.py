@@ -171,7 +171,7 @@ class TestDatasetNameValidator:
 
     def test_invalid_gdg_format(self):
         """Test invalid GDG format."""
-        result = DatasetNameValidator.validate("MY.DATA(ABC)")
+        result = DatasetNameValidator.validate("MY.DATA(+X)")
 
         assert result.is_valid is False
         assert any("GDG" in err for err in result.errors)

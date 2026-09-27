@@ -248,8 +248,9 @@ class TestValidateDisposition:
         assert not validate_disposition("(NEW,CATLG,INVALID)")
 
     def test_missing_status(self):
-        """Test disposition with missing status."""
-        assert not validate_disposition("(,CATLG)")
+        """An omitted status is valid JCL and defaults to NEW."""
+        assert validate_disposition("(,CATLG)")
+        assert validate_disposition(["", "CATLG", "DELETE"])
 
 
 class TestValidateDataDependencies:

@@ -7,7 +7,7 @@ in conditions, and malformed expressions.
 
 import pytest
 
-from jclparser.condition_parser import parse_condition
+from jclparser.condition_parser import NotCondition, parse_condition
 
 
 @pytest.mark.unit
@@ -37,11 +37,11 @@ class TestDeeplyNestedConditions:
         assert result is not None
 
     def test_deeply_nested_with_not(self):
-        """Double-NOT is not supported and returns None."""
+        """Double-NOT nests two NotCondition nodes."""
         result = parse_condition("NOT NOT STEP1.RC EQ 0")
-        # Current parser behavior: the second NOT is treated as an
-        # unrecognised atom, so double-NOT returns None.
-        assert result is None
+        assert isinstance(result, NotCondition)
+        assert isinstance(result.operand, NotCondition)
+        assert result.evaluate({"STEP1": (0, False)}) is True
 
 
 @pytest.mark.unit
@@ -94,16 +94,14 @@ class TestQuotedStringsInConditions:
     """Test conditions containing quoted string literals."""
 
     def test_condition_with_single_quotes(self):
-        """Quoted string with single quotes in condition expression."""
+        """A quoted, non-numeric RC value is unparseable (not read as 0)."""
         result = parse_condition("STEP1.RC EQ 'VALUE'")
-        # Current parser behavior: builds an AST, treating non-numeric
-        # quoted values as 0 during parsing.
-        assert result is not None
+        assert result is None
 
     def test_escaped_quote_in_condition(self):
-        """Escaped quotes ('') inside a quoted string."""
+        """Escaped quotes ('') inside a quoted string tokenize without crashing."""
         result = parse_condition("STEP1.RC EQ 'O''BRIEN'")
-        assert result is not None
+        assert result is None
 
 
 @pytest.mark.unit
@@ -131,9 +129,9 @@ class TestMalformedConditions:
         assert result is not None
 
     def test_double_operator(self):
-        """Two operators in a row — second is treated as a non-numeric value."""
+        """Two operators in a row are unparseable."""
         result = parse_condition("STEP1.RC EQ GT 0")
-        assert result is not None
+        assert result is None
 
     def test_trailing_and(self):
         """Condition ending with AND keyword."""

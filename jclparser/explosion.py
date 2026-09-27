@@ -7,9 +7,10 @@ support for nested procedures, circular dependency detection, and audit logging.
 
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
+from dataclasses import replace as dataclass_replace
 from datetime import datetime
 from typing import Any
 
@@ -20,9 +21,17 @@ from .errors import (
     ProcedureNotFoundError,
     UndefinedSymbolError,
 )
-from .model import ConditionalBlock, DDStatement, Job, Procedure, Step
+from .model import (
+    ConditionalBlock,
+    DDStatement,
+    Job,
+    Procedure,
+    Step,
+    iter_execution_steps,
+)
 from .proc_loader import ProcedureLoader, create_default_loader
 from .system_symbols import SystemSymbolProvider, get_default_provider
+from .utils import jcl_value_text
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +67,62 @@ def _clone_conditional(
     return new_cond
 
 
+def _qualify_step_ref(
+    name: str | None, proc_steps: frozenset[str], prefix: str
+) -> str | None:
+    """Qualify a step reference made inside a procedure with the call's prefix.
+
+    Inside a procedure, ``PS1`` (or ``PS1.INNER`` for a nested call) names the
+    procedure's own step; after explosion that step is ``PREFIX.PS1``.
+    References to anything else (job steps) are returned unchanged.
+    """
+    if name and name.split(".", 1)[0].upper() in proc_steps:
+        return f"{prefix}.{name}"
+    return name
+
+
+def _qualify_condition_ast(node: Any, proc_steps: frozenset[str], prefix: str) -> Any:
+    """Return a copy of an IF condition AST with procedure step refs qualified.
+
+    The procedure's AST is shared by every expansion, so it is never mutated.
+    """
+    if node is None:
+        return None
+    changes: dict[str, Any] = {}
+    if hasattr(node, "step_name"):
+        changes["step_name"] = _qualify_step_ref(node.step_name, proc_steps, prefix)
+    for child in ("operand", "left", "right"):
+        if hasattr(node, child):
+            changes[child] = _qualify_condition_ast(
+                getattr(node, child), proc_steps, prefix
+            )
+    return dataclass_replace(node, **changes) if changes else node
+
+
+def _qualify_cond_parameter(value: Any, proc_steps: frozenset[str], prefix: str) -> Any:
+    """Qualify the step of each ``(code,operator,stepname)`` test in COND=."""
+    if isinstance(value, list):
+        if (
+            len(value) == 3
+            and all(isinstance(v, str) for v in value)
+            and not value[0].startswith("(")
+        ):
+            # COND=(4,LT,PS1): a single test stored as its three tokens.
+            return [
+                value[0],
+                value[1],
+                _qualify_step_ref(value[2], proc_steps, prefix),
+            ]
+        return [_qualify_cond_parameter(v, proc_steps, prefix) for v in value]
+    if isinstance(value, str) and value.startswith("(") and value.endswith(")"):
+        # COND=((4,LT,PS1),...): each test stored as "(4,LT,PS1)".
+        parts = value[1:-1].split(",")
+        if len(parts) == 3:
+            parts[2] = _qualify_step_ref(parts[2], proc_steps, prefix) or parts[2]
+            return "(" + ",".join(parts) + ")"
+    return value
+
+
 def _clone_dd_statement(dd: DDStatement) -> DDStatement:
     # substitute_dd_statement mutates dataset_name, disposition, parameters
     # in-place, so each exploded step needs its own DDStatement instance.
@@ -75,6 +140,7 @@ def _clone_dd_statement(dd: DDStatement) -> DDStatement:
         line_number=dd.line_number,
     )
     new_dd.output_refs = dd.output_refs
+    new_dd.coded_dataset_name = dd.coded_dataset_name
     return new_dd
 
 
@@ -111,6 +177,17 @@ class SymbolScope:
     exec_overrides: dict[str, Any] = field(default_factory=dict)
     system_provider: SystemSymbolProvider | None = None
 
+    def raw_value(self, symbol_name: str) -> Any:
+        """Return an EXEC-override / PROC-default value as tokenized.
+
+        A parenthesised value such as ``DISP=(NEW,CATLG)`` comes back as the
+        list the tokenizer built; ``None`` when neither defines the symbol.
+        """
+        symbol_upper = symbol_name.upper()
+        if symbol_upper in self.exec_overrides:
+            return self.exec_overrides[symbol_upper]
+        return self.proc_params.get(symbol_upper)
+
     def resolve(self, symbol_name: str, strict: bool = False) -> str | None:
         """
         Resolve a symbol using precedence rules.
@@ -130,12 +207,12 @@ class SymbolScope:
         # 1. EXEC overrides (highest priority)
         if symbol_upper in self.exec_overrides:
             value = self.exec_overrides[symbol_upper]
-            return str(value) if value is not None else None
+            return jcl_value_text(value) if value is not None else None
 
         # 2. PROC parameters (default values)
         if symbol_upper in self.proc_params:
             value = self.proc_params[symbol_upper]
-            return str(value) if value is not None else None
+            return jcl_value_text(value) if value is not None else None
 
         # 3. SET statements (job-level)
         if symbol_upper in self.set_symbols:
@@ -374,11 +451,21 @@ def expand_proc_invocation(
     # Generate step name prefix
     prefix = step_prefix or step.name or "PROC"
 
+    # Step references made inside the procedure (IF PS1.RC, COND=(4,LT,PS1))
+    # name its own steps, which are renamed PREFIX.PS1 below.
+    proc_steps = frozenset(
+        s.name.upper() for s in iter_execution_steps(procedure.steps) if s.name
+    )
+
     def _process_proc_steps(steps_list):
         result = []
         for proc_step in steps_list:
             if isinstance(proc_step, ConditionalBlock):
-                result.append(_clone_conditional(proc_step, _process_proc_steps))
+                new_block = _clone_conditional(proc_step, _process_proc_steps)
+                new_block.condition_ast = _qualify_condition_ast(
+                    new_block.condition_ast, proc_steps, prefix
+                )
+                result.append(new_block)
             else:
                 # Clone the step
                 new_step = _clone_step_for_explosion(proc_step)
@@ -409,6 +496,10 @@ def expand_proc_invocation(
                     strict=strict,
                     warnings=warnings,
                 )
+                if "COND" in new_step.parameters:
+                    new_step.parameters["COND"] = _qualify_cond_parameter(
+                        new_step.parameters["COND"], proc_steps, prefix
+                    )
 
                 # Substitute symbols in DD statements
                 for dd in new_step.dd_statements:
@@ -422,6 +513,26 @@ def expand_proc_invocation(
     expanded_steps = _process_proc_steps(procedure.steps)
 
     return expanded_steps
+
+
+_WHOLE_SYMBOL_RE = re.compile(r"&([A-Z0-9@#$]+)\.?")
+
+
+def _whole_symbol_list(value: Any, scope: SymbolScope) -> list[Any] | None:
+    """If *value* is exactly one symbol whose value is a list, return a copy.
+
+    ``DISP=&DP`` with ``DP=(NEW,CATLG)`` must become the same
+    ``["NEW", "CATLG"]`` list that coding ``DISP=(NEW,CATLG)`` produces.
+    """
+    if not isinstance(value, str):
+        return None
+    match = _WHOLE_SYMBOL_RE.fullmatch(value)
+    if match is None:
+        return None
+    raw = scope.raw_value(match.group(1))
+    if isinstance(raw, (list, tuple)):
+        return deepcopy(list(raw))
+    return None
 
 
 def substitute_parameters_dict(
@@ -454,6 +565,11 @@ def substitute_parameters_dict(
     result: dict[str, Any] = {}
 
     for key, value in parameters.items():
+        whole = _whole_symbol_list(value, scope)
+        if whole is not None:
+            # DISP=&DP with DP=(NEW,CATLG): keep the list, exactly as if
+            # DISP=(NEW,CATLG) had been coded, substituting inside it.
+            value = whole
         if isinstance(value, str):
             result[key] = substitute_symbols(
                 value,
@@ -510,6 +626,9 @@ def _strip_empty_member(dataset_name: str) -> str:
     return dataset_name
 
 
+_DSN_KEYS = ("DSN", "DSNAME")
+
+
 def substitute_dd_statement(
     dd: DDStatement,
     scope: SymbolScope,
@@ -533,22 +652,24 @@ def substitute_dd_statement(
             empty string in this DD's dataset name or disposition. Ignored
             when allow_undefined=True, since nothing is blanked in that mode.
         collapse_double_amp: If False, leave a literal "&&" untouched instead
-            of collapsing it to "&". Callers that must preserve the
-            "&&NAME" temporary-dataset idiom (see
-            ``DDStatement.is_temporary()``) ahead of full PROC explosion
-            should pass False here.
+            of collapsing it to "&". The dataset name (``dataset_name`` and
+            the ``DSN`` / ``DSNAME`` parameters) never collapses: there
+            ``&&NAME`` is the temporary-dataset idiom (see
+            ``DDStatement.is_temporary()``), not an escaped ampersand.
     """
     local_warnings: list[str] | None = [] if warnings is not None else None
 
-    # Substitute dataset name
+    # Substitute dataset name, remembering the name as first coded
     if dd.dataset_name:
+        if dd.coded_dataset_name is None and "&" in dd.dataset_name:
+            dd.coded_dataset_name = dd.dataset_name
         dd.dataset_name = substitute_symbols(
             dd.dataset_name,
             scope,
             strict=strict,
             allow_undefined=allow_undefined,
             warnings=local_warnings,
-            collapse_double_amp=collapse_double_amp,
+            collapse_double_amp=False,
             keep_undefined=keep_undefined,
         )
         dd.dataset_name = _strip_empty_member(dd.dataset_name)
@@ -557,6 +678,9 @@ def substitute_dd_statement(
     # not a plain string, so each element needs its own substitution pass —
     # substitute_symbols() is a no-op for non-str input and would otherwise
     # silently skip symbols in list-valued dispositions.
+    whole_disposition = _whole_symbol_list(dd.disposition, scope)
+    if whole_disposition is not None:
+        dd.disposition = whole_disposition
     if dd.disposition:
         if isinstance(dd.disposition, list):
             dd.disposition = [
@@ -585,14 +709,30 @@ def substitute_dd_statement(
             )
 
     # Substitute all parameters
+    original_parameters = dd.parameters
     dd.parameters = substitute_parameters_dict(
-        dd.parameters,
+        original_parameters,
         scope,
         strict=strict,
         allow_undefined=allow_undefined,
         collapse_double_amp=collapse_double_amp,
         keep_undefined=keep_undefined,
     )
+    # The dataset-name parameters keep "&&" (temporary dataset), matching
+    # dataset_name above.
+    for key in _DSN_KEYS:
+        value = original_parameters.get(key)
+        if isinstance(value, str):
+            dd.parameters[key] = _strip_empty_member(
+                substitute_symbols(
+                    value,
+                    scope,
+                    strict=strict,
+                    allow_undefined=allow_undefined,
+                    collapse_double_amp=False,
+                    keep_undefined=keep_undefined,
+                )
+            )
 
     # Note: inline_data intentionally NOT substituted (data content preserved)
 
@@ -601,6 +741,152 @@ def substitute_dd_statement(
             warnings.append(
                 f"Line {dd.line_number}: DD {dd.name or '(unnamed)'}: {msg}"
             )
+
+
+# DD parameters that each name the DD's data source. They are mutually
+# exclusive, so an override that codes any of them displaces all of them on the
+# overridden DD (e.g. DSN= on the override nullifies a PROC DD's DUMMY).
+# ``_pos_0`` is the positional DUMMY / * / DATA operand; a bare ``DD *`` or
+# ``DD DATA`` is stored as a ``{"*": True}`` / ``{"DATA": True}`` flag instead.
+_DD_INSTREAM_MARKERS = frozenset({"*", "DATA"})
+_DD_SOURCE_KEYS = frozenset({"DSN", "DSNAME", "SYSOUT", "PATH", "_pos_0"}).union(
+    _DD_INSTREAM_MARKERS
+)
+
+
+def _is_instream_dd(params: dict[str, Any]) -> bool:
+    """Return True if *params* describe an in-stream (``DD *`` / ``DATA``) DD."""
+    if _DD_INSTREAM_MARKERS.intersection(params):
+        return True
+    return str(params.get("_pos_0", "")).upper() in _DD_INSTREAM_MARKERS
+
+
+def _merge_dd_override(base: DDStatement, override: DDStatement) -> DDStatement:
+    """Return *base* modified by *override* per z/OS DD-override semantics.
+
+    An overriding DD statement changes only the parameters it codes: every
+    other parameter of the PROC's DD is kept, and a parameter coded with no
+    value (``UNIT=``) is nullified. An in-stream override (``DD *`` /
+    ``DD DATA``) supplies its own data and replaces the DD outright.
+    """
+    clone = deepcopy(override)
+    if _is_instream_dd(override.parameters):
+        return clone
+
+    params = deepcopy(base.parameters)
+    if _DD_SOURCE_KEYS.intersection(override.parameters):
+        for key in _DD_SOURCE_KEYS:
+            params.pop(key, None)
+    else:
+        # The data source (and so the coded dataset name) is the PROC DD's.
+        clone.coded_dataset_name = base.coded_dataset_name
+    for key, value in clone.parameters.items():
+        if value == "":
+            params.pop(key, None)
+        else:
+            params[key] = value
+
+    dataset_name = params.get("DSN")
+    if dataset_name is None:
+        dataset_name = params.get("DSNAME")
+    clone.parameters = params
+    clone.dataset_name = dataset_name
+    clone.disposition = params.get("DISP")
+    if _is_instream_dd(params):
+        clone.inline_data = base.inline_data
+    return clone
+
+
+# EXEC keyword parameters that an ``EXEC procname`` statement can override on
+# the procedure's steps, as ``KEYWORD.procstep=value`` or plain
+# ``KEYWORD=value``. Symbolic parameter names can never collide with these.
+_EXEC_OVERRIDE_KEYWORDS = frozenset(
+    {
+        "ACCT",
+        "ADDRSPC",
+        "CCSID",
+        "COND",
+        "DPRTY",
+        "DYNAMNBR",
+        "MEMLIMIT",
+        "PARM",
+        "PARMDD",
+        "PERFORM",
+        "RD",
+        "REGION",
+        "REGIONX",
+        "TIME",
+        "TVSMSG",
+        "TVSAMCOM",
+    }
+)
+# PARM and PARMDD are mutually exclusive: coding one on a step displaces the
+# other.
+_PARM_KEYWORDS = frozenset({"PARM", "PARMDD"})
+
+
+def _set_exec_keyword(step: Step, keyword: str, value: Any) -> None:
+    """Override (or, for an empty value, nullify) *keyword* on *step*."""
+    if keyword in _PARM_KEYWORDS:
+        for key in _PARM_KEYWORDS:
+            step.parameters.pop(key, None)
+    if value == "":
+        step.parameters.pop(keyword, None)
+    else:
+        step.parameters[keyword] = deepcopy(value)
+
+
+def apply_exec_parameter_overrides(
+    expanded_steps: Sequence[Step | ConditionalBlock],
+    exec_parameters: dict[str, Any],
+    step_name_prefix: str,
+    warnings: list[str] | None = None,
+) -> None:
+    """Apply EXEC keyword overrides from an ``EXEC procname`` statement.
+
+    z/OS semantics for an EXEC statement that calls a procedure:
+
+    * ``KEYWORD.procstep=value`` overrides (or adds) the keyword on that step
+      only; ``KEYWORD.procstep=`` nullifies it.
+    * ``PARM=`` / ``PARMDD=`` without a procstep applies to the procedure's
+      first step and nullifies PARM/PARMDD on every other step.
+    * Every other keyword without a procstep overrides it on every step.
+      (``TIME=`` really limits the procedure as a whole; applying it to each
+      step is the closest per-step model.)
+
+    Unqualified overrides are applied before qualified ones.
+    """
+    steps = list(iter_execution_steps(list(expanded_steps)))
+    if not steps:
+        return
+    by_name = {s.name: s for s in steps if s.name}
+
+    qualified: list[tuple[str, str, Any]] = []
+    for key, value in exec_parameters.items():
+        keyword, _, procstep = key.upper().partition(".")
+        if keyword not in _EXEC_OVERRIDE_KEYWORDS:
+            continue
+        if procstep:
+            qualified.append((keyword, procstep, value))
+        elif keyword in _PARM_KEYWORDS:
+            _set_exec_keyword(steps[0], keyword, value)
+            for other in steps[1:]:
+                for parm_key in _PARM_KEYWORDS:
+                    other.parameters.pop(parm_key, None)
+        else:
+            for target in steps:
+                _set_exec_keyword(target, keyword, value)
+
+    for keyword, procstep, value in qualified:
+        target = by_name.get(f"{step_name_prefix}.{procstep}")
+        if target is None:
+            if warnings is not None:
+                warnings.append(
+                    f"EXEC {step_name_prefix}: {keyword}.{procstep} names no step "
+                    "of the procedure; override ignored"
+                )
+            continue
+        _set_exec_keyword(target, keyword, value)
 
 
 def apply_dd_overrides(
@@ -634,11 +920,11 @@ def apply_dd_overrides(
                     # the *qualified* key ("PROCSTEP.DDNAME") -- normalize it
                     # to the plain DD name so the resulting DD looks the same
                     # as one coded directly on the step.
-                    clone = deepcopy(override_dd)
-                    clone.name = target_dd
                     for i, dd in enumerate(step.dd_statements):
                         if dd.name == target_dd:
-                            step.dd_statements[i] = clone
+                            merged = _merge_dd_override(dd, override_dd)
+                            merged.name = target_dd
+                            step.dd_statements[i] = merged
                             break
                     else:
                         # No DD named target_dd on this step -- per z/OS
@@ -647,6 +933,8 @@ def apply_dd_overrides(
                         # form (apply_unqualified_dd_overrides). Without
                         # this, a fully-parsed override DD was silently
                         # discarded.
+                        clone = deepcopy(override_dd)
+                        clone.name = target_dd
                         step.dd_statements.append(clone)
                     break
 
@@ -698,12 +986,13 @@ def apply_unqualified_dd_overrides(
         dd.name: i for i, dd in enumerate(first_step.dd_statements) if dd.name
     }
     for override_dd in override_dds:
-        clone = deepcopy(override_dd)
         existing = index_by_name.get(override_dd.name) if override_dd.name else None
         if existing is not None:
-            first_step.dd_statements[existing] = clone
+            first_step.dd_statements[existing] = _merge_dd_override(
+                first_step.dd_statements[existing], override_dd
+            )
         else:
-            first_step.dd_statements.append(clone)
+            first_step.dd_statements.append(deepcopy(override_dd))
             if override_dd.name:
                 index_by_name[override_dd.name] = len(first_step.dd_statements) - 1
 
@@ -978,6 +1267,11 @@ def _explode_step(
         step_prefix=step.name,
         strict=strict_symbols,
         warnings=warnings,
+    )
+
+    # Apply EXEC keyword overrides (PARM.PROCSTEP=, COND=, ...) to the steps.
+    apply_exec_parameter_overrides(
+        expanded, step.parameters, step.name or "PROC", warnings
     )
 
     # Apply qualified DD overrides (PROCSTEP.DDNAME) if present

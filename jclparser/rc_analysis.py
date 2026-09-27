@@ -66,7 +66,7 @@ def _collect_predecessors(job: Job) -> list[str]:
 def _collect_referenced_steps(ast: ConditionNode) -> set[str]:
     """Walk *ast* and return the set of uppercase step names it references.
 
-    ``None`` step_name (meaning "last step") is not included.  This is used
+    ``None`` step_name (meaning "all steps so far") is not included.  This is used
     by :func:`_evaluate_over_domain` to guarantee the evaluation domain
     covers every predecessor actually named in the condition, so the
     conservative "unknown" outcome only fires when the condition truly

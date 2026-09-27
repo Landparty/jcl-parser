@@ -162,7 +162,7 @@ class TestDetectSqlInStep:
 
     def test_non_db2_with_sql_inline(self):
         dd = DDStatement(name="SYSIN", inline_data="SELECT * FROM T1")
-        step = Step(name="RUN", program="IEFBR14", dd_statements=[dd])
+        step = Step(name="RUN", program="MYPGM", dd_statements=[dd])
         result = detect_sql_in_step(step)
         assert result.has_sql is True
         assert result.is_db2_program is False
@@ -196,7 +196,7 @@ class TestDetectSqlInStep:
 
     def test_multiple_dds(self):
         dd1 = DDStatement(name="SYSIN", inline_data="SELECT * FROM T1")
-        dd2 = DDStatement(name="SYSTSIN", inline_data="INSERT INTO T2 VALUES(1)")
+        dd2 = DDStatement(name="SYSTSIN", inline_data="BIND PLAN(P) MEMBER(M)")
         step = Step(name="RUN", program="IKJEFT01", dd_statements=[dd1, dd2])
         result = detect_sql_in_step(step)
         assert len(result.sql_statements) == 2

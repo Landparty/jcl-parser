@@ -30,6 +30,42 @@ DB2_PROGRAMS: frozenset[str] = frozenset(
     }
 )
 
+# Programs whose in-stream data is their own control language, not SQL.  Their
+# statements reuse SQL verbs -- IDCAMS ``DELETE`` / ``ALTER``, FTP ``DELETE``
+# / ``RENAME`` -- so scanning that data for SQL only yields false positives.
+NON_SQL_CONTROL_PROGRAMS: frozenset[str] = frozenset(
+    {
+        "ADRDSSU",
+        "BPXBATCH",
+        "DFSORT",
+        "FTP",
+        "ICEGENER",
+        "ICEMAN",
+        "ICETOOL",
+        "IDCAMS",
+        "IEBCOMPR",
+        "IEBCOPY",
+        "IEBDG",
+        "IEBGENER",
+        "IEBPTPCH",
+        "IEBUPDTE",
+        "IEFBR14",
+        "IEHINITT",
+        "IEHLIST",
+        "IEHPROGM",
+        "IRXJCL",
+        "SORT",
+        "SORTD",
+        "SYNCSORT",
+        "SYNCTOOL",
+    }
+)
+
+# SYSTSIN holds TSO commands (``DELETE``, ``RENAME`` and ``ALTER`` are TSO
+# commands too); only the DB2 DSN subcommands in it are SQL-related.
+_TSO_COMMAND_DD = "SYSTSIN"
+_TSO_SQL_CATEGORIES = frozenset({"UTILITY"})
+
 # SQL statement keywords that start a statement.  Order matters for matching:
 # longer prefixes first so "INSERT INTO" beats "INSERT".
 _SQL_STATEMENT_PATTERNS: list[tuple[str, str]] = [
@@ -139,14 +175,22 @@ def detect_sql_in_step(step: Step) -> SQLDetectionResult:
     """Analyse a step for SQL content.
 
     Checks both the program name and inline data of every DD statement.
+    In-stream data of a program in :data:`NON_SQL_CONTROL_PROGRAMS` is not
+    scanned, and in a ``SYSTSIN`` DD (TSO commands) only DB2 subcommands such
+    as ``BIND`` count.
     """
     result = SQLDetectionResult(
         step_name=step.name,
         program=step.program,
         is_db2_program=is_db2_program(step.program),
     )
+    if step.program and step.program.upper() in NON_SQL_CONTROL_PROGRAMS:
+        return result
     for dd in step.dd_statements:
+        is_tso_input = (dd.name or "").upper() == _TSO_COMMAND_DD
         for kw, cat in detect_sql_in_dd(dd):
+            if is_tso_input and cat not in _TSO_SQL_CATEGORIES:
+                continue
             result.sql_statements.append((kw, cat, dd.name))
     return result
 

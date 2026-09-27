@@ -137,6 +137,9 @@ class DatasetNameValidator:
     - Other characters: A-Z, 0-9, $, #, @, -
     - Temporary datasets start with &&
     - GDG datasets end with (+n) or (-n) or (0)
+    - A PDS member may follow in parentheses: LIB.NAME(MEMBER)
+    - A backward reference *.stepname[.procstep].ddname names no dataset
+      itself and is accepted as is
     """
 
     # Pattern for a single qualifier
@@ -146,6 +149,16 @@ class DatasetNameValidator:
 
     # Pattern for GDG generation
     GDG_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^\([+-]?\d+\)$")
+
+    # Pattern for a PDS member name in parentheses (1-8 chars, no hyphen)
+    MEMBER_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
+        r"^\([A-Z$#@][A-Z0-9$#@]{0,7}\)$"
+    )
+
+    # Backward reference to an earlier DD: *.STEP.DD or *.STEP.PROCSTEP.DD
+    REFERBACK_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
+        r"^\*(\.[A-Z$#@][A-Z0-9$#@]{0,7}){1,3}$"
+    )
 
     @classmethod
     def validate(
@@ -172,6 +185,9 @@ class DatasetNameValidator:
         original_dsn = dsn
         dsn = dsn.strip().upper()
 
+        if cls.REFERBACK_PATTERN.match(dsn):
+            return ValidationResult.valid(warnings)
+
         # Check for temporary dataset
         is_temporary = dsn.startswith("&&")
         if is_temporary:
@@ -191,8 +207,10 @@ class DatasetNameValidator:
                     errors.append(f"GDG datasets not allowed: {original_dsn}")
                     return ValidationResult.invalid(errors)
                 dsn = base_name
+            elif cls.MEMBER_PATTERN.match(gdg_suffix):
+                dsn = base_name
             else:
-                errors.append(f"Invalid GDG generation: {gdg_suffix}")
+                errors.append(f"Invalid member name or GDG generation: {gdg_suffix}")
                 return ValidationResult.invalid(errors)
 
         # Check total length (excluding && and GDG)

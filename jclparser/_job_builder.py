@@ -53,7 +53,7 @@ from .model import (
     Statement,
     Step,
 )
-from .utils import POSITIONAL_PARAM_PREFIX, is_positional_key
+from .utils import POSITIONAL_PARAM_PREFIX, is_positional_key, jcl_value_text
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +168,31 @@ class JobBuilder:
         # Collect inline data
         self.inline_data_lines.append(line)
         return True
+
+    def start_implicit_sysin(self, line: str, line_num: int) -> None:
+        """Open an implicit ``//SYSIN DD *`` for in-stream data with no DD.
+
+        JES treats data records that follow a step without a ``DD *`` /
+        ``DD DATA`` statement as ``//SYSIN DD *``. *line* is the first data
+        record; the block ends at ``/*`` or the next ``//`` record.
+        """
+        if self.current_step is None:
+            self._warnings_sink().append(
+                f"Line {line_num}: in-stream data outside any step ignored"
+            )
+            return
+        self.current_dd = DDStatement(
+            name="SYSIN", parameters={"*": True}, line_number=line_num
+        )
+        self.current_step.add_dd(self.current_dd)
+        self._warnings_sink().append(
+            f"Line {line_num}: in-stream data with no DD statement; "
+            "treated as //SYSIN DD * (JES default)"
+        )
+        self.in_inline_data = True
+        self.inline_data_lines = [line]
+        self.current_delimiter = "/*"
+        self.current_terminates_on_slash = True
 
     def handle_comment_line(self, line: str, line_num: int) -> None:
         """Recognise JES3 ``//*COMMAND`` control statements (``//*MAIN``,
@@ -368,16 +393,22 @@ class JobBuilder:
             else:
                 self.pending_sets[symbol] = resolved
 
-        # For SET statements, parameters are in the format SYMBOL=VALUE
+        # For SET statements, parameters are in the format SYMBOL=VALUE. A
+        # parenthesised value (SET SP=(TRK,1)) arrives tokenized as a list and
+        # is kept as its JCL text.
         for key, value in stmt.parameters.items():
-            if not is_positional_key(key):
-                _record(key, value)
-            else:
+            if not is_positional_key(key) and value is not True:
+                _record(key, jcl_value_text(value))
+            elif isinstance(value, str) and "=" in value:
                 # Positional parameter might be SYMBOL=VALUE without keyword
-                param_val = value
-                if "=" in param_val:
-                    sym, val = param_val.split("=", 1)
-                    _record(sym.strip(), val.strip())
+                sym, val = value.split("=", 1)
+                _record(sym.strip(), val.strip())
+            else:
+                operand = key if value is True else jcl_value_text(value)
+                self._warnings_sink().append(
+                    f"Line {stmt.line_number}: SET operand {operand!r} is not "
+                    "SYMBOL=value; ignored"
+                )
 
     def _on_export(self, stmt: Statement) -> None:
         # EXPORT SYMLIST=(A,B,...)  or  EXPORT SYMLIST=*
@@ -414,6 +445,13 @@ class JobBuilder:
         if member:
             sink = self.job.includes if self.job else self.pending_includes
             sink.append(member)
+            # Found members are expanded before the parse loop runs, so an
+            # INCLUDE that reaches here could not be loaded.
+            self._warnings_sink().append(
+                f"Line {stmt.line_number}: INCLUDE member {member} not found in "
+                "the JCLLIB / procedure libraries; its statements are missing "
+                "from the job"
+            )
 
     def _on_conditional(self, stmt: Statement, line_num: int) -> None:
         # Conditional logic - track conditionals properly

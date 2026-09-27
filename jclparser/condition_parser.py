@@ -8,14 +8,14 @@ against known step return-code results.
 Grammar (simplified)::
 
     condition  := or_expr
-    or_expr    := and_expr ( 'OR' and_expr )*
-    and_expr   := not_expr ( 'AND' not_expr )*
-    not_expr   := 'NOT' primary | primary
+    or_expr    := and_expr ( ('OR' | '|') and_expr )*
+    and_expr   := not_expr ( ('AND' | '&') not_expr )*
+    not_expr   := ('NOT' | '¬' | '^' | '~') not_expr | primary
     primary    := '(' condition ')' | atom
     atom       := step_ref 'RC' op integer
-               |  step_ref 'ABEND'
-               |  step_ref 'RUN'
-    step_ref   := IDENTIFIER '.'                  (optional — omitted means "last step")
+               |  step_ref 'ABEND' [ ('=' | '¬=') ('TRUE' | 'FALSE') ]
+               |  step_ref 'RUN'   [ ('=' | '¬=') ('TRUE' | 'FALSE') ]
+    step_ref   := IDENTIFIER '.'                  (optional — omitted means "all steps so far")
                |  IDENTIFIER '.' IDENTIFIER '.'   (qualified after PROC explosion)
     op         := EQ | NE | LT | GT | LE | GE | = | ¬= | ^= | ~= | != | <> | < | > | <= | >=
 
@@ -26,7 +26,11 @@ Usage::
     result = ast.evaluate({"STEP1": (0, False), "STEP2": (4, False)})
     # result is True
 
-Unparseable conditions return ``None`` from :func:`parse_condition` so the raw
+Without a step name, ``RC`` is the highest return code of the steps run so far
+and ``ABEND`` is true if any of them abended (IBM semantics).
+
+Unparseable conditions — including any trailing text the grammar does not
+cover, such as ``ABENDCC`` tests — return ``None`` from :func:`parse_condition` so the raw
 string stored on :attr:`~jclparser.model.ConditionalBlock.condition` always
 remains authoritative.
 """
@@ -63,7 +67,7 @@ class ConditionNode:
 class ReturnCodeCondition(ConditionNode):
     """``[STEPNAME.]RC op value``"""
 
-    step_name: str | None  # None means "last step executed"
+    step_name: str | None  # None means "highest RC of the steps run so far"
     operator: str  # EQ NE LT GT LE GE
     value: int
 
@@ -76,7 +80,7 @@ class ReturnCodeCondition(ConditionNode):
         else:
             if not step_results:
                 return None
-            rc = list(step_results.values())[-1][0]
+            rc = max(result[0] for result in step_results.values())
 
         op, v = self.operator, self.value
         if op == "EQ":
@@ -108,7 +112,7 @@ class AbendCondition(ConditionNode):
             return result[1]
         if not step_results:
             return None
-        return list(step_results.values())[-1][1]
+        return any(result[1] for result in step_results.values())
 
 
 @dataclass
@@ -201,6 +205,16 @@ _OP_MAP: dict[str, str] = {
     "!>": "LE",
 }
 
+# Symbolic Boolean operators (IBM: & is AND, | is OR, ¬ is NOT; ^ and ~ stand in
+# for ¬ on code pages without it).
+_SYMBOL_KEYWORDS: dict[str, str] = {
+    "&": "AND",
+    "|": "OR",
+    "¬": "NOT",
+    "^": "NOT",
+    "~": "NOT",
+}
+
 # Two-character operator prefixes (characters that combine with = / < / >)
 _TWO_CHAR_OP_STARTS = frozenset("¬^~!<>")
 
@@ -240,6 +254,13 @@ def _tokenize(text: str) -> list[str]:
                 tokens.append(two)
                 i += 2
                 continue
+
+        # Standalone Boolean symbols (after the two-character check, so that
+        # "¬=" stays a comparison operator)
+        if ch in _SYMBOL_KEYWORDS:
+            tokens.append(_SYMBOL_KEYWORDS[ch])
+            i += 1
+            continue
 
         # Single-character symbolic operators
         if ch in "=<>":
@@ -311,7 +332,15 @@ class _Parser:
     # -- grammar rules -------------------------------------------------------
 
     def parse(self) -> ConditionNode:
-        return self._parse_or()
+        node = self._parse_or()
+        # A stray trailing ')' changes nothing and is tolerated.
+        while self._peek() == ")":
+            self._consume()
+        if self._peek() is not None:
+            # Leftover tokens mean the grammar did not cover the whole
+            # expression; returning the prefix would silently change it.
+            raise ValueError(f"Unexpected token in condition: {self._peek()!r}")
+        return node
 
     def _parse_or(self) -> ConditionNode:
         left = self._parse_and()
@@ -332,8 +361,7 @@ class _Parser:
     def _parse_not(self) -> ConditionNode:
         if self._peek_upper() == "NOT":
             self._consume()
-            operand = self._parse_primary()
-            return NotCondition(operand)
+            return NotCondition(self._parse_not())
         return self._parse_primary()
 
     def _parse_primary(self) -> ConditionNode:
@@ -346,6 +374,9 @@ class _Parser:
             node = self._parse_or()
             if self._peek() == ")":
                 self._consume()
+            elif self._peek() is not None:
+                # Only a ')' missing at the very end is tolerated.
+                raise ValueError("Unbalanced parentheses in condition")
             return node
 
         # Atom: [STEPNAME.]RC op value | [STEPNAME.]ABEND | [STEPNAME.]RUN
@@ -369,10 +400,10 @@ class _Parser:
             attr = token.upper()
 
         if attr == "ABEND":
-            return AbendCondition(step_name=step_name)
+            return self._boolean_test(AbendCondition(step_name=step_name))
 
         if attr == "RUN":
-            return RunCondition(step_name=step_name)
+            return self._boolean_test(RunCondition(step_name=step_name))
 
         if attr == "RC":
             op_tok = self._peek()
@@ -393,7 +424,9 @@ class _Parser:
                     step_name=step_name, operator=op, value=int(val_tok)
                 )
 
-            return ReturnCodeCondition(step_name=step_name, operator=op, value=0)
+            # A non-numeric value (e.g. an unresolved &SYMBOL) cannot be
+            # compared; reading it as 0 would invent a different condition.
+            raise ValueError(f"Expected a numeric RC value, got {val_tok!r}")
 
         # Bare number — treat as anonymous RC comparison: value op rc  (rare)
         if _RE_DIGITS.match(attr):
@@ -414,6 +447,21 @@ class _Parser:
             )
 
         raise ValueError(f"Unrecognised condition atom: {token!r}")
+
+    def _boolean_test(self, node: ConditionNode) -> ConditionNode:
+        """Consume an optional ``= TRUE`` / ``= FALSE`` after ABEND or RUN."""
+        op_tok = self._peek()
+        op = _OP_MAP.get(op_tok.upper()) if op_tok else None
+        if op not in ("EQ", "NE"):
+            return node
+        self._consume()
+        value_tok = self._peek_upper()
+        if value_tok not in ("TRUE", "FALSE"):
+            raise ValueError(f"Expected TRUE or FALSE, got {value_tok!r}")
+        self._consume()
+        if (value_tok == "TRUE") == (op == "EQ"):
+            return node
+        return NotCondition(node)
 
 
 # ---------------------------------------------------------------------------

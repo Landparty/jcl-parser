@@ -83,6 +83,31 @@ def _exec_has_program_spec(parameters: dict[str, Any]) -> bool:
     )
 
 
+def _strip_enclosing_parens(value: str) -> str:
+    """Remove one pair of parentheses that encloses the whole of *value*.
+
+    ``(1234,(A,B))`` becomes ``1234,(A,B)``; ``(A,B),(C)`` is returned as is
+    because its first ``(`` closes before the end. Apostrophe-quoted text is
+    skipped so a paren inside quotes does not count.
+    """
+    if len(value) < 2 or value[0] != "(" or value[-1] != ")":
+        return value
+    depth = 0
+    in_quote = False
+    for i, ch in enumerate(value):
+        if ch == "'":
+            in_quote = not in_quote
+        elif in_quote:
+            continue
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0 and i != len(value) - 1:
+                return value
+    return value[1:-1]
+
+
 def _create_job_from_statement(stmt: Statement) -> Job:
     """Create Job object from JOB statement"""
     accounting_info = None
@@ -94,7 +119,9 @@ def _create_job_from_statement(stmt: Statement) -> Job:
     # only pops _pos_0 and leaves the rest of stmt.parameters intact.
     job_params = dict(stmt.parameters)
     if f"{POSITIONAL_PARAM_PREFIX}0" in job_params:
-        accounting_info = job_params.pop(f"{POSITIONAL_PARAM_PREFIX}0").strip("()")
+        accounting_info = _strip_enclosing_parens(
+            job_params.pop(f"{POSITIONAL_PARAM_PREFIX}0")
+        )
 
     return Job(
         name=stmt.name,

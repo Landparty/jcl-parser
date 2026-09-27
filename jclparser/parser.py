@@ -55,6 +55,7 @@ from ._statement_parser import (  # noqa: F401
     _parse_list_parameter,
     _parse_parameters,
     parse_statement,
+    split_comment_field,
     statement_operation,
 )
 from .continuation_handler import ContinuationLineHandler
@@ -127,6 +128,12 @@ def _merge_source_lines(
     # ``DD DATA`` (or any dataset with an explicit ``DLM=``) only the delimiter
     # ends the data.
     terminates_on_slash = False
+    # Once a step exists, a record that is not JCL (no ``//`` or ``/*``)
+    # starts in-stream data with no DD statement, which JES reads as an
+    # implicit ``//SYSIN DD *`` (see JobBuilder.start_implicit_sysin).
+    seen_exec = False
+    # Operands of a DD statement whose continuation records are still coming.
+    pending_dd: str | None = None
 
     for i, line in enumerate(lines):
         if in_inline_data:
@@ -162,11 +169,28 @@ def _merge_source_lines(
                 control_data_indices.add(i)
                 continue
         if (
+            not line.startswith(("//", "/*"))
+            and seen_exec
+            and line.strip()
+            and not _expects_continuation(lines, i)
+        ):
+            inline_data_indices.add(i)
+            in_inline_data = True
+            delimiter = "/*"
+            terminates_on_slash = True
+            continue
+        if (
             line.strip()
             and line.startswith("//")
             and not line.strip().startswith("//*")
         ):
             upper_line = line.upper()
+            if (
+                not seen_exec
+                and "EXEC" in upper_line
+                and statement_operation(line) == "EXEC"
+            ):
+                seen_exec = True
             if "CNTL" in upper_line and statement_operation(line) == "CNTL":
                 in_cntl_block = True
                 cntl_start_line = i + 1
@@ -175,29 +199,32 @@ def _merge_source_lines(
             # record — the same way the JobBuilder reads it — so that spacing
             # ("//SYSIN    DD    *") can never make the two disagree and leave
             # data records to be parsed as JCL.
-            if "DD" in upper_line:
+            # A DD statement continued onto further records (``DD DATA,`` /
+            # ``//   DLM=$$``) is only judged once its last record is read:
+            # those records are JCL, and DLM= may sit on any of them.
+            dd_operands: str | None = None
+            if pending_dd is not None:
+                if statement_operation(line) in _STATEMENT_TYPES:
+                    pending_dd = None  # continuation never came
+                else:
+                    cont = split_comment_field(line, "DD")[0][2:].strip()
+                    pending_dd += cont
+                    if not cont.endswith(","):
+                        dd_operands, pending_dd = pending_dd, None
+            elif "DD" in upper_line:
                 dd_field = _operand_field(line)
                 if dd_field is not None and dd_field[1] == "DD":
-                    operands = line[dd_field[0] :]
-                    first_operand = operands.split(",", 1)[0].strip().upper()
-                    is_star = first_operand == "*"
-                    upper_operands = operands.upper()
-                    has_dlm = "DLM=" in upper_operands
-                    if is_star or first_operand == "DATA" or has_dlm:
-                        delimiter = "/*"
-                        if has_dlm:
-                            dlm_start = upper_operands.index("DLM=") + 4
-                            dlm_end = dlm_start
-                            while (
-                                dlm_end < len(upper_operands)
-                                and upper_operands[dlm_end] not in ",) \t\r\n"
-                            ):
-                                dlm_end += 1
-                            delimiter = operands[dlm_start:dlm_end]
-                            if delimiter.startswith("'") and delimiter.endswith("'"):
-                                delimiter = delimiter[1:-1]
-                        in_inline_data = True
-                        terminates_on_slash = is_star and not has_dlm
+                    statement = split_comment_field(line, "DD")[0]
+                    operands = statement[dd_field[0] :].strip()
+                    if operands.endswith(","):
+                        pending_dd = operands
+                    else:
+                        dd_operands = operands
+            if dd_operands is not None:
+                instream = _instream_delimiter(dd_operands)
+                if instream is not None:
+                    delimiter, terminates_on_slash = instream
+                    in_inline_data = True
         non_inline_lines.append(line)
         non_inline_orig_indices.append(i)
 
@@ -229,6 +256,59 @@ def _merge_source_lines(
     )
 
     return merged_lines, inline_data_indices, control_data_indices, source_warnings
+
+
+def _instream_delimiter(operands: str) -> tuple[str, bool] | None:
+    """Return ``(delimiter, ends_at_slash)`` if a DD's operands open in-stream data.
+
+    In-stream data starts at ``DD *`` / ``DD DATA`` / any DD with an explicit
+    ``DLM=``. *operands* is the DD's whole operand field (continuations
+    joined, comment field removed). ``DD *`` without ``DLM=`` also ends at the
+    next ``//`` record; ``DD DATA`` does not, so ``//`` can be data.
+    """
+    first_operand = operands.split(",", 1)[0].strip().upper()
+    is_star = first_operand == "*"
+    upper_operands = operands.upper()
+    has_dlm = "DLM=" in upper_operands
+    if not (is_star or first_operand == "DATA" or has_dlm):
+        return None
+    delimiter = "/*"
+    if has_dlm:
+        dlm_start = upper_operands.index("DLM=") + 4
+        dlm_end = dlm_start
+        while dlm_end < len(upper_operands) and upper_operands[dlm_end] not in (
+            ",) \t\r\n"
+        ):
+            dlm_end += 1
+        delimiter = operands[dlm_start:dlm_end]
+        if delimiter.startswith("'") and delimiter.endswith("'"):
+            delimiter = delimiter[1:-1]
+    return delimiter, is_star and not has_dlm
+
+
+def _expects_continuation(lines: list[str], index: int) -> bool:
+    """Return True if the JCL record before *index* awaits a continuation.
+
+    A statement whose operand field ends in a comma expects a ``//``
+    continuation record; a non-JCL record there is a broken continuation,
+    not in-stream data, and is left for parse_statement() to reject.
+    Only called for the rare non-JCL record, so the backward scan is cheap.
+    """
+    prev = index - 1
+    while prev >= 0 and (not lines[prev].strip() or lines[prev].startswith("//*")):
+        prev -= 1
+    if prev < 0 or not lines[prev].startswith("//"):
+        return False
+    # The operation of the statement that record belongs to decides where
+    # its comment field starts.
+    group_operation = ""
+    for k in range(prev, -1, -1):
+        operation = statement_operation(lines[k])
+        if operation in _STATEMENT_TYPES:
+            group_operation = operation
+            break
+    statement_part = split_comment_field(lines[prev], group_operation)[0]
+    return statement_part.rstrip().endswith(",")
 
 
 def _parse_jcl_core(
@@ -293,6 +373,9 @@ def _parse_jcl_core(
 
         # Skip lines marked as inline data (line_num is 1-indexed, markers use 0-indexed)
         if (line_num - 1) in inline_data_indices:
+            if not line.startswith(("//", "/*")):
+                # In-stream data with no DD statement ahead of it.
+                builder.start_implicit_sysin(line, line_num)
             continue
 
         # Program control records inside a CNTL/ENDCNTL block are kept with

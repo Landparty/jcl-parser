@@ -45,7 +45,7 @@ Stable but may evolve. Key groups:
 | Validation | `validate_jcl_identifier`, `validate_dataset_name`, `validate_job_structure`, `validate_step_structure`, `validate_dd_statement` |
 | File Type Detection | `FileType`, `detect_file_type`, `detect_file_type_from_content`, `is_jcl_file`, `is_proc_file` |
 | Condition Parsing | `parse_condition`, `ConditionNode`, `ReturnCodeCondition`, `AbendCondition`, `RunCondition`, `NotCondition`, `AndCondition`, `OrCondition` |
-| SQL/DB2 Detection | `SQLDetectionResult`, `detect_sql_in_step`, `detect_sql_in_job`, `detect_sql_in_dd`, `is_db2_program`, `DB2_PROGRAMS` |
+| SQL/DB2 Detection | `SQLDetectionResult`, `detect_sql_in_step`, `detect_sql_in_job`, `detect_sql_in_dd`, `is_db2_program`, `DB2_PROGRAMS`, `NON_SQL_CONTROL_PROGRAMS` (programs whose in-stream data `detect_sql_in_step` does not scan; in `SYSTSIN` only DB2 subcommands such as `BIND` count) |
 | INCLUDE Expansion | `resolve_includes`, `IncludeMemberLoader`, `DictMemberLoader`, `JCLLIBMemberLoader` |
 | Dataset Lifecycle | `DatasetEvent`, `analyze_dataset_lifecycle`, `validate_dataset_lifecycle` |
 | JES Control | `JESControlStatement`, `JobParmStatement`, `RouteStatement`, `XmitStatement`, `parse_jes_control` |

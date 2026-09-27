@@ -213,6 +213,11 @@ def validate_step_structure(step: Step) -> list[ValidationError]:
     return errors
 
 
+# DD parameters other than DSN / SYSOUT / DUMMY / in-stream data that name
+# where the DD's data comes from.
+_OTHER_DD_SOURCES = ("DDNAME", "PATH", "SUBSYS")
+
+
 def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
     """
     Validate DD statement structure and parameters.
@@ -234,8 +239,12 @@ def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
             )
         )
 
-    # Dataset name validation (if provided)
-    if dd.dataset_name and not validate_dataset_name(dd.dataset_name):
+    # Dataset name validation (if provided). A name that still holds a symbol
+    # (&SYSUID..DATA, kept for explode_job() to resolve) cannot be judged yet;
+    # the leading "&&" of a temporary dataset is not a symbol.
+    dsn = dd.dataset_name
+    unresolved = dsn is not None and "&" in dsn.removeprefix("&&")
+    if dsn and not unresolved and not validate_dataset_name(dsn):
         errors.append(
             ValidationError(
                 f"Invalid dataset name '{dd.dataset_name}'", ErrorType.VALIDATION_ERROR
@@ -251,13 +260,25 @@ def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
             )
         )
 
-    # Check for conflicting parameters
+    # Check for conflicting parameters. DUMMY is stored as the positional
+    # operand (``_pos_0``); with DSN= it is legal (the DSN is ignored), so it
+    # only counts as a source, never as a conflict.
+    params = dd.parameters
+    positional = str(params.get("_pos_0", "")).upper()
     has_dsn = dd.dataset_name is not None
-    has_sysout = "SYSOUT" in dd.parameters
-    has_dummy = "DUMMY" in dd.parameters
-    has_inline = dd.has_inline_data
+    has_sysout = "SYSOUT" in params
+    has_dummy = "DUMMY" in params or positional == "DUMMY"
+    has_inline = dd.has_inline_data or positional in ("*", "DATA")
+    has_other_source = (
+        any(key in params for key in _OTHER_DD_SOURCES) or positional == "DYNAM"
+    )
+    # UNIT= / SPACE= with no DSN allocates a system-named temporary dataset.
+    allocates_temporary = any(key in params for key in ("UNIT", "SPACE"))
 
-    conflict_count = sum([has_dsn, has_sysout, has_dummy, has_inline])
+    conflict_count = sum([has_dsn, has_sysout, has_inline])
+    source_count = conflict_count + sum(
+        [has_dummy, has_other_source, allocates_temporary]
+    )
     if conflict_count > 1:
         errors.append(
             ValidationError(
@@ -265,7 +286,7 @@ def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
                 ErrorType.VALIDATION_ERROR,
             )
         )
-    elif conflict_count == 0:
+    elif source_count == 0:
         errors.append(
             ValidationError(
                 f"DD {dd.name} must specify a data source (DSN, SYSOUT, DUMMY, or inline data)",
@@ -291,18 +312,10 @@ def validate_disposition(disp) -> bool:
     """
     if not disp:
         return False
-    # Handle list form — parser may produce ['NEW', 'CATLG', 'DELETE']
+    # Handle list form — parser may produce ['NEW', 'CATLG', 'DELETE']. An
+    # omitted status (DISP=(,CATLG)) is valid and defaults to NEW.
     if isinstance(disp, list):
-        if not disp or not disp[0]:
-            return False
         disp = "(" + ",".join(str(d) for d in disp) + ")"
-    # For parenthesized forms, status must be non-empty
-    stripped = disp.strip()
-    if stripped.startswith("(") and stripped.endswith(")"):
-        inner = stripped[1:-1]
-        parts = [p.strip() for p in inner.split(",")]
-        if not parts[0]:
-            return False
     result = DISPValidator.validate(disp)
     return result.is_valid
 
