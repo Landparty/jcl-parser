@@ -57,9 +57,19 @@ from jclparser import validate_dd_statement, validate_step_structure
 from jclparser import validate_jcl_identifier, validate_dataset_name
 
 errors = validate_dd_statement(dd)
-ok, msg = validate_jcl_identifier("MYJOB")  # True, None
-ok, msg = validate_dataset_name("SYS1.PARMLIB")  # True, None
+validate_jcl_identifier("MYJOB")  # True (a plain bool)
+validate_dataset_name("SYS1.PARMLIB")  # True (a plain bool)
 ```
+
+`validate_dd_statement` accepts every data source z/OS does: `DSN`/`DSNAME`,
+`SYSOUT`, `DUMMY` (stored as the positional `_pos_0`, and legal together with
+`DSN=`), in-stream data, `DDNAME=`, `PATH=`, `SUBSYS=`, `DYNAM`, and a
+`UNIT=`/`SPACE=` work file (a system-named temporary dataset). A DD with none
+of them is an error, as is more than one of `DSN`/`SYSOUT`/in-stream data.
+Dataset names may carry a PDS member (`LIB(MEMBER)`) or GDG generation
+(`GDG(+1)`), and a backward reference (`*.STEP.DD`) is accepted as is; a name
+that still holds a symbol (`&SYSUID..DATA`) is not judged. An omitted DISP
+status (`DISP=(,CATLG)`) is valid — it defaults to `NEW`.
 
 # Error Object Fields
 

@@ -194,10 +194,11 @@ class TestValidateDispositionWrapper:
 
         assert not validate_disposition("(BOGUS,CATLG)")
 
-    def test_missing_status_invalid(self):
+    def test_missing_status_valid(self):
+        """An omitted status defaults to NEW."""
         from jclparser.validators import validate_disposition
 
-        assert not validate_disposition("(,CATLG)")
+        assert validate_disposition("(,CATLG)")
 
     def test_list_form_new_valid(self):
         """Parser sometimes stores DISP as a list; wrapper must handle it."""

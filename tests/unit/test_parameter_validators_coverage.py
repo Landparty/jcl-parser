@@ -59,7 +59,7 @@ class TestDatasetNameValidatorCoverage:
 
     def test_invalid_gdg_generation(self):
         """Invalid GDG suffix is rejected (lines 183-186)."""
-        result = DatasetNameValidator.validate("MY.DATA(ABC)")
+        result = DatasetNameValidator.validate("MY.DATA(+X)")
         assert result.is_valid is False
         assert any("GDG" in e.upper() for e in result.errors)
 
