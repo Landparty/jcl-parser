@@ -96,7 +96,8 @@ def _read_file_with_fallback(path: Path) -> str:
     # use, which is invisible to a `unittest.mock.patch("builtins.open")`
     # made afterward. Routing through the module object keeps every call a
     # live attribute lookup, matching plain-Python monkeypatch semantics.
-    for encoding in ("utf-8", "latin-1", "cp1252"):
+    # utf-8-sig reads plain UTF-8 too, and drops a byte-order mark.
+    for encoding in ("utf-8-sig", "latin-1", "cp1252"):
         try:
             with builtins.open(path, "r", encoding=encoding) as fh:
                 return fh.read()
@@ -127,6 +128,10 @@ def is_within_directory(path: Path, anchor: Path) -> bool:
         return False
 
 
+#: UTF-8 byte-order mark some editors put at the start of a text file.
+_BOM = "\ufeff"
+
+
 def read_source(source: str | Path | Any) -> str:
     """
     Resolve a JCL source (string content, file path, or file-like object) into a
@@ -144,9 +149,22 @@ def read_source(source: str | Path | Any) -> str:
     Raises:
         FileNotFoundError: If *source* is a path to a file that does not exist.
     """
+    content = _read_source_raw(source)
+    # A byte-order mark is not JCL; left in place it hides the first "//".
+    if isinstance(content, str):
+        content = content.removeprefix(_BOM)
+    return content
+
+
+def _read_source_raw(source: str | Path | Any) -> str:
+    """:func:`read_source` without the byte-order-mark cleanup."""
     if isinstance(source, Path):
         return _require_file(source)
     if isinstance(source, str):
+        source = source.removeprefix(_BOM)
+        # Text spanning several lines is JCL content, never a file path.
+        if "\n" in source or "\r" in source:
+            return source
         # JCL content starts with "//" (a statement) or "/*" (a JES2/JES3
         # control card, e.g. "/*JOBPARM", which may legally precede the JOB
         # statement) -- never treat either as a file path.
