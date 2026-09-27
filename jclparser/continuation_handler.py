@@ -11,6 +11,7 @@ from typing import ClassVar
 
 from ._statement_parser import (
     _STATEMENT_TYPES,
+    _find_then_end,
     _is_named_statement,
     split_comment_field,
     statement_operation,
@@ -166,6 +167,23 @@ class ContinuationLineHandler:
 
         return False
 
+    @staticmethod
+    def _continues_if(merged_line: str, group_operation: str, line: str) -> bool:
+        """Return True if *line* continues an IF statement still missing THEN.
+
+        An IF's relational expression may be broken at a blank and resumed on
+        the next record (``//CHK IF S1.RC = 0 |`` / ``//   S1.ABEND THEN``).
+        There is no trailing comma to signal it, and ``S1.ABEND THEN`` even
+        looks like a statement named ``S1.ABEND``; what gives it away is that
+        the IF has not reached its ``THEN`` yet.
+        """
+        return (
+            group_operation == "IF"
+            and line.startswith("// ")
+            and not line.strip().startswith("//*")
+            and _find_then_end(merged_line) is None
+        )
+
     def _strip_comment(self, line: str, group_operation: str, line_num: int) -> str:
         """Strip *line*'s comment field, recording suspicious ones.
 
@@ -261,7 +279,12 @@ class ContinuationLineHandler:
 
                 # Check if next line is a continuation, passing cached context
                 # to avoid re-scanning the full (growing) merged_line.
-                if self.is_continuation_line(next_line, merged_line, ctx=cached_ctx):
+                continues_if = self._continues_if(
+                    merged_line, group_operation, next_line
+                )
+                if continues_if or self.is_continuation_line(
+                    next_line, merged_line, ctx=cached_ctx
+                ):
                     raw_after_slashes = (next_line.removeprefix("//")).lstrip()
                     had_leading_comma = raw_after_slashes.startswith(",")
 
@@ -274,6 +297,9 @@ class ContinuationLineHandler:
                         merged_line = stripped + cont_content
                     elif had_leading_comma:
                         merged_line = stripped + "," + cont_content
+                    elif continues_if:
+                        # IF operands are blank-delimited: keep a blank.
+                        merged_line = stripped + " " + cont_content
                     else:
                         merged_line = stripped + cont_content
 

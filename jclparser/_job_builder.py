@@ -461,9 +461,9 @@ class JobBuilder:
     def _on_conditional(self, stmt: Statement, line_num: int) -> None:
         # Conditional logic - track conditionals properly
         if stmt.type == "IF":
+            # stmt.name is the IF statement's label (``//CHK1 IF ...``), never
+            # part of its relational expression.
             condition_parts = []
-            if stmt.name and stmt.name != "IF":
-                condition_parts.append(stmt.name)
             for key, value in stmt.parameters.items():
                 if not key.startswith("_"):
                     condition_parts.append(f"{key}={value}")

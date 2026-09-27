@@ -285,3 +285,56 @@ class TestConditionalBlockExpansionDirect:
                 for step in item.then_steps:
                     if isinstance(step, Step):
                         assert step.is_exploded is True
+
+
+@pytest.mark.unit
+class TestDdOverridesOnConditionalProcSteps:
+    """DD overrides naming a PROC step that sits inside an IF block.
+
+    ``apply_dd_overrides`` walked only the top level of the expanded steps and
+    crashed with ``AttributeError: 'ConditionalBlock' object has no attribute
+    'name'`` on any PROC containing an IF block.
+    """
+
+    JCL = """\
+//MYJOB   JOB CLASS=A
+//MYPROC  PROC
+//P1      EXEC PGM=A
+//IN      DD DSN=OLD.P1,DISP=SHR
+// IF (P1.RC = 0) THEN
+//P2      EXEC PGM=B
+//IN      DD DSN=OLD.P2,DISP=SHR
+// ENDIF
+//        PEND
+//RUN     EXEC MYPROC
+//P1.IN   DD DSN=NEW.P1
+//P2.IN   DD DSN=NEW.P2
+"""
+
+    def _steps(self, jcl):
+        from jclparser.model import iter_execution_steps
+
+        exploded = parse_jcl(jcl).explode()
+        return {s.name: s for s in iter_execution_steps(exploded.steps)}
+
+    def test_qualified_override_reaches_step_inside_if(self):
+        steps = self._steps(self.JCL)
+        assert steps["RUN.P1"].dd_statements[0].dataset_name == "NEW.P1"
+        p2_in = steps["RUN.P2"].dd_statements[0]
+        assert p2_in.dataset_name == "NEW.P2"
+        assert p2_in.parameters["DISP"] == "SHR"
+
+    def test_unqualified_override_reaches_first_step_inside_if(self):
+        jcl = """\
+//MYJOB   JOB CLASS=A
+//MYPROC  PROC
+// IF (RC = 0) THEN
+//P1      EXEC PGM=A
+//IN      DD DSN=OLD.P1,DISP=SHR
+// ENDIF
+//        PEND
+//RUN     EXEC MYPROC
+//IN      DD DSN=NEW.P1
+"""
+        steps = self._steps(jcl)
+        assert [dd.dataset_name for dd in steps["RUN.P1"].dd_statements] == ["NEW.P1"]

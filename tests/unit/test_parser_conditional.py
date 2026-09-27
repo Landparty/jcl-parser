@@ -102,3 +102,61 @@ def test_job_get_step_hierarchical():
 
     step3 = job.get_step("STEP_NOT_FOUND")
     assert step3 is None
+
+
+def _only_conditional(jcl):
+    job = parse_jcl(jcl)
+    blocks = [s for s in job.steps if isinstance(s, ConditionalBlock)]
+    assert len(blocks) == 1
+    return blocks[0]
+
+
+def test_named_if_label_is_not_part_of_condition():
+    """``//CHK1 IF ...``: the label used to be spliced into the condition,
+    leaving ``condition == 'CHK1 (S1.RC = 0)'`` and ``condition_ast`` None."""
+    cond = _only_conditional(
+        "//J JOB 1\n"
+        "//S1 EXEC PGM=A\n"
+        "//CHK1 IF (S1.RC = 0) THEN\n"
+        "//S2 EXEC PGM=B\n"
+        "//     ENDIF\n"
+    )
+    assert cond.condition == "(S1.RC = 0)"
+    assert cond.condition_ast is not None
+    assert [s.name for s in cond.then_steps] == ["S2"]
+
+
+def test_comment_after_then_else_endif_is_dropped():
+    """The comment field follows THEN / ELSE / ENDIF.  One containing an
+    apostrophe used to raise ``JCLSyntaxError: Unclosed quote``; one without
+    ended up inside the condition."""
+    cond = _only_conditional(
+        "//J JOB 1\n"
+        "//S1 EXEC PGM=A\n"
+        "// IF (S1.RC = 0) THEN     RUN IF S1'S OK\n"
+        "//S2 EXEC PGM=B\n"
+        "// ELSE           DON'T\n"
+        "//S3 EXEC PGM=C\n"
+        "// ENDIF          END OF S1'S CHECK\n"
+    )
+    assert cond.condition == "(S1.RC = 0)"
+    assert cond.condition_ast is not None
+    assert [s.name for s in cond.then_steps] == ["S2"]
+    assert [s.name for s in cond.else_steps] == ["S3"]
+
+
+def test_if_condition_continued_on_next_record():
+    """A relational expression broken at a blank continues on the next record;
+    ``S1.ABEND THEN`` used to be read as a THEN statement named ``S1.ABEND``,
+    silently dropping half the condition."""
+    cond = _only_conditional(
+        "//J JOB 1\n"
+        "//S1 EXEC PGM=A\n"
+        "//CHK IF S1.RC = 0 |\n"
+        "//      S1.ABEND THEN\n"
+        "//S2 EXEC PGM=B\n"
+        "//    ENDIF\n"
+    )
+    assert "S1.ABEND" in cond.condition
+    assert type(cond.condition_ast).__name__ == "OrCondition"
+    assert [s.name for s in cond.then_steps] == ["S2"]

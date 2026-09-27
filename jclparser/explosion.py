@@ -917,7 +917,7 @@ def apply_exec_parameter_overrides(
 
 
 def apply_dd_overrides(
-    expanded_steps: list[Step],
+    expanded_steps: Sequence[Step | ConditionalBlock],
     dd_overrides: dict[str, DDStatement],
     step_name_prefix: str,
 ) -> None:
@@ -925,10 +925,14 @@ def apply_dd_overrides(
     Apply DD overrides to expanded steps.
 
     Args:
-        expanded_steps: List of expanded steps
+        expanded_steps: List of expanded steps; steps nested in a PROC's
+            ``IF``/``ELSE`` blocks are overridden too
         dd_overrides: Dictionary of qualified DD name -> override DDStatement
         step_name_prefix: Prefix used for step names
     """
+    # A PROC step inside an IF/THEN/ELSE block is still a PROCSTEP an override
+    # can name; walking only the top level crashed on the ConditionalBlock.
+    steps = list(iter_execution_steps(list(expanded_steps)))
     for override_key, override_dd in dd_overrides.items():
         # Parse qualified DD name.
         # Two-part  "PROCSTEP.DDNAME"              -> step prefix.PROCSTEP  / DD DDNAME
@@ -941,7 +945,7 @@ def apply_dd_overrides(
             target_step, target_dd = parts
             qualified_step = f"{step_name_prefix}.{target_step}"
 
-            for step in expanded_steps:
+            for step in steps:
                 if step.name == qualified_step:
                     # override_dd.name is the raw statement name field, i.e.
                     # the *qualified* key ("PROCSTEP.DDNAME") -- normalize it
@@ -978,14 +982,14 @@ def apply_dd_overrides(
             qualified_outer = f"{step_name_prefix}.{outer_step}"
             two_part_key = f"{inner_step}.{target_dd}"
 
-            for step in expanded_steps:
+            for step in steps:
                 if step.name == qualified_outer:
                     step.dd_overrides[two_part_key] = deepcopy(override_dd)
                     break
 
 
 def apply_unqualified_dd_overrides(
-    expanded_steps: list[Step],
+    expanded_steps: Sequence[Step | ConditionalBlock],
     override_dds: list[DDStatement],
 ) -> None:
     """Merge unqualified DD overrides onto the procedure's first step.
@@ -1005,7 +1009,8 @@ def apply_unqualified_dd_overrides(
     if not override_dds:
         return
 
-    first_step = next((s for s in expanded_steps if isinstance(s, Step)), None)
+    # The first step in source order, even when it sits inside an IF block.
+    first_step = next(iter_execution_steps(list(expanded_steps)), None)
     if first_step is None:
         return
 

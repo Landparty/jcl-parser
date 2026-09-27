@@ -48,7 +48,11 @@ timestamp: 2026-09-16T00:00:00Z
     after it is a comment field, and `_statement_parser.split_comment_field()` removes it *before*
     continuation merging. Parsing the comment as operands made `PGM=X    RUN THE THING` a program
     name, and a comment after a trailing comma hid the comma — silently dropping every continued
-    operand of that statement. `IF`/`THEN`/`ELSE`/`ENDIF` are exempt (blank-delimited by syntax), and
+    operand of that statement. `IF` operands are blank-delimited, so an IF's comment field starts
+    after its `THEN` keyword; everything after `ELSE`/`ENDIF` is comment (an apostrophe in such a
+    comment used to raise "Unclosed quote"; fixed 2026-09-27). An IF with no `THEN` yet continues on
+    the next blank-name-field record, joined with a blank (`ContinuationLineHandler._continues_if`).
+    The IF's label (`//CHK1 IF ...`) is not part of `ConditionalBlock.condition`. And
     a blank after a comma still counts as inside the operands when a quoted string, `(` or
     `KEY=VALUE` follows. A removed comment containing `=` is reported on `job.warnings` rather than
     vanishing. Fixed 2026-09-02.

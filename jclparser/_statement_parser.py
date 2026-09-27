@@ -63,8 +63,10 @@ _OPERATOR_PREFIXES: frozenset = frozenset("¬^~!<>")
 _BLANK_DELIMITED_TYPES: frozenset[str] = frozenset({"IF", "THEN", "ELSE", "ENDIF"})
 
 #: Statement types that take no operands at all — anything in their operand
-#: field is a comment (``//  PEND  END OF PROC``).
-_NO_OPERAND_TYPES: frozenset[str] = frozenset({"PEND", "ENDCNTL"})
+#: field is a comment (``//  PEND  END OF PROC``, ``// ENDIF  END OF CHECK``).
+_NO_OPERAND_TYPES: frozenset[str] = frozenset(
+    {"PEND", "ENDCNTL", "THEN", "ELSE", "ENDIF"}
+)
 
 
 def _is_named_statement(tokens: list[str], name_field_present: bool) -> bool:
@@ -206,6 +208,35 @@ def _find_comment_start(operands: str) -> int | None:
     return None
 
 
+def _find_then_end(operands: str) -> int | None:
+    """Index just past the ``THEN`` that ends an IF statement's operands.
+
+    An IF statement's comment field follows its ``THEN`` keyword
+    (``// IF (S1.RC = 0) THEN  RUN IF S1'S OK``).  ``THEN`` is found as a
+    blank-delimited word outside quotes and parentheses.  Returns ``None`` when
+    *operands* holds no ``THEN`` (e.g. the first record of a continued IF).
+    """
+    depth = 0
+    in_quotes = False
+    word_start = 0
+    n = len(operands)
+    for i in range(n + 1):
+        char = operands[i] if i < n else " "
+        if char == "'":
+            in_quotes = not in_quotes
+        elif in_quotes:
+            continue
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif char.isspace():
+            if depth <= 0 and operands[word_start:i].upper() == "THEN":
+                return i
+            word_start = i + 1
+    return None
+
+
 def split_comment_field(line: str, group_operation: str = "") -> tuple[str, str]:
     """Split a JCL statement record into ``(statement, comment)``.
 
@@ -225,13 +256,17 @@ def split_comment_field(line: str, group_operation: str = "") -> tuple[str, str]
     if found is None:
         return line, ""
     start, operation = found
-    if operation in _BLANK_DELIMITED_TYPES:
-        return line, ""
     operands = line[start:]
     if not operands.strip():
         return line, ""
     if operation in _NO_OPERAND_TYPES:
         return line[:start].rstrip(), operands.strip()
+    if operation in _BLANK_DELIMITED_TYPES:
+        # IF operands are blank-delimited; only what follows THEN is comment.
+        cut = _find_then_end(operands)
+        if cut is None:
+            return line, ""
+        return (line[:start] + operands[:cut]).rstrip(), operands[cut:].strip()
     cut = _find_comment_start(operands)
     if cut is None:
         return line, ""
