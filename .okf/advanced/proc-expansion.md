@@ -77,10 +77,12 @@ DD statements coded under an `EXEC PROC=` invocation override or add to the proc
 
 | Form | Stored on the EXEC step as | Applied by | Target |
 |------|----------------------------|-----------|--------|
-| Qualified `//PROCSTEP.DDNAME DD …` | `step.dd_overrides[key]` | `apply_dd_overrides` | the named procstep; replaces a matching DD, else **appends** (fixed 2026-07-24, previously discarded when no DD of that name existed) |
-| Unqualified `//DDNAME DD …` | `step.dd_statements` | `apply_unqualified_dd_overrides` | the procedure's **first** step; replaces a same-named DD, else **appends** |
+| Qualified `//PROCSTEP.DDNAME DD …` | `step.dd_overrides[key]` | `apply_dd_overrides` | the named procstep; **merges into** a matching DD, else **appends** (fixed 2026-07-24, previously discarded when no DD of that name existed) |
+| Unqualified `//DDNAME DD …` | `step.dd_statements` | `apply_unqualified_dd_overrides` | the procedure's **first** step; **merges into** a same-named DD, else **appends** |
 
 Both paths carry an *added* DD (a name not present in the proc) onto the step — e.g. `//LOANRPT DD DSN=…` on `EXEC PROC=IMSBTCH` (unqualified), or `//PROCSTEP.NEWDD DD DSN=…` (qualified). Both run inside `_explode_step` after the proc is expanded; nested PROC invocations propagate naturally because the merge re-runs at each recursion level. The qualified path normalizes the resulting `DDStatement.name` to the plain `DDNAME` (not the raw `PROCSTEP.DDNAME` key) so `step.get_dd("DDNAME")` finds it either way.
+
+**Merge semantics** (`_merge_dd_override`, fixed 2026-09-27): an override changes only the parameters it codes — `//PS.D1 DD DSN=NEW` keeps the proc DD's `DISP`, `UNIT`, `DCB`, … — and `KEY=` (empty value) nullifies one. The data-source parameters (`DSN`/`DSNAME`/`SYSOUT`/`PATH`/`DUMMY`/`*`/`DATA`) are mutually exclusive, so coding any of them on the override drops the others from the proc DD (`DSN=` on the override nullifies `DUMMY`). An in-stream override (`DD *` / `DD DATA`) replaces the DD outright. Before, both paths replaced the whole DD, so e.g. the proc's `DISP=SHR` vanished whenever only the dataset name was overridden. Regression tests: `tests/unit/test_dd_override_merge.py`.
 
 **Known limitation:** `PARM.procstep=value` on an `EXEC PROC=` invocation (a per-step `PARM` override) is tokenized into `step.parameters["PARM.procstep"]` but has no dedicated handling anywhere in explosion — it never overrides the target step's `PARM`, is dropped from the exploded output, and is not warned about. Not a regression; this qualified-keyword-override form was never implemented.
 

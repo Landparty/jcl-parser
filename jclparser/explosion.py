@@ -603,6 +603,57 @@ def substitute_dd_statement(
             )
 
 
+# DD parameters that each name the DD's data source. They are mutually
+# exclusive, so an override that codes any of them displaces all of them on the
+# overridden DD (e.g. DSN= on the override nullifies a PROC DD's DUMMY).
+# ``_pos_0`` is the positional DUMMY / * / DATA operand; a bare ``DD *`` or
+# ``DD DATA`` is stored as a ``{"*": True}`` / ``{"DATA": True}`` flag instead.
+_DD_INSTREAM_MARKERS = frozenset({"*", "DATA"})
+_DD_SOURCE_KEYS = frozenset({"DSN", "DSNAME", "SYSOUT", "PATH", "_pos_0"}).union(
+    _DD_INSTREAM_MARKERS
+)
+
+
+def _is_instream_dd(params: dict[str, Any]) -> bool:
+    """Return True if *params* describe an in-stream (``DD *`` / ``DATA``) DD."""
+    if _DD_INSTREAM_MARKERS.intersection(params):
+        return True
+    return str(params.get("_pos_0", "")).upper() in _DD_INSTREAM_MARKERS
+
+
+def _merge_dd_override(base: DDStatement, override: DDStatement) -> DDStatement:
+    """Return *base* modified by *override* per z/OS DD-override semantics.
+
+    An overriding DD statement changes only the parameters it codes: every
+    other parameter of the PROC's DD is kept, and a parameter coded with no
+    value (``UNIT=``) is nullified. An in-stream override (``DD *`` /
+    ``DD DATA``) supplies its own data and replaces the DD outright.
+    """
+    clone = deepcopy(override)
+    if _is_instream_dd(override.parameters):
+        return clone
+
+    params = deepcopy(base.parameters)
+    if _DD_SOURCE_KEYS.intersection(override.parameters):
+        for key in _DD_SOURCE_KEYS:
+            params.pop(key, None)
+    for key, value in clone.parameters.items():
+        if value == "":
+            params.pop(key, None)
+        else:
+            params[key] = value
+
+    dataset_name = params.get("DSN")
+    if dataset_name is None:
+        dataset_name = params.get("DSNAME")
+    clone.parameters = params
+    clone.dataset_name = dataset_name
+    clone.disposition = params.get("DISP")
+    if _is_instream_dd(params):
+        clone.inline_data = base.inline_data
+    return clone
+
+
 def apply_dd_overrides(
     expanded_steps: list[Step],
     dd_overrides: dict[str, DDStatement],
@@ -634,11 +685,11 @@ def apply_dd_overrides(
                     # the *qualified* key ("PROCSTEP.DDNAME") -- normalize it
                     # to the plain DD name so the resulting DD looks the same
                     # as one coded directly on the step.
-                    clone = deepcopy(override_dd)
-                    clone.name = target_dd
                     for i, dd in enumerate(step.dd_statements):
                         if dd.name == target_dd:
-                            step.dd_statements[i] = clone
+                            merged = _merge_dd_override(dd, override_dd)
+                            merged.name = target_dd
+                            step.dd_statements[i] = merged
                             break
                     else:
                         # No DD named target_dd on this step -- per z/OS
@@ -647,6 +698,8 @@ def apply_dd_overrides(
                         # form (apply_unqualified_dd_overrides). Without
                         # this, a fully-parsed override DD was silently
                         # discarded.
+                        clone = deepcopy(override_dd)
+                        clone.name = target_dd
                         step.dd_statements.append(clone)
                     break
 
@@ -698,12 +751,13 @@ def apply_unqualified_dd_overrides(
         dd.name: i for i, dd in enumerate(first_step.dd_statements) if dd.name
     }
     for override_dd in override_dds:
-        clone = deepcopy(override_dd)
         existing = index_by_name.get(override_dd.name) if override_dd.name else None
         if existing is not None:
-            first_step.dd_statements[existing] = clone
+            first_step.dd_statements[existing] = _merge_dd_override(
+                first_step.dd_statements[existing], override_dd
+            )
         else:
-            first_step.dd_statements.append(clone)
+            first_step.dd_statements.append(deepcopy(override_dd))
             if override_dd.name:
                 index_by_name[override_dd.name] = len(first_step.dd_statements) - 1
 
