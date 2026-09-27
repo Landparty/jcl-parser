@@ -79,6 +79,10 @@ def _parse_disp_tokens(disposition) -> tuple[str, str, str]:
 
     Handles string form ``"(NEW,CATLG,DELETE)"``, list form
     ``["NEW", "CATLG", "DELETE"]``, and bare string ``"SHR"``.
+
+    A coded DISP whose status is omitted (``DISP=(,CATLG,DELETE)``) has
+    status ``NEW``, the JCL default. A DD with no DISP at all returns an empty
+    status so callers can tell "not stated" apart.
     """
     if not disposition:
         return ("", "", "")
@@ -94,6 +98,9 @@ def _parse_disp_tokens(disposition) -> tuple[str, str, str]:
     # Pad to three elements
     while len(tokens) < 3:
         tokens.append("")
+
+    if not tokens[0]:
+        tokens[0] = "NEW"
 
     return (tokens[0], tokens[1], tokens[2])
 

@@ -396,7 +396,10 @@ class DDStatement:
     _OUTPUT_DISPOSITIONS: frozenset = frozenset({"NEW", "MOD", "CATLG", "UNCATLG"})
 
     def _disp_tokens(self) -> list[str]:
-        """Return disposition as an uppercase list of individual tokens (cached)."""
+        """Return disposition as an uppercase list of individual tokens (cached).
+
+        An omitted status (``DISP=(,CATLG)``) is reported as ``NEW``.
+        """
         if self._disp_tokens_cache is None:
             if isinstance(self.disposition, list):
                 result = [
@@ -409,6 +412,9 @@ class DDStatement:
                     t.strip()
                     for t in str(self.disposition).upper().strip("()").split(",")
                 ]
+            # An omitted status (DISP=(,CATLG)) defaults to NEW in JCL.
+            if result and not result[0]:
+                result[0] = "NEW"
             self._disp_tokens_cache = result
         return self._disp_tokens_cache
 
