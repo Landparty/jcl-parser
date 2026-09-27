@@ -57,6 +57,7 @@ from .proc_loader import JCLLIBProcedureLoader
 from .program_profiles import analyze_job, analyze_step
 from .rc_analysis import compute_feasible_paths
 from .sql_detector import detect_sql_in_job
+from .utils import is_positional_key
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -597,7 +598,7 @@ def _print_summary(job: Job) -> None:
     if job.accounting_info:
         print(f"Acct:   {job.accounting_info}")
     if job.parameters:
-        params = ", ".join(f"{k}={v}" for k, v in job.parameters.items())
+        params = ", ".join(_fmt_param(k, v) for k, v in job.parameters.items())
         print(f"Params: {params}")
     print(f"Steps:  {len(steps)}")
     if job.procedures:
@@ -632,7 +633,7 @@ def _print_procs(job: Job, proc_path: str | None = None) -> None:
             print(f"PROC: {proc.name}  {tag}")
             if proc.parameters:
                 for k, v in proc.parameters.items():
-                    print(f"  {k}={v}")
+                    print(f"  {_fmt_param(k, v)}")
             steps = list(iter_execution_steps(proc.steps))
             print(f"  Steps: {len(steps)}")
             for step in steps:
@@ -653,7 +654,7 @@ def _print_proc_detail(proc: Procedure) -> None:
     if proc.parameters:
         print("  Parameters (defaults):")
         for k, v in proc.parameters.items():
-            print(f"    {k}={v}")
+            print(f"    {_fmt_param(k, v)}")
     steps = list(iter_execution_steps(proc.steps))
     print(f"  Steps: {len(steps)}")
     for step in steps:
@@ -694,12 +695,14 @@ def _print_explosion_audit(job: Job) -> None:
         )
         # Show EXEC overrides (what the caller supplied)
         if record.parameters:
-            overrides = ", ".join(f"{k}={v}" for k, v in record.parameters.items())
+            overrides = ", ".join(
+                _fmt_param(k, v) for k, v in record.parameters.items()
+            )
             print(f"  Overrides: {overrides}")
         # Show resolved parameters (merged EXEC overrides + PROC defaults + SET symbols)
         if info and info.resolved_parameters:
             resolved = ", ".join(
-                f"{k}={v}" for k, v in info.resolved_parameters.items()
+                _fmt_param(k, v) for k, v in info.resolved_parameters.items()
             )
             print(f"  Resolved:  {resolved}")
         if record.expanded_steps:
@@ -716,7 +719,7 @@ def _print_step_detail(step: Step) -> None:
         print(f"  PROC={step.procedure}")
     if step.parameters:
         for k, v in step.parameters.items():
-            print(f"  {k}={v}")
+            print(f"  {_fmt_param(k, v)}")
     if step.comments:
         for c in step.comments:
             print(f"  * {c}")
@@ -779,10 +782,32 @@ def _print_dd_across_steps(job: Job, dd_name: str, json_output: bool = False) ->
 # ---------------------------------------------------------------------------
 
 
+def _fmt_value(value: object) -> str:
+    """Render a parsed parameter value back in JCL syntax.
+
+    Lists (sublists such as ``DISP=(,CATLG,DELETE)``) are shown in
+    parentheses instead of as Python ``['', 'CATLG', 'DELETE']`` reprs.
+    """
+    if isinstance(value, (list, tuple)):
+        return "(" + ",".join(_fmt_value(v) for v in value) + ")"
+    if value is True:
+        return ""
+    return str(value)
+
+
+def _fmt_param(key: str, value: object) -> str:
+    """Render one ``KEY=value`` operand; positional operands show bare."""
+    if is_positional_key(key):
+        return _fmt_value(value)
+    if value is True:
+        return key
+    return f"{key}={_fmt_value(value)}"
+
+
 def _print_dd_brief(dd: DDStatement, indent: int = 0) -> None:
     pad = " " * indent
     dsn = dd.dataset_name or ""
-    disp = f"DISP={dd.disposition}" if dd.disposition else ""
+    disp = f"DISP={_fmt_value(dd.disposition)}" if dd.disposition else ""
     inline = " [inline data]" if dd.has_inline_data else ""
     sysout_val = dd.parameters.get("SYSOUT")
     sysout = f"SYSOUT={sysout_val}" if sysout_val else ""
@@ -796,7 +821,7 @@ def _print_dd_detail(dd: DDStatement) -> None:
     if dd.dataset_name:
         print(f"    DSN={dd.dataset_name}")
     if dd.disposition:
-        print(f"    DISP={dd.disposition}")
+        print(f"    DISP={_fmt_value(dd.disposition)}")
     sysout_val = dd.parameters.get("SYSOUT")
     if sysout_val:
         print(f"    SYSOUT={sysout_val}")
@@ -804,7 +829,7 @@ def _print_dd_detail(dd: DDStatement) -> None:
     skip_keys = {"DSN", "DSNAME", "DISP", "SYSOUT", "DCB", "SPACE", "*"}
     for k, v in dd.parameters.items():
         if k not in skip_keys:
-            print(f"    {k}={v}")
+            print(f"    {_fmt_param(k, v)}")
     if dd.dcb:
         dcb = dd.dcb
         parts = []
