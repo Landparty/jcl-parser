@@ -243,7 +243,7 @@ def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
     # (&SYSUID..DATA, kept for explode_job() to resolve) cannot be judged yet;
     # the leading "&&" of a temporary dataset is not a symbol.
     dsn = dd.dataset_name
-    unresolved = dsn is not None and "&" in (dsn[2:] if dsn.startswith("&&") else dsn)
+    unresolved = dsn is not None and "&" in dsn.removeprefix("&&")
     if dsn and not unresolved and not validate_dataset_name(dsn):
         errors.append(
             ValidationError(
