@@ -801,7 +801,7 @@ def _print_dd_detail(dd: DDStatement) -> None:
     if sysout_val:
         print(f"    SYSOUT={sysout_val}")
     # Show other interesting parameters
-    skip_keys = {"DSN", "DISP", "SYSOUT", "DCB", "SPACE", "*"}
+    skip_keys = {"DSN", "DSNAME", "DISP", "SYSOUT", "DCB", "SPACE", "*"}
     for k, v in dd.parameters.items():
         if k not in skip_keys:
             print(f"    {k}={v}")

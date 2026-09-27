@@ -80,7 +80,7 @@ the codebase; use `step.procedure` / `step.is_procedure`.
 | Field | Type | Notes |
 |-------|------|-------|
 | `name` | `str` | DD name, max 8 chars |
-| `dataset_name` | `str \| None` | `DSN=` value |
+| `dataset_name` | `str \| None` | `DSN=` value, or `DSNAME=` (its long form) when no `DSN=` is coded |
 | `disposition` | `str \| None` | `DISP=` raw string |
 | `parameters` | `dict[str, Any]` | DSN, DISP, SPACE, DCB, SYSOUT… |
 | `inline_data` | `str \| None` | Content between `DD *` and `/*`, as **one string** (there is no `instream_data` list) |

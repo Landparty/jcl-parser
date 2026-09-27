@@ -184,6 +184,51 @@ class EnvironmentSystemSymbolProvider(SystemSymbolProvider):
 _default_provider: SystemSymbolProvider | None = None
 
 
+# JES / z/OS dynamic symbols that do not carry the reserved ``SYS`` prefix.
+_DYNAMIC_SYSTEM_SYMBOLS = frozenset(
+    {
+        "JOBNAME",
+        "SID",
+        "SEQ",
+        "YYMMDD",
+        "HHMMSS",
+        "YR2",
+        "YR4",
+        "MON",
+        "DAY",
+        "HR",
+        "MIN",
+        "SEC",
+        "JDAY",
+        "WDAY",
+        "LYYMMDD",
+        "LHHMMSS",
+        "LYR2",
+        "LYR4",
+        "LMON",
+        "LDAY",
+        "LHR",
+        "LMIN",
+        "LSEC",
+        "LJDAY",
+        "LWDAY",
+    }
+)
+
+
+def is_system_symbol_name(symbol_name: str) -> bool:
+    """Return True when *symbol_name* names a z/OS system symbol.
+
+    IBM reserves the ``SYS`` prefix for system symbols (``&SYSUID``,
+    ``&SYSNAME``, ``&SYSPLEX``...); the dynamic date/time and job symbols
+    (``&LYYMMDD``, ``&JOBNAME``...) are listed explicitly. Such a symbol is
+    resolved by a :class:`SystemSymbolProvider` at explosion time, not by a
+    SET statement, so a SET-only pass must leave it as written.
+    """
+    name = symbol_name.upper()
+    return name.startswith("SYS") or name in _DYNAMIC_SYSTEM_SYMBOLS
+
+
 def get_default_provider() -> SystemSymbolProvider:
     """
     Get the default system symbol provider.

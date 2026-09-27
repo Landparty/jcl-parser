@@ -18,6 +18,7 @@ layout changed. Nothing here is public API — import
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from .model import DDStatement, Job, Statement, Step
@@ -46,7 +47,9 @@ def _resolve_set_value(value: str, known_symbols: dict[str, str]) -> str:
     return _SET_SYMBOL_PATTERN.sub(_replacer, value)
 
 
-def _has_unresolved_symbol_ref(value: str) -> bool:
+def _has_unresolved_symbol_ref(
+    value: str, ignore: Callable[[str], bool] | None = None
+) -> bool:
     """True if *value* still contains a genuine (unescaped) &SYMBOL reference,
     as opposed to only escaped literal "&&" pairs.
 
@@ -56,8 +59,14 @@ def _has_unresolved_symbol_ref(value: str) -> bool:
     value with a genuinely unresolved reference (e.g. "&B." left over from an
     unresolvable SET cycle) is -- both contain an "&" character, but only the
     latter is actually unresolved.
+
+    *ignore*, when given, names references that do not count as unresolved
+    (system symbols, which ``explode_job()`` resolves later).
     """
-    return any(m.group(0) != "&&" for m in _SET_SYMBOL_PATTERN.finditer(value))
+    return any(
+        m.group(0) != "&&" and not (ignore is not None and ignore(m.group(1)))
+        for m in _SET_SYMBOL_PATTERN.finditer(value)
+    )
 
 
 def _exec_has_program_spec(parameters: dict[str, Any]) -> bool:
@@ -125,7 +134,10 @@ def _create_step_from_statement(stmt: Statement) -> Step:
 
 def _create_dd_from_statement(stmt: Statement) -> DDStatement:
     """Create DDStatement object from DD statement"""
+    # DSNAME= is the long form of DSN=; either one names the dataset.
     dataset_name = stmt.parameters.get("DSN")
+    if dataset_name is None:
+        dataset_name = stmt.parameters.get("DSNAME")
     disposition = stmt.parameters.get("DISP")
 
     return DDStatement(
