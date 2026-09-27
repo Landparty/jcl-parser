@@ -125,6 +125,8 @@ The generic pre-model record produced by `parse_statement()`:
 
 `ReturnCodeCondition`, `AbendCondition`, `RunCondition`, `NotCondition`, `AndCondition`, `OrCondition` — all importable from `jclparser`.
 
+`parse_condition()` accepts both keyword and symbolic Boolean operators (`AND`/`&`, `OR`/`|`, `NOT`/`¬`, with `^`/`~` for `¬`) and `ABEND`/`RUN` tests written as `= TRUE` / `= FALSE`. It returns `None` rather than a partial AST whenever it cannot consume the whole expression: `ABENDCC` tests, a non-numeric RC value (`RC GT &MAX`), leftover tokens. A missing final `)` and a stray trailing `)` are tolerated. When evaluating, a condition with no step name follows IBM semantics: `RC` is the **highest** RC of the steps in `step_results`, and `ABEND` is true if **any** of them abended.
+
 # Key Field Notes
 
 - **Comments are dropped.** `Job.comments` / `Step.comments` / `DDStatement.comments`

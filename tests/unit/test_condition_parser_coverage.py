@@ -215,29 +215,16 @@ class TestParserEdgeCases:
         assert node.value == 0
 
     def test_rc_with_operator_but_no_value(self):
-        """RC GT with no number defaults value to 0 (line 389)."""
-        node = parse_condition("STEP1.RC GT")
-        assert isinstance(node, ReturnCodeCondition)
-        assert node.operator == "GT"
-        assert node.value == 0
+        """RC GT with no number is unparseable, not an invented RC GT 0."""
+        assert parse_condition("STEP1.RC GT") is None
 
     def test_rc_with_operator_and_non_numeric(self):
-        """RC GT followed by non-numeric token defaults value to 0 (line 389)."""
-        node = parse_condition("STEP1.RC GT AND STEP2.ABEND")
-        # "AND" is not a digit, so RC GT defaults value to 0
-        # Then "AND STEP2.ABEND" is parsed → AndCondition
-        assert isinstance(node, AndCondition)
-        assert isinstance(node.left, ReturnCodeCondition)
-        assert node.left.value == 0
+        """RC GT followed by a non-numeric token is unparseable."""
+        assert parse_condition("STEP1.RC GT AND STEP2.ABEND") is None
 
     def test_rc_with_unrecognized_next_token(self):
-        """RC followed by non-operator token defaults to RC EQ 0 (line 376-378)."""
-        node = parse_condition("STEP1.RC STEP2.ABEND")
-        # "STEP2.ABEND" is not in _OP_MAP → op is None → falls to line 378
-        assert isinstance(node, ReturnCodeCondition)
-        assert node.step_name == "STEP1"
-        assert node.operator == "EQ"
-        assert node.value == 0
+        """Leftover tokens make the condition unparseable instead of dropped."""
+        assert parse_condition("STEP1.RC STEP2.ABEND") is None
 
     def test_bare_number_condition(self):
         """Bare number like '0' treated as RC EQ 0 (lines 392-407)."""
