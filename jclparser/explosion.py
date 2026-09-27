@@ -40,8 +40,13 @@ logger = logging.getLogger(__name__)
 _SYMBOL_SUB_PATTERN = re.compile(r"&&|&([A-Z0-9@#$]+)\.?")
 
 # A symbol value may itself reference symbols (``HLQ=&SYSUID``); this bounds
-# how deep those nested references are followed, which also stops a cycle.
+# how deep those nested references are followed.
 _MAX_NESTED_SUBSTITUTION = 8
+
+# Total characters nested symbol values may expand to within one substitution.
+# Fan-out over distinct symbols (``A='&B&B&B'``, ``B='&C&C&C'`` ...) grows
+# exponentially with depth even without a cycle, so depth alone is no bound.
+_MAX_NESTED_EXPANSION_CHARS = 1_000_000
 
 # A value ending in a bare ``&NAME`` reference (not the ``&&NAME`` literal).
 _TRAILING_SYMBOL_REF = re.compile(r"(?<!&)&[A-Z0-9@#$]+$")
@@ -282,13 +287,26 @@ def _make_replacer(
     collapse_double_amp: bool = True,
     keep_undefined: Callable[[str], bool] | None = None,
     _depth: int = 0,
+    _resolving: frozenset[str] = frozenset(),
+    _budget: list[int] | None = None,
 ):
-    """Create a regex replacer function for symbol substitution."""
+    """Create a regex replacer function for symbol substitution.
 
-    def _replacer(m: re.Match) -> str:
+    *_resolving* holds the symbols whose values are being expanded above this
+    level; a reference back to one of them is a cycle and is left as written.
+    *_budget* is a one-element list shared by every nested level, counting
+    down the characters nested expansion may still produce.
+    """
+    if _budget is None:
+        _budget = [_MAX_NESTED_EXPANSION_CHARS]
+
+    def _replacer(m: re.Match[str]) -> str:
         if m.group(0) == "&&":
             return "&" if collapse_double_amp else "&&"
         symbol_name = m.group(1)
+        if symbol_name in _resolving:
+            # ``A='&A'`` (directly or via other symbols): no value to splice.
+            return m.group(0)
         # Always resolve with strict=False so that UndefinedSymbolError is raised
         # here (with full source context) rather than inside scope.resolve().
         value = scope.resolve(symbol_name, strict=False)
@@ -318,9 +336,18 @@ def _make_replacer(
                     source_text=value,
                     collapse_double_amp=False,
                     _depth=_depth + 1,
+                    _resolving=_resolving | {symbol_name},
+                    _budget=_budget,
                 ),
                 value,
             )
+            _budget[0] -= len(value)
+            if _budget[0] < 0:
+                raise JCLStructureError(
+                    f"Symbol &{symbol_name} expands to more than "
+                    f"{_MAX_NESTED_EXPANSION_CHARS:,} characters in "
+                    f"'{source_text[:80]}'"
+                )
         if _TRAILING_SYMBOL_REF.search(value):
             # Splicing a bare ``&SYSUID`` in front of ``.DATA`` would make that
             # period the reference's delimiter; give it its own.
@@ -1108,6 +1135,7 @@ def explode_job(
                 substituted_step.parameters = substitute_parameters_dict(
                     substituted_step.parameters,
                     base_scope,
+                    strict=strict_symbols,
                     warnings=explosion_warnings,
                 )
 

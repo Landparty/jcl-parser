@@ -90,7 +90,7 @@ status (`DISP=(,CATLG)`) is valid — it defaults to `NEW`.
 | `JCLSyntaxError` | Malformed JCL that cannot be parsed at all |
 | `JCLValidationError` | Structural rule raised to exception level |
 | `JCLStructureError` | Missing required structural element (e.g., JOB card absent) |
-| `JCLParseError` | Generic parent — catches all of the above. Not re-exported from `jclparser`; import from `jclparser.errors` |
+| `JCLParseError` | Generic parent — catches all of the above. Exported from `jclparser` (as `interface-contract.md` requires) |
 
 # Dataset Lifecycle Validation
 

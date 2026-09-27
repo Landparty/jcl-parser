@@ -61,9 +61,10 @@ There is no automated sync. Forgetting this means the backend runs stale code. D
 
 # Version Bump
 
-Update **both** files together:
-1. `pyproject.toml` → `version = "X.Y.Z"`
-2. `jclparser/__init__.py` → `__version__ = "X.Y.Z"`
+release-please bumps **both** files on release: `pyproject.toml` → `version`, and
+`jclparser/__init__.py` → `__version__` (via `extra-files` in `release-please-config.json`,
+which rewrites the line marked `# x-release-please-version`). A manual bump must update both;
+`tests/unit/test_audit_patch_fixes.py::TestPackageMetadata` fails if they differ.
 
 CLI `--version` reads from `__init__.py`, not package metadata.
 
