@@ -84,6 +84,10 @@ Both paths carry an *added* DD (a name not present in the proc) onto the step �
 
 **Merge semantics** (`_merge_dd_override`, fixed 2026-09-27): an override changes only the parameters it codes — `//PS.D1 DD DSN=NEW` keeps the proc DD's `DISP`, `UNIT`, `DCB`, … — and `KEY=` (empty value) nullifies one. The data-source parameters (`DSN`/`DSNAME`/`SYSOUT`/`PATH`/`DUMMY`/`*`/`DATA`) are mutually exclusive, so coding any of them on the override drops the others from the proc DD (`DSN=` on the override nullifies `DUMMY`). An in-stream override (`DD *` / `DD DATA`) replaces the DD outright. Before, both paths replaced the whole DD, so e.g. the proc's `DISP=SHR` vanished whenever only the dataset name was overridden. Regression tests: `tests/unit/test_dd_override_merge.py`.
 
+# Step References Inside a PROC
+
+Inside a procedure, a step name in an `IF` condition (`IF (PS1.RC = 0)`) or an EXEC `COND=(4,LT,PS1)` test names the procedure's own step. `expand_proc_invocation` renames that step `PREFIX.PS1`, so it also qualifies those references (fixed 2026-09-27; they previously matched no exploded step, so RC analysis could not evaluate them and two expansions of one PROC were indistinguishable): `ConditionalBlock.condition_ast` gets a qualified *copy* (the PROC definition's AST is shared and never mutated) and `COND` values are rewritten in both the `['4','LT','PS1']` and `['(4,LT,PS1)', ...]` forms. References to job steps are left alone, and the raw `ConditionalBlock.condition` string stays as coded (invariant 3). Regression tests: `tests/unit/test_proc_step_ref_qualification.py`.
+
 # EXEC Parameter Overrides
 
 EXEC keyword parameters coded on an `EXEC procname` statement (`ACCT`, `ADDRSPC`, `COND`, `DYNAMNBR`, `MEMLIMIT`, `PARM`, `PARMDD`, `PERFORM`, `RD`, `REGION`, `TIME`, …) are applied to the expanded steps by `apply_exec_parameter_overrides`, called from `_explode_step` before the DD overrides (fixed 2026-09-27; previously every one was silently dropped):

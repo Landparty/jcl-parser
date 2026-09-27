@@ -10,6 +10,7 @@ import re
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
+from dataclasses import replace as dataclass_replace
 from datetime import datetime
 from typing import Any
 
@@ -63,6 +64,62 @@ def _clone_conditional(
     new_cond.then_steps = process_steps_fn(block.then_steps)
     new_cond.else_steps = process_steps_fn(block.else_steps)
     return new_cond
+
+
+def _qualify_step_ref(
+    name: str | None, proc_steps: frozenset[str], prefix: str
+) -> str | None:
+    """Qualify a step reference made inside a procedure with the call's prefix.
+
+    Inside a procedure, ``PS1`` (or ``PS1.INNER`` for a nested call) names the
+    procedure's own step; after explosion that step is ``PREFIX.PS1``.
+    References to anything else (job steps) are returned unchanged.
+    """
+    if name and name.split(".", 1)[0].upper() in proc_steps:
+        return f"{prefix}.{name}"
+    return name
+
+
+def _qualify_condition_ast(node: Any, proc_steps: frozenset[str], prefix: str) -> Any:
+    """Return a copy of an IF condition AST with procedure step refs qualified.
+
+    The procedure's AST is shared by every expansion, so it is never mutated.
+    """
+    if node is None:
+        return None
+    changes: dict[str, Any] = {}
+    if hasattr(node, "step_name"):
+        changes["step_name"] = _qualify_step_ref(node.step_name, proc_steps, prefix)
+    for child in ("operand", "left", "right"):
+        if hasattr(node, child):
+            changes[child] = _qualify_condition_ast(
+                getattr(node, child), proc_steps, prefix
+            )
+    return dataclass_replace(node, **changes) if changes else node
+
+
+def _qualify_cond_parameter(value: Any, proc_steps: frozenset[str], prefix: str) -> Any:
+    """Qualify the step of each ``(code,operator,stepname)`` test in COND=."""
+    if isinstance(value, list):
+        if (
+            len(value) == 3
+            and all(isinstance(v, str) for v in value)
+            and not value[0].startswith("(")
+        ):
+            # COND=(4,LT,PS1): a single test stored as its three tokens.
+            return [
+                value[0],
+                value[1],
+                _qualify_step_ref(value[2], proc_steps, prefix),
+            ]
+        return [_qualify_cond_parameter(v, proc_steps, prefix) for v in value]
+    if isinstance(value, str) and value.startswith("(") and value.endswith(")"):
+        # COND=((4,LT,PS1),...): each test stored as "(4,LT,PS1)".
+        parts = value[1:-1].split(",")
+        if len(parts) == 3:
+            parts[2] = _qualify_step_ref(parts[2], proc_steps, prefix) or parts[2]
+            return "(" + ",".join(parts) + ")"
+    return value
 
 
 def _clone_dd_statement(dd: DDStatement) -> DDStatement:
@@ -382,11 +439,21 @@ def expand_proc_invocation(
     # Generate step name prefix
     prefix = step_prefix or step.name or "PROC"
 
+    # Step references made inside the procedure (IF PS1.RC, COND=(4,LT,PS1))
+    # name its own steps, which are renamed PREFIX.PS1 below.
+    proc_steps = frozenset(
+        s.name.upper() for s in iter_execution_steps(procedure.steps) if s.name
+    )
+
     def _process_proc_steps(steps_list):
         result = []
         for proc_step in steps_list:
             if isinstance(proc_step, ConditionalBlock):
-                result.append(_clone_conditional(proc_step, _process_proc_steps))
+                new_block = _clone_conditional(proc_step, _process_proc_steps)
+                new_block.condition_ast = _qualify_condition_ast(
+                    new_block.condition_ast, proc_steps, prefix
+                )
+                result.append(new_block)
             else:
                 # Clone the step
                 new_step = _clone_step_for_explosion(proc_step)
@@ -417,6 +484,10 @@ def expand_proc_invocation(
                     strict=strict,
                     warnings=warnings,
                 )
+                if "COND" in new_step.parameters:
+                    new_step.parameters["COND"] = _qualify_cond_parameter(
+                        new_step.parameters["COND"], proc_steps, prefix
+                    )
 
                 # Substitute symbols in DD statements
                 for dd in new_step.dd_statements:

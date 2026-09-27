@@ -226,13 +226,19 @@ class TestConditionalAstPreservation:
         all_conds = collect_conds(exploded.steps)
         assert all_conds, "Expected ConditionalBlocks in nested explosion"
 
-        # Every ConditionalBlock in the explosion must carry the same
-        # condition_ast object (or None) that the original PROC had.
+        # Every ConditionalBlock in the explosion must still carry the
+        # PROC's condition_ast, with its reference to the PROC's own step
+        # qualified by the calling step (PS1 -> CALL.PS1). The PROC's AST
+        # itself is left untouched.
         for cond in all_conds:
             if cond.condition in orig_ast_by_condition:
-                assert cond.condition_ast is orig_ast_by_condition[cond.condition], (
+                orig = orig_ast_by_condition[cond.condition]
+                assert cond.condition_ast is not None, (
                     f"condition_ast not preserved for: {cond.condition!r}"
                 )
+                assert type(cond.condition_ast) is type(orig)
+                assert cond.condition_ast.step_name == f"CALL.{orig.step_name}"
+                assert orig.step_name == "PS1"
 
 
 @pytest.mark.unit
