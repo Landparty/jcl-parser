@@ -193,8 +193,9 @@ class TestSymbolicParameterSubstitution:
         assert "VALUE1" in dd1.dataset_name
         # &P1..&P2 becomes OVERRIDE1DEFAULT2 (both periods removed)
         assert "OVERRIDE1" in dd2.dataset_name or "DEFAULT2" in dd2.dataset_name
-        # &&TEMP stays as &TEMP (escaped ampersand)
-        assert dd3.dataset_name == "&TEMP"
+        # &&TEMP in a DSN is a temporary dataset, not an escaped ampersand
+        assert dd3.dataset_name == "&&TEMP"
+        assert dd3.is_temporary()
 
     def test_unresolved_member_leaves_no_empty_parens(self):
         """An unresolved symbolic PDS member must not leave bare () behind.

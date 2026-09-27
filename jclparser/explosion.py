@@ -517,6 +517,9 @@ def _strip_empty_member(dataset_name: str) -> str:
     return dataset_name
 
 
+_DSN_KEYS = ("DSN", "DSNAME")
+
+
 def substitute_dd_statement(
     dd: DDStatement,
     scope: SymbolScope,
@@ -540,10 +543,10 @@ def substitute_dd_statement(
             empty string in this DD's dataset name or disposition. Ignored
             when allow_undefined=True, since nothing is blanked in that mode.
         collapse_double_amp: If False, leave a literal "&&" untouched instead
-            of collapsing it to "&". Callers that must preserve the
-            "&&NAME" temporary-dataset idiom (see
-            ``DDStatement.is_temporary()``) ahead of full PROC explosion
-            should pass False here.
+            of collapsing it to "&". The dataset name (``dataset_name`` and
+            the ``DSN`` / ``DSNAME`` parameters) never collapses: there
+            ``&&NAME`` is the temporary-dataset idiom (see
+            ``DDStatement.is_temporary()``), not an escaped ampersand.
     """
     local_warnings: list[str] | None = [] if warnings is not None else None
 
@@ -555,7 +558,7 @@ def substitute_dd_statement(
             strict=strict,
             allow_undefined=allow_undefined,
             warnings=local_warnings,
-            collapse_double_amp=collapse_double_amp,
+            collapse_double_amp=False,
             keep_undefined=keep_undefined,
         )
         dd.dataset_name = _strip_empty_member(dd.dataset_name)
@@ -592,14 +595,30 @@ def substitute_dd_statement(
             )
 
     # Substitute all parameters
+    original_parameters = dd.parameters
     dd.parameters = substitute_parameters_dict(
-        dd.parameters,
+        original_parameters,
         scope,
         strict=strict,
         allow_undefined=allow_undefined,
         collapse_double_amp=collapse_double_amp,
         keep_undefined=keep_undefined,
     )
+    # The dataset-name parameters keep "&&" (temporary dataset), matching
+    # dataset_name above.
+    for key in _DSN_KEYS:
+        value = original_parameters.get(key)
+        if isinstance(value, str):
+            dd.parameters[key] = _strip_empty_member(
+                substitute_symbols(
+                    value,
+                    scope,
+                    strict=strict,
+                    allow_undefined=allow_undefined,
+                    collapse_double_amp=False,
+                    keep_undefined=keep_undefined,
+                )
+            )
 
     # Note: inline_data intentionally NOT substituted (data content preserved)
 

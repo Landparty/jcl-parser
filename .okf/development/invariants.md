@@ -18,7 +18,7 @@ timestamp: 2026-09-16T00:00:00Z
 
 3. **Inline PROCs always win.** Same-name external PROC or builtin template is ignored. No override possible.
 
-4. **`&&` is an escaped ampersand in JCL.** Symbol substitution replaces `&NAME` → value and `&&` → `&`. `&&TEMP` in a DSN signals a temporary dataset — not double substitution.
+4. **`&&` is an escaped ampersand in JCL — except in a dataset name.** Symbol substitution replaces `&NAME` → value and `&&` → `&`. In a DSN (`DDStatement.dataset_name` and the `DSN` / `DSNAME` parameters) `&&TEMP` signals a temporary dataset, so `substitute_dd_statement` always keeps the `&&` there — including during `explode_job()` — and `is_temporary()` stays true.
 
 5. **Dataset names are case-insensitive on z/OS but stored as-is.** Comparisons against DSN values must account for case variation.
 
