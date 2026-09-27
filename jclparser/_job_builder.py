@@ -53,7 +53,7 @@ from .model import (
     Statement,
     Step,
 )
-from .utils import POSITIONAL_PARAM_PREFIX, is_positional_key
+from .utils import POSITIONAL_PARAM_PREFIX, is_positional_key, jcl_value_text
 
 logger = logging.getLogger(__name__)
 
@@ -393,16 +393,22 @@ class JobBuilder:
             else:
                 self.pending_sets[symbol] = resolved
 
-        # For SET statements, parameters are in the format SYMBOL=VALUE
+        # For SET statements, parameters are in the format SYMBOL=VALUE. A
+        # parenthesised value (SET SP=(TRK,1)) arrives tokenized as a list and
+        # is kept as its JCL text.
         for key, value in stmt.parameters.items():
-            if not is_positional_key(key):
-                _record(key, value)
-            else:
+            if not is_positional_key(key) and value is not True:
+                _record(key, jcl_value_text(value))
+            elif isinstance(value, str) and "=" in value:
                 # Positional parameter might be SYMBOL=VALUE without keyword
-                param_val = value
-                if "=" in param_val:
-                    sym, val = param_val.split("=", 1)
-                    _record(sym.strip(), val.strip())
+                sym, val = value.split("=", 1)
+                _record(sym.strip(), val.strip())
+            else:
+                operand = key if value is True else jcl_value_text(value)
+                self._warnings_sink().append(
+                    f"Line {stmt.line_number}: SET operand {operand!r} is not "
+                    "SYMBOL=value; ignored"
+                )
 
     def _on_export(self, stmt: Statement) -> None:
         # EXPORT SYMLIST=(A,B,...)  or  EXPORT SYMLIST=*

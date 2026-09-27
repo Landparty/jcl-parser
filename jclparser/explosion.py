@@ -31,6 +31,7 @@ from .model import (
 )
 from .proc_loader import ProcedureLoader, create_default_loader
 from .system_symbols import SystemSymbolProvider, get_default_provider
+from .utils import jcl_value_text
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +177,17 @@ class SymbolScope:
     exec_overrides: dict[str, Any] = field(default_factory=dict)
     system_provider: SystemSymbolProvider | None = None
 
+    def raw_value(self, symbol_name: str) -> Any:
+        """Return an EXEC-override / PROC-default value as tokenized.
+
+        A parenthesised value such as ``DISP=(NEW,CATLG)`` comes back as the
+        list the tokenizer built; ``None`` when neither defines the symbol.
+        """
+        symbol_upper = symbol_name.upper()
+        if symbol_upper in self.exec_overrides:
+            return self.exec_overrides[symbol_upper]
+        return self.proc_params.get(symbol_upper)
+
     def resolve(self, symbol_name: str, strict: bool = False) -> str | None:
         """
         Resolve a symbol using precedence rules.
@@ -195,12 +207,12 @@ class SymbolScope:
         # 1. EXEC overrides (highest priority)
         if symbol_upper in self.exec_overrides:
             value = self.exec_overrides[symbol_upper]
-            return str(value) if value is not None else None
+            return jcl_value_text(value) if value is not None else None
 
         # 2. PROC parameters (default values)
         if symbol_upper in self.proc_params:
             value = self.proc_params[symbol_upper]
-            return str(value) if value is not None else None
+            return jcl_value_text(value) if value is not None else None
 
         # 3. SET statements (job-level)
         if symbol_upper in self.set_symbols:
@@ -503,6 +515,26 @@ def expand_proc_invocation(
     return expanded_steps
 
 
+_WHOLE_SYMBOL_RE = re.compile(r"&([A-Z0-9@#$]+)\.?")
+
+
+def _whole_symbol_list(value: Any, scope: SymbolScope) -> list[Any] | None:
+    """If *value* is exactly one symbol whose value is a list, return a copy.
+
+    ``DISP=&DP`` with ``DP=(NEW,CATLG)`` must become the same
+    ``["NEW", "CATLG"]`` list that coding ``DISP=(NEW,CATLG)`` produces.
+    """
+    if not isinstance(value, str):
+        return None
+    match = _WHOLE_SYMBOL_RE.fullmatch(value)
+    if match is None:
+        return None
+    raw = scope.raw_value(match.group(1))
+    if isinstance(raw, (list, tuple)):
+        return deepcopy(list(raw))
+    return None
+
+
 def substitute_parameters_dict(
     parameters: dict[str, Any],
     scope: SymbolScope,
@@ -533,6 +565,11 @@ def substitute_parameters_dict(
     result: dict[str, Any] = {}
 
     for key, value in parameters.items():
+        whole = _whole_symbol_list(value, scope)
+        if whole is not None:
+            # DISP=&DP with DP=(NEW,CATLG): keep the list, exactly as if
+            # DISP=(NEW,CATLG) had been coded, substituting inside it.
+            value = whole
         if isinstance(value, str):
             result[key] = substitute_symbols(
                 value,
@@ -641,6 +678,9 @@ def substitute_dd_statement(
     # not a plain string, so each element needs its own substitution pass —
     # substitute_symbols() is a no-op for non-str input and would otherwise
     # silently skip symbols in list-valued dispositions.
+    whole_disposition = _whole_symbol_list(dd.disposition, scope)
+    if whole_disposition is not None:
+        dd.disposition = whole_disposition
     if dd.disposition:
         if isinstance(dd.disposition, list):
             dd.disposition = [

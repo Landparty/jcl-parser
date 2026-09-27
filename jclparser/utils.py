@@ -20,6 +20,21 @@ def is_positional_key(key: str) -> bool:
     return key.startswith(POSITIONAL_PARAM_PREFIX)
 
 
+def jcl_value_text(value: Any) -> str:
+    """Render a tokenized operand value back as JCL text.
+
+    The statement tokenizer stores a parenthesised operand as a list --
+    ``DISP=(NEW,CATLG)`` becomes ``["NEW", "CATLG"]`` -- and a bare flag as
+    ``True``. Wherever such a value is used as text (a symbol's value, a SET
+    value) it must read ``(NEW,CATLG)``, never the Python repr.
+    """
+    if isinstance(value, (list, tuple)):
+        return "(" + ",".join(jcl_value_text(v) for v in value) + ")"
+    if value is True or value is None:
+        return ""
+    return str(value)
+
+
 def normalize_jcl_line(line: str) -> str:
     """
     Normalize JCL line by removing extra whitespace and handling continuations.
