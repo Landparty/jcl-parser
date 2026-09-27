@@ -169,6 +169,31 @@ class JobBuilder:
         self.inline_data_lines.append(line)
         return True
 
+    def start_implicit_sysin(self, line: str, line_num: int) -> None:
+        """Open an implicit ``//SYSIN DD *`` for in-stream data with no DD.
+
+        JES treats data records that follow a step without a ``DD *`` /
+        ``DD DATA`` statement as ``//SYSIN DD *``. *line* is the first data
+        record; the block ends at ``/*`` or the next ``//`` record.
+        """
+        if self.current_step is None:
+            self._warnings_sink().append(
+                f"Line {line_num}: in-stream data outside any step ignored"
+            )
+            return
+        self.current_dd = DDStatement(
+            name="SYSIN", parameters={"*": True}, line_number=line_num
+        )
+        self.current_step.add_dd(self.current_dd)
+        self._warnings_sink().append(
+            f"Line {line_num}: in-stream data with no DD statement; "
+            "treated as //SYSIN DD * (JES default)"
+        )
+        self.in_inline_data = True
+        self.inline_data_lines = [line]
+        self.current_delimiter = "/*"
+        self.current_terminates_on_slash = True
+
     def handle_comment_line(self, line: str, line_num: int) -> None:
         """Recognise JES3 ``//*COMMAND`` control statements (``//*MAIN``,
         ``//*ROUTE XEQ``, ...) before dropping the comment line.

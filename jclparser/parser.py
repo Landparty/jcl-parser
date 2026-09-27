@@ -55,6 +55,7 @@ from ._statement_parser import (  # noqa: F401
     _parse_list_parameter,
     _parse_parameters,
     parse_statement,
+    split_comment_field,
     statement_operation,
 )
 from .continuation_handler import ContinuationLineHandler
@@ -127,6 +128,10 @@ def _merge_source_lines(
     # ``DD DATA`` (or any dataset with an explicit ``DLM=``) only the delimiter
     # ends the data.
     terminates_on_slash = False
+    # Once a step exists, a record that is not JCL (no ``//`` or ``/*``)
+    # starts in-stream data with no DD statement, which JES reads as an
+    # implicit ``//SYSIN DD *`` (see JobBuilder.start_implicit_sysin).
+    seen_exec = False
 
     for i, line in enumerate(lines):
         if in_inline_data:
@@ -162,11 +167,28 @@ def _merge_source_lines(
                 control_data_indices.add(i)
                 continue
         if (
+            not line.startswith(("//", "/*"))
+            and seen_exec
+            and line.strip()
+            and not _expects_continuation(lines, i)
+        ):
+            inline_data_indices.add(i)
+            in_inline_data = True
+            delimiter = "/*"
+            terminates_on_slash = True
+            continue
+        if (
             line.strip()
             and line.startswith("//")
             and not line.strip().startswith("//*")
         ):
             upper_line = line.upper()
+            if (
+                not seen_exec
+                and "EXEC" in upper_line
+                and statement_operation(line) == "EXEC"
+            ):
+                seen_exec = True
             if "CNTL" in upper_line and statement_operation(line) == "CNTL":
                 in_cntl_block = True
                 cntl_start_line = i + 1
@@ -231,6 +253,31 @@ def _merge_source_lines(
     return merged_lines, inline_data_indices, control_data_indices, source_warnings
 
 
+def _expects_continuation(lines: list[str], index: int) -> bool:
+    """Return True if the JCL record before *index* awaits a continuation.
+
+    A statement whose operand field ends in a comma expects a ``//``
+    continuation record; a non-JCL record there is a broken continuation,
+    not in-stream data, and is left for parse_statement() to reject.
+    Only called for the rare non-JCL record, so the backward scan is cheap.
+    """
+    prev = index - 1
+    while prev >= 0 and (not lines[prev].strip() or lines[prev].startswith("//*")):
+        prev -= 1
+    if prev < 0 or not lines[prev].startswith("//"):
+        return False
+    # The operation of the statement that record belongs to decides where
+    # its comment field starts.
+    group_operation = ""
+    for k in range(prev, -1, -1):
+        operation = statement_operation(lines[k])
+        if operation in _STATEMENT_TYPES:
+            group_operation = operation
+            break
+    statement_part = split_comment_field(lines[prev], group_operation)[0]
+    return statement_part.rstrip().endswith(",")
+
+
 def _parse_jcl_core(
     source: str | Path | IO,
     strict_mode: bool = False,
@@ -293,6 +340,9 @@ def _parse_jcl_core(
 
         # Skip lines marked as inline data (line_num is 1-indexed, markers use 0-indexed)
         if (line_num - 1) in inline_data_indices:
+            if not line.startswith(("//", "/*")):
+                # In-stream data with no DD statement ahead of it.
+                builder.start_implicit_sysin(line, line_num)
             continue
 
         # Program control records inside a CNTL/ENDCNTL block are kept with

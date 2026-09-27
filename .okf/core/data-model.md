@@ -83,7 +83,7 @@ the codebase; use `step.procedure` / `step.is_procedure`.
 | `dataset_name` | `str \| None` | `DSN=` value, or `DSNAME=` (its long form) when no `DSN=` is coded |
 | `disposition` | `str \| None` | `DISP=` raw string |
 | `parameters` | `dict[str, Any]` | DSN, DISP, SPACE, DCB, SYSOUT… |
-| `inline_data` | `str \| None` | Content between `DD *` and `/*`, as **one string** (there is no `instream_data` list) |
+| `inline_data` | `str \| None` | Content between `DD *` and `/*`, as **one string** (there is no `instream_data` list). Data records after a step with no `DD *` / `DD DATA` ahead of them get an implicit `SYSIN` DD (`parameters={"*": True}`), as JES does, plus a `job.warnings` entry |
 | `comments` | `list[str]` | Never populated — see invariant 8 |
 | `line_number` | `int` | |
 | `output_refs` | `list[OutputStatement]` | Resolved `OUTPUT=*.name` back-references |
