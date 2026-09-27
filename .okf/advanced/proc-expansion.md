@@ -84,7 +84,18 @@ Both paths carry an *added* DD (a name not present in the proc) onto the step �
 
 **Merge semantics** (`_merge_dd_override`, fixed 2026-09-27): an override changes only the parameters it codes — `//PS.D1 DD DSN=NEW` keeps the proc DD's `DISP`, `UNIT`, `DCB`, … — and `KEY=` (empty value) nullifies one. The data-source parameters (`DSN`/`DSNAME`/`SYSOUT`/`PATH`/`DUMMY`/`*`/`DATA`) are mutually exclusive, so coding any of them on the override drops the others from the proc DD (`DSN=` on the override nullifies `DUMMY`). An in-stream override (`DD *` / `DD DATA`) replaces the DD outright. Before, both paths replaced the whole DD, so e.g. the proc's `DISP=SHR` vanished whenever only the dataset name was overridden. Regression tests: `tests/unit/test_dd_override_merge.py`.
 
-**Known limitation:** `PARM.procstep=value` on an `EXEC PROC=` invocation (a per-step `PARM` override) is tokenized into `step.parameters["PARM.procstep"]` but has no dedicated handling anywhere in explosion — it never overrides the target step's `PARM`, is dropped from the exploded output, and is not warned about. Not a regression; this qualified-keyword-override form was never implemented.
+# EXEC Parameter Overrides
+
+EXEC keyword parameters coded on an `EXEC procname` statement (`ACCT`, `ADDRSPC`, `COND`, `DYNAMNBR`, `MEMLIMIT`, `PARM`, `PARMDD`, `PERFORM`, `RD`, `REGION`, `TIME`, …) are applied to the expanded steps by `apply_exec_parameter_overrides`, called from `_explode_step` before the DD overrides (fixed 2026-09-27; previously every one was silently dropped):
+
+| Form | Effect |
+|------|--------|
+| `KEYWORD.procstep=value` | overrides or adds the keyword on that step only; an unknown procstep is ignored with a warning on `exploded_job.warnings` |
+| `PARM=` / `PARMDD=` (no procstep) | goes to the procedure's **first** step and nullifies PARM/PARMDD on every other step |
+| any other keyword (no procstep) | overrides the keyword on **every** step (`TIME=` really bounds the whole procedure; per-step is the closest model) |
+| `KEYWORD.procstep=` / `KEYWORD=` (empty) | nullifies the keyword |
+
+`PARM` and `PARMDD` displace each other. Unqualified overrides are applied before qualified ones. Steps inside `IF`/`ELSE` blocks in the procedure are reached too. Symbolic parameters (`EXEC P,MBR=X`) are unaffected: their names can never be EXEC keywords. Regression tests: `tests/unit/test_exec_parameter_overrides.py`.
 
 # Error Types
 

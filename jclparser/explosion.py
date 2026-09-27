@@ -7,7 +7,7 @@ support for nested procedures, circular dependency detection, and audit logging.
 
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -20,7 +20,14 @@ from .errors import (
     ProcedureNotFoundError,
     UndefinedSymbolError,
 )
-from .model import ConditionalBlock, DDStatement, Job, Procedure, Step
+from .model import (
+    ConditionalBlock,
+    DDStatement,
+    Job,
+    Procedure,
+    Step,
+    iter_execution_steps,
+)
 from .proc_loader import ProcedureLoader, create_default_loader
 from .system_symbols import SystemSymbolProvider, get_default_provider
 
@@ -654,6 +661,98 @@ def _merge_dd_override(base: DDStatement, override: DDStatement) -> DDStatement:
     return clone
 
 
+# EXEC keyword parameters that an ``EXEC procname`` statement can override on
+# the procedure's steps, as ``KEYWORD.procstep=value`` or plain
+# ``KEYWORD=value``. Symbolic parameter names can never collide with these.
+_EXEC_OVERRIDE_KEYWORDS = frozenset(
+    {
+        "ACCT",
+        "ADDRSPC",
+        "CCSID",
+        "COND",
+        "DPRTY",
+        "DYNAMNBR",
+        "MEMLIMIT",
+        "PARM",
+        "PARMDD",
+        "PERFORM",
+        "RD",
+        "REGION",
+        "REGIONX",
+        "TIME",
+        "TVSMSG",
+        "TVSAMCOM",
+    }
+)
+# PARM and PARMDD are mutually exclusive: coding one on a step displaces the
+# other.
+_PARM_KEYWORDS = frozenset({"PARM", "PARMDD"})
+
+
+def _set_exec_keyword(step: Step, keyword: str, value: Any) -> None:
+    """Override (or, for an empty value, nullify) *keyword* on *step*."""
+    if keyword in _PARM_KEYWORDS:
+        for key in _PARM_KEYWORDS:
+            step.parameters.pop(key, None)
+    if value == "":
+        step.parameters.pop(keyword, None)
+    else:
+        step.parameters[keyword] = deepcopy(value)
+
+
+def apply_exec_parameter_overrides(
+    expanded_steps: Sequence[Step | ConditionalBlock],
+    exec_parameters: dict[str, Any],
+    step_name_prefix: str,
+    warnings: list[str] | None = None,
+) -> None:
+    """Apply EXEC keyword overrides from an ``EXEC procname`` statement.
+
+    z/OS semantics for an EXEC statement that calls a procedure:
+
+    * ``KEYWORD.procstep=value`` overrides (or adds) the keyword on that step
+      only; ``KEYWORD.procstep=`` nullifies it.
+    * ``PARM=`` / ``PARMDD=`` without a procstep applies to the procedure's
+      first step and nullifies PARM/PARMDD on every other step.
+    * Every other keyword without a procstep overrides it on every step.
+      (``TIME=`` really limits the procedure as a whole; applying it to each
+      step is the closest per-step model.)
+
+    Unqualified overrides are applied before qualified ones.
+    """
+    steps = list(iter_execution_steps(list(expanded_steps)))
+    if not steps:
+        return
+    by_name = {s.name: s for s in steps if s.name}
+
+    qualified: list[tuple[str, str, Any]] = []
+    for key, value in exec_parameters.items():
+        keyword, _, procstep = key.upper().partition(".")
+        if keyword not in _EXEC_OVERRIDE_KEYWORDS:
+            continue
+        if procstep:
+            qualified.append((keyword, procstep, value))
+        elif keyword in _PARM_KEYWORDS:
+            _set_exec_keyword(steps[0], keyword, value)
+            for other in steps[1:]:
+                for parm_key in _PARM_KEYWORDS:
+                    other.parameters.pop(parm_key, None)
+        else:
+            for target in steps:
+                _set_exec_keyword(target, keyword, value)
+
+    for keyword, procstep, value in qualified:
+        target = by_name.get(f"{step_name_prefix}.{procstep}")
+        if target is None:
+            if warnings is not None:
+                warnings.append(
+                    f"EXEC {step_name_prefix}: {keyword}.{procstep} names no step "
+                    "of the procedure; override ignored"
+                )
+            continue
+        _set_exec_keyword(target, keyword, value)
+
+
 def apply_dd_overrides(
     expanded_steps: list[Step],
     dd_overrides: dict[str, DDStatement],
@@ -1032,6 +1131,11 @@ def _explode_step(
         step_prefix=step.name,
         strict=strict_symbols,
         warnings=warnings,
+    )
+
+    # Apply EXEC keyword overrides (PARM.PROCSTEP=, COND=, ...) to the steps.
+    apply_exec_parameter_overrides(
+        expanded, step.parameters, step.name or "PROC", warnings
     )
 
     # Apply qualified DD overrides (PROCSTEP.DDNAME) if present
