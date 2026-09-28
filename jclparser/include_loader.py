@@ -168,6 +168,7 @@ def resolve_includes(
     max_lines: int = 1_000_000,
     _active: frozenset[str] = frozenset(),
     _budget: list[int] | None = None,
+    _symbols: dict[str, str] | None = None,
 ) -> str:
     """
     Expand ``// INCLUDE MEMBER=name`` statements by inlining member content.
@@ -196,6 +197,8 @@ def resolve_includes(
         _active: Members being expanded above this level (internal). An
             INCLUDE of one of them is recursive and is left intact.
         _budget: Remaining line budget shared across levels (internal).
+        _symbols: SET symbols seen so far, shared across levels (internal).
+            ``// INCLUDE MEMBER=&M`` after ``// SET M=MEMA`` includes MEMA.
 
     Returns:
         JCL text with all resolvable INCLUDE statements expanded.
@@ -207,6 +210,8 @@ def resolve_includes(
         return content
     if _budget is None:
         _budget = [max_lines]
+    if _symbols is None:
+        _symbols = {}
 
     # Records of in-stream data (``DD *`` / ``DD DATA,DLM=``) and CNTL blocks
     # are not JCL: a ``// INCLUDE`` among them is data and must stay as-is.
@@ -225,7 +230,10 @@ def resolve_includes(
         # in-stream data lines (which may contain '//' after leading spaces)
         # are never mistaken for JCL statements.
         statement_line = line.rstrip("\r\n")
+        _record_set_symbols(statement_line, _symbols)
         member = _extract_include_member(statement_line)
+        if member is not None and "&" in member:
+            member = _substitute_member_symbols(member, _symbols)
         if member is not None and member in _active:
             logger.warning(
                 "INCLUDE member %r is recursive; leaving statement intact", member
@@ -252,6 +260,7 @@ def resolve_includes(
                     max_lines=max_lines,
                     _active=_active | {member},
                     _budget=_budget,
+                    _symbols=_symbols,
                 )
                 # Ensure the inlined content ends with a newline
                 if not expanded.endswith("\n"):
@@ -265,6 +274,50 @@ def resolve_includes(
         result.append(line)
 
     return "".join(result)
+
+
+def _record_set_symbols(line: str, symbols: dict[str, str]) -> None:
+    """Record the assignments of a ``// SET`` statement *line* into *symbols*.
+
+    Values are resolved against the symbols already recorded, mirroring the
+    parser's left-to-right SET evaluation. Lines that are not a SET statement
+    are ignored.
+    """
+    if not line.startswith("//") or line.startswith("//*"):
+        return
+    tokens = line[2:].split(None, 2)
+    if not tokens:
+        return
+    # The operation is the first token (no label) or the second (labelled).
+    if tokens[0].upper() != "SET" and (
+        line[2:3].isspace() or len(tokens) < 2 or tokens[1].upper() != "SET"
+    ):
+        return
+
+    from ._model_factories import _resolve_set_value
+    from ._statement_parser import parse_statement, split_comment_field
+    from .utils import is_positional_key, jcl_value_text
+
+    statement, _ = split_comment_field(line)
+    stmt = parse_statement(statement)
+    if stmt is None or stmt.type != "SET":
+        return
+    for key, value in stmt.parameters.items():
+        if value is True or is_positional_key(key):
+            continue
+        symbols[key.upper()] = _resolve_set_value(jcl_value_text(value), symbols)
+
+
+def _substitute_member_symbols(member: str, symbols: dict[str, str]) -> str:
+    """Resolve ``&SYMBOL`` references in an INCLUDE member name.
+
+    Symbols with no recorded SET value are left as written.
+    """
+    from .explosion import SymbolScope, substitute_symbols
+
+    return substitute_symbols(
+        member, SymbolScope(set_symbols=symbols), allow_undefined=True
+    ).upper()
 
 
 def _extract_include_member(line: str) -> str | None:
