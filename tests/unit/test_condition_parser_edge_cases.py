@@ -290,3 +290,40 @@ class TestConditionEvaluation:
         if hasattr(result, "evaluate"):
             assert result.evaluate({"STEP1": (4, False)}) is True
             assert result.evaluate({"STEP1": (0, False)}) is False
+
+
+@pytest.mark.unit
+class TestValueFirstComparison:
+    """``value op RC``: the operator is mirrored, never kept as written."""
+
+    @pytest.mark.parametrize(
+        ("text", "operator"),
+        [
+            ("4 LT RC", "GT"),
+            ("4 GT RC", "LT"),
+            ("4 LE RC", "GE"),
+            ("4 GE RC", "LE"),
+            ("4 EQ RC", "EQ"),
+            ("4 NE RC", "NE"),
+            ("4 < RC", "GT"),
+        ],
+    )
+    def test_operator_is_mirrored(self, text, operator):
+        node = parse_condition(text)
+        assert node is not None
+        assert (node.step_name, node.operator, node.value) == (None, operator, 4)
+
+    def test_evaluates_like_rc_first_form(self):
+        # 4 LT RC is true for RC=8, false for RC=0.
+        node = parse_condition("4 LT RC")
+        assert node.evaluate({"S1": (8, False)}) is True
+        assert node.evaluate({"S1": (0, False)}) is False
+
+    def test_step_qualified_rc(self):
+        node = parse_condition("4 LT STEP1.RC")
+        assert (node.step_name, node.operator, node.value) == ("STEP1", "GT", 4)
+        node = parse_condition("8 GE PS.S1.RC")
+        assert (node.step_name, node.operator, node.value) == ("PS.S1", "LE", 8)
+
+    def test_value_op_non_rc_is_unparseable(self):
+        assert parse_condition("4 LT X") is None

@@ -38,7 +38,7 @@ errors = job.validate()
 |--------|----------------------------------|-------------|
 | `ValidationLevel.BASIC` | `"basic"` (default) | Parse-time syntax/structure errors only |
 | `ValidationLevel.STRUCTURE` | `"structure"` | Adds `job.validate()` structural rules |
-| `ValidationLevel.SEMANTIC` | `"semantic"` | Adds registered `ValidationPlugin` checks |
+| `ValidationLevel.SEMANTIC` | `"semantic"` | Adds registered `ValidationPlugin` checks: `validate_job(job)`, then `validate_step(step)` for every step (IF branches included) and `validate_dd(dd)` for each of its DDs. Findings keep the plugin's `line_number` (0 when it gives none); severity is always ERROR |
 
 `validate_jcl()` compares `level` against the **raw strings** above. `ValidationLevel` is a
 plain `Enum`, not a `StrEnum`, so passing `ValidationLevel.STRUCTURE` silently matches
@@ -103,14 +103,20 @@ issues = validate_dataset_lifecycle(
 )  # list[ValidationError] — catches disposed-before-use, etc.
 ```
 
+The catalog check follows a *state* per dataset, not a count: a normal-termination `CATLG` on a `NEW` allocation catalogs it, a normal `DELETE` / `UNCATLG` removes it. Abnormal-termination dispositions (`DISP=(NEW,PASS,CATLG)`, `(OLD,KEEP,UNCATLG)`) never change the state seen by later steps. So the IEFBR14 "delete if it exists" idiom (`DISP=(MOD,DELETE)`, then re-create `NEW,CATLG`, then read `SHR`) is clean, and a second `NEW,CATLG` after that re-create is still a duplicate.
+
+`validate_data_dependencies` (temporary `&&` datasets, part of `job.validate()`): `DISP=MOD` on a temporary that still exists extends it (the `&&LOADSET` object-deck accumulation of several compiles) rather than creating it twice; an explicit normal `DELETE` ends it, so a later `NEW` of the same name is a fresh creation. `NEW` while the earlier one still exists (passed) is an ERROR, as is `NEW` twice with the default normal disposition (not modelled).
+
 # Lint Rules (SARIF output)
 
 ```python
 from jclparser import lint_job, lint_to_sarif, LintConfig
 
 findings = lint_job(job, config=LintConfig())
-sarif = lint_to_sarif(findings)
+sarif = lint_to_sarif(findings, artifact_uri="jobs/MYJOB.jcl")
 ```
+
+Every result location carries `physicalLocation.artifactLocation` (SARIF 2.1.0 requires it); `artifact_uri` fills its `uri` — omit it and the `artifactLocation` is empty, which is schema-valid but gives consumers such as GitHub code scanning no file to place the result in.
 
 Built-in rule IDs follow `JCL-LINT-NNN`. Custom rules extend `LintRule` ABC.
 

@@ -335,6 +335,11 @@ def validate_data_dependencies(job: Job) -> list[ValidationError]:
     # Track temporary datasets created and used
     temp_datasets_created: dict[str, str] = {}  # dataset -> step_name
     temp_datasets_used: dict[str, list[str]] = {}  # dataset -> [step_names]
+    # Temporary datasets that still exist: created and not yet deleted by an
+    # explicit DISP=(...,DELETE).  DISP=MOD on one of them extends it (the
+    # classic way to collect several compiles' object decks in &&LOADSET)
+    # rather than creating it a second time.
+    temp_datasets_active: dict[str, str] = {}  # dataset -> creating step_name
 
     flat_steps = list(iter_execution_steps(job.steps))
 
@@ -344,23 +349,35 @@ def validate_data_dependencies(job: Job) -> list[ValidationError]:
         for dd in step.dd_statements:
             if dd.dataset_name and dd.dataset_name.startswith("&&"):
                 temp_ds = dd.dataset_name
+                tokens = dd._disp_tokens() if dd.disposition else []
+                extends_existing = (
+                    bool(tokens)
+                    and tokens[0] == "MOD"
+                    and temp_ds in temp_datasets_active
+                )
 
                 # Check if this is creating or using the dataset
-                if dd.is_output():
-                    if temp_ds in temp_datasets_created:
+                if dd.is_output() and not extends_existing:
+                    if temp_ds in temp_datasets_active:
                         errors.append(
                             ValidationError(
                                 f"Temporary dataset {temp_ds} created in multiple steps: "
-                                f"{temp_datasets_created[temp_ds]} and {step_name}",
+                                f"{temp_datasets_active[temp_ds]} and {step_name}",
                                 ErrorType.VALIDATION_ERROR,
                             )
                         )
                     temp_datasets_created[temp_ds] = step_name
+                    temp_datasets_active[temp_ds] = step_name
 
-                elif dd.is_input():
+                elif dd.is_input() or extends_existing:
                     if temp_ds not in temp_datasets_used:
                         temp_datasets_used[temp_ds] = []
                     temp_datasets_used[temp_ds].append(step_name)
+
+                if len(tokens) >= 2 and tokens[1] == "DELETE":
+                    # Deleted at the end of this step: a later step may
+                    # create a temporary dataset of the same name again.
+                    temp_datasets_active.pop(temp_ds, None)
 
     # Check that temporary datasets are created before use.
     # Reported as WARNING rather than ERROR because the validator is flow-blind:

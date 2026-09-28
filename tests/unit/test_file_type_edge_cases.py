@@ -356,3 +356,21 @@ class TestComplexScenarios:
 
         result = detect_file_type(jcl)
         assert result == FileType.UNKNOWN
+
+
+class TestJobNameStartingWithKeyword:
+    """A job name that begins with SET/IF/PEND/... is still a label."""
+
+    @pytest.mark.parametrize(
+        "name",
+        ["SETUPJ", "IFCHECK", "PENDJOB", "ELSEWHR", "THENX", "INCLUDE1", "JCLLIBX"],
+    )
+    def test_job_detected(self, name):
+        content = f"//{name} JOB (ACCT),CLASS=A\n//S1 EXEC PGM=IEFBR14\n"
+        assert detect_file_type(content) == FileType.JCL
+        assert _extract_statement_type(f"//{name} JOB (ACCT)") == "JOB"
+
+    def test_nameless_keywords_still_recognised(self):
+        assert _extract_statement_type("// IF(RC=0) THEN") == "IF"
+        assert _extract_statement_type("// SET HLQ=PROD") == "SET"
+        assert _extract_statement_type("//SETUP PROC") == "PROC"

@@ -243,10 +243,14 @@ def _extract_statement_type(line: str) -> str | None:
     if not line:
         return None
 
-    # Check for nameless statement types (those that may omit a //NAME label)
-    line_upper = line.upper()
+    # Check for nameless statement types (those that may omit a //NAME label).
+    # The whole first token must be the keyword (``IF(RC=0)`` included): a
+    # label that merely starts with one -- ``//SETUPJ JOB``, ``//IFCHECK JOB``,
+    # ``//PENDJOB JOB`` -- is a name, and reading it as SET/IF/PEND skipped
+    # the JOB card and reported the job as a PROC.
+    first_token = line.split(None, 1)[0].upper()
     for stmt_type in _NAMELESS_STATEMENTS:
-        if line_upper.startswith(stmt_type):
+        if first_token == stmt_type or first_token.startswith(stmt_type + "("):
             return stmt_type
 
     # For statements with names: //NAME TYPE PARAMS

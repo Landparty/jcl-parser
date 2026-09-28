@@ -455,6 +455,11 @@ class Step:
         is_exploded: True if this step was generated from procedure explosion
         original_proc_call: Original procedure call step name (if exploded)
         dd_overrides: DD overrides for qualified DD names (PROC.STEP.DD format)
+        dd_override_concatenations: For a qualified override key in
+            ``dd_overrides``, the unnamed DDs coded after it -- overrides of
+            the 2nd, 3rd, ... members of that DD's concatenation, in order
+        set_symbols: SET symbols in effect at this step when a later SET
+            redefines one of them, else None
     """
 
     name: str | None = None
@@ -467,6 +472,14 @@ class Step:
     is_exploded: bool = False
     original_proc_call: str | None = None
     dd_overrides: dict[str, DDStatement] = field(default_factory=dict)
+    dd_override_concatenations: dict[str, list[DDStatement]] = field(
+        default_factory=dict
+    )
+    #: The job's SET symbols as they stood when this step's EXEC was read,
+    #: kept only when a later ``SET`` redefines one of them (``None``
+    #: otherwise): a SET value is in effect from the SET statement onward, so
+    #: this step's ``&SYM`` references must not see the redefinition.
+    set_symbols: dict[str, str] | None = field(default=None, repr=False, compare=False)
 
     @property
     def is_procedure(self) -> bool:
@@ -540,8 +553,7 @@ class Step:
     @property
     def dynamnbr(self) -> int | None:
         """Dynamic allocation count."""
-        val = self.parameters.get("DYNAMNBR")
-        return int(val) if val else None
+        return _to_int_or_none(self.parameters.get("DYNAMNBR"))
 
     @property
     def memlimit(self) -> str | None:
@@ -566,8 +578,7 @@ class Step:
     @property
     def perform(self) -> int | None:
         """Performance group."""
-        val = self.parameters.get("PERFORM")
-        return int(val) if val else None
+        return _to_int_or_none(self.parameters.get("PERFORM"))
 
     @property
     def rd(self) -> str | None:

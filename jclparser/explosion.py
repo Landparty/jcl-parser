@@ -149,6 +149,16 @@ def _clone_dd_statement(dd: DDStatement) -> DDStatement:
     return new_dd
 
 
+def _step_dds_and_overrides(step: Step) -> list[DDStatement]:
+    """Every DD coded under *step*: its own, its PROCSTEP.DDNAME overrides and
+    their concatenation members."""
+    return [
+        *step.dd_statements,
+        *step.dd_overrides.values(),
+        *(dd for dds in step.dd_override_concatenations.values() for dd in dds),
+    ]
+
+
 def _clone_step_for_explosion(step: Step) -> Step:
     # Performance-tuned alternative to deepcopy(step) on the PROC explosion
     # hot path. Clones only what downstream substitution actually mutates:
@@ -166,6 +176,10 @@ def _clone_step_for_explosion(step: Step) -> Step:
         is_exploded=step.is_exploded,
         original_proc_call=step.original_proc_call,
         dd_overrides={k: _clone_dd_statement(v) for k, v in step.dd_overrides.items()},
+        dd_override_concatenations={
+            k: [_clone_dd_statement(dd) for dd in v]
+            for k, v in step.dd_override_concatenations.items()
+        },
     )
 
 
@@ -528,8 +542,9 @@ def expand_proc_invocation(
                         new_step.parameters["COND"], proc_steps, prefix
                     )
 
-                # Substitute symbols in DD statements
-                for dd in new_step.dd_statements:
+                # Substitute symbols in DD statements -- the step's own and,
+                # for a nested ``EXEC procname``, its PROCSTEP.DDNAME overrides
+                for dd in _step_dds_and_overrides(new_step):
                     substitute_dd_statement(
                         dd, expansion_scope, strict=strict, warnings=warnings
                     )
@@ -788,6 +803,47 @@ def _is_instream_dd(params: dict[str, Any]) -> bool:
     return str(params.get("_pos_0", "")).upper() in _DD_INSTREAM_MARKERS
 
 
+def _dcb_subparameters(value: Any) -> list[str]:
+    """Return a DCB value as its list of subparameters (``RECFM=FB``, ...)."""
+    if isinstance(value, list):
+        return [jcl_value_text(v) for v in value]
+    return [jcl_value_text(value)]
+
+
+def _merge_dcb_override(base_value: Any, override_value: Any) -> Any:
+    """Merge an overriding ``DCB=`` onto the PROC DD's ``DCB=``.
+
+    z/OS keeps every DCB subparameter the override does not code: overriding
+    ``DCB=(RECFM=FB,LRECL=80,BLKSIZE=800)`` with ``DCB=BLKSIZE=0`` yields
+    ``DCB=(RECFM=FB,LRECL=80,BLKSIZE=0)``. A subparameter coded with no value
+    (``BLKSIZE=``) is nullified. A positional model / referback
+    (``DCB=(A.B,...)`` / ``DCB=*.STEP.DD``) coded on the override replaces the
+    PROC DD's one.
+    """
+    base_items = _dcb_subparameters(base_value)
+    override_items = _dcb_subparameters(override_value)
+
+    override_positionals = [item for item in override_items if "=" not in item]
+    positionals = override_positionals or [
+        item for item in base_items if "=" not in item
+    ]
+    keywords: dict[str, str] = {}
+    for item in base_items + override_items:
+        if "=" not in item:
+            continue
+        name, _, sub_value = item.partition("=")
+        name = name.strip().upper()
+        if sub_value == "":
+            keywords.pop(name, None)
+        else:
+            keywords[name] = sub_value
+
+    merged = positionals + [f"{name}={sub}" for name, sub in keywords.items()]
+    if len(merged) == 1 and not isinstance(override_value, list):
+        return merged[0]
+    return merged
+
+
 def _merge_dd_override(base: DDStatement, override: DDStatement) -> DDStatement:
     """Return *base* modified by *override* per z/OS DD-override semantics.
 
@@ -810,6 +866,8 @@ def _merge_dd_override(base: DDStatement, override: DDStatement) -> DDStatement:
     for key, value in clone.parameters.items():
         if value == "":
             params.pop(key, None)
+        elif key == "DCB" and "DCB" in params:
+            params[key] = _merge_dcb_override(params["DCB"], value)
         else:
             params[key] = value
 
@@ -916,19 +974,52 @@ def apply_exec_parameter_overrides(
         _set_exec_keyword(target, keyword, value)
 
 
+def _override_concatenation_members(
+    dd_statements: list[DDStatement],
+    index: int,
+    member_overrides: Sequence[DDStatement],
+) -> None:
+    """Apply *member_overrides* to the concatenation whose named DD is at *index*.
+
+    The first override applies to the 2nd member of the concatenation (the
+    first unnamed DD after the named one), and so on. An override with no
+    operands (``//  DD``) leaves its member unchanged; overrides beyond the
+    last member add new members to the end of the concatenation.
+    """
+    position = index + 1
+    for member_override in member_overrides:
+        is_member = position < len(dd_statements) and not dd_statements[position].name
+        if not is_member:
+            dd_statements.insert(position, deepcopy(member_override))
+        elif member_override.parameters:
+            dd_statements[position] = _merge_dd_override(
+                dd_statements[position], member_override
+            )
+        position += 1
+
+
 def apply_dd_overrides(
-    expanded_steps: list[Step],
+    expanded_steps: Sequence[Step | ConditionalBlock],
     dd_overrides: dict[str, DDStatement],
     step_name_prefix: str,
+    concatenations: dict[str, list[DDStatement]] | None = None,
 ) -> None:
     """
     Apply DD overrides to expanded steps.
 
     Args:
-        expanded_steps: List of expanded steps
+        expanded_steps: List of expanded steps; steps nested in a PROC's
+            ``IF``/``ELSE`` blocks are overridden too
         dd_overrides: Dictionary of qualified DD name -> override DDStatement
         step_name_prefix: Prefix used for step names
+        concatenations: Qualified DD name -> the unnamed DDs coded after that
+            override, overriding the later members of its concatenation
+            (``Step.dd_override_concatenations``)
     """
+    concatenations = concatenations or {}
+    # A PROC step inside an IF/THEN/ELSE block is still a PROCSTEP an override
+    # can name; walking only the top level crashed on the ConditionalBlock.
+    steps = list(iter_execution_steps(list(expanded_steps)))
     for override_key, override_dd in dd_overrides.items():
         # Parse qualified DD name.
         # Two-part  "PROCSTEP.DDNAME"              -> step prefix.PROCSTEP  / DD DDNAME
@@ -941,17 +1032,21 @@ def apply_dd_overrides(
             target_step, target_dd = parts
             qualified_step = f"{step_name_prefix}.{target_step}"
 
-            for step in expanded_steps:
+            for step in steps:
                 if step.name == qualified_step:
                     # override_dd.name is the raw statement name field, i.e.
                     # the *qualified* key ("PROCSTEP.DDNAME") -- normalize it
                     # to the plain DD name so the resulting DD looks the same
                     # as one coded directly on the step.
+                    members = concatenations.get(override_key, [])
                     for i, dd in enumerate(step.dd_statements):
                         if dd.name == target_dd:
                             merged = _merge_dd_override(dd, override_dd)
                             merged.name = target_dd
                             step.dd_statements[i] = merged
+                            _override_concatenation_members(
+                                step.dd_statements, i, members
+                            )
                             break
                     else:
                         # No DD named target_dd on this step -- per z/OS
@@ -963,6 +1058,7 @@ def apply_dd_overrides(
                         clone = deepcopy(override_dd)
                         clone.name = target_dd
                         step.dd_statements.append(clone)
+                        step.dd_statements.extend(deepcopy(members))
                     break
 
         elif len(parts) == 3:
@@ -978,14 +1074,18 @@ def apply_dd_overrides(
             qualified_outer = f"{step_name_prefix}.{outer_step}"
             two_part_key = f"{inner_step}.{target_dd}"
 
-            for step in expanded_steps:
+            for step in steps:
                 if step.name == qualified_outer:
                     step.dd_overrides[two_part_key] = deepcopy(override_dd)
+                    if override_key in concatenations:
+                        step.dd_override_concatenations[two_part_key] = deepcopy(
+                            concatenations[override_key]
+                        )
                     break
 
 
 def apply_unqualified_dd_overrides(
-    expanded_steps: list[Step],
+    expanded_steps: Sequence[Step | ConditionalBlock],
     override_dds: list[DDStatement],
 ) -> None:
     """Merge unqualified DD overrides onto the procedure's first step.
@@ -1005,23 +1105,39 @@ def apply_unqualified_dd_overrides(
     if not override_dds:
         return
 
-    first_step = next((s for s in expanded_steps if isinstance(s, Step)), None)
+    # The first step in source order, even when it sits inside an IF block.
+    first_step = next(iter_execution_steps(list(expanded_steps)), None)
     if first_step is None:
         return
 
-    index_by_name = {
-        dd.name: i for i, dd in enumerate(first_step.dd_statements) if dd.name
-    }
+    # Group each named override with the unnamed DDs coded right after it:
+    # those override members 2..n of the named DD's concatenation, exactly
+    # like the members of a qualified PROCSTEP.DDNAME override.
+    groups: list[tuple[DDStatement, list[DDStatement]]] = []
     for override_dd in override_dds:
-        existing = index_by_name.get(override_dd.name) if override_dd.name else None
-        if existing is not None:
-            first_step.dd_statements[existing] = _merge_dd_override(
-                first_step.dd_statements[existing], override_dd
-            )
+        if not override_dd.name and groups:
+            groups[-1][1].append(override_dd)
         else:
-            first_step.dd_statements.append(deepcopy(override_dd))
-            if override_dd.name:
-                index_by_name[override_dd.name] = len(first_step.dd_statements) - 1
+            groups.append((override_dd, []))
+
+    dd_statements = first_step.dd_statements
+    for override_dd, members in groups:
+        existing = next(
+            (
+                i
+                for i, dd in enumerate(dd_statements)
+                if override_dd.name and dd.name == override_dd.name
+            ),
+            None,
+        )
+        if existing is not None:
+            dd_statements[existing] = _merge_dd_override(
+                dd_statements[existing], override_dd
+            )
+            _override_concatenation_members(dd_statements, existing, members)
+        else:
+            dd_statements.append(deepcopy(override_dd))
+            dd_statements.extend(deepcopy(members))
 
 
 def explode_job(
@@ -1097,17 +1213,36 @@ def explode_job(
                 )
 
     # Process steps
+    def _step_scope(step: Step) -> SymbolScope:
+        # A step read before a later SET redefined a symbol resolves it to the
+        # value in effect at that step (Step.set_symbols).
+        if step.set_symbols is None:
+            return base_scope
+        return SymbolScope(
+            set_symbols={**job.set_statements, **step.set_symbols},
+            system_provider=system_provider,
+        )
+
     def _process_steps(steps_list):
         result = []
         for step in steps_list:
             if isinstance(step, ConditionalBlock):
                 result.append(_clone_conditional(step, _process_steps))
-            elif step.is_procedure:
+                continue
+            step_scope = _step_scope(step)
+            if step.is_procedure:
+                # The DDs coded under an ``EXEC procname`` (overrides and
+                # additions) are job-level JCL: resolve the job's SET and
+                # system symbols in them like in any other step's DDs. Any
+                # other symbol is left as written rather than blanked.
+                step = _clone_step_for_explosion(step)
+                for dd in _step_dds_and_overrides(step):
+                    substitute_dd_statement(dd, step_scope, allow_undefined=True)
                 # Expand procedure
                 expanded = _explode_step(
                     step=step,
                     proc_loader=proc_loader,
-                    base_scope=base_scope,
+                    base_scope=step_scope,
                     call_chain=[],
                     call_chain_upper=frozenset(),
                     depth=0,
@@ -1127,14 +1262,14 @@ def explode_job(
                 if substituted_step.program:
                     substituted_step.program = substitute_symbols(
                         substituted_step.program,
-                        base_scope,
+                        step_scope,
                         strict=strict_symbols,
                         warnings=explosion_warnings,
                     )
 
                 substituted_step.parameters = substitute_parameters_dict(
                     substituted_step.parameters,
-                    base_scope,
+                    step_scope,
                     strict=strict_symbols,
                     warnings=explosion_warnings,
                 )
@@ -1142,7 +1277,7 @@ def explode_job(
                 for dd in substituted_step.dd_statements:
                     substitute_dd_statement(
                         dd,
-                        base_scope,
+                        step_scope,
                         strict=strict_symbols,
                         warnings=explosion_warnings,
                     )
@@ -1304,7 +1439,12 @@ def _explode_step(
 
     # Apply qualified DD overrides (PROCSTEP.DDNAME) if present
     if step.dd_overrides:
-        apply_dd_overrides(expanded, step.dd_overrides, step.name or "PROC")
+        apply_dd_overrides(
+            expanded,
+            step.dd_overrides,
+            step.name or "PROC",
+            step.dd_override_concatenations,
+        )
 
     # Merge unqualified DD overrides/additions (coded directly under EXEC PROC=,
     # stored on the step's own dd_statements) onto the procedure's first step.

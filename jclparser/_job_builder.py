@@ -106,6 +106,9 @@ class JobBuilder:
         self.orphaned_dds: list[DDStatement] = []
         #: True while accumulating JOBLIB concatenation lines
         self.in_joblib_concat = False
+        #: Qualified name (``PROCSTEP.DDNAME``) of the override DD the current
+        #: step's unnamed DDs concatenate onto, or None
+        self.concat_override_key: str | None = None
         #: Warnings collected before the JOB statement is seen (no job.warnings
         #: yet to append to); flushed onto job.warnings once the Job object exists.
         self.pending_warnings: list[str] = []
@@ -118,6 +121,10 @@ class JobBuilder:
         #: procedure, where no JOB statement ever arrives.  They used to be
         #: dropped on the floor; they are flushed onto the Job in finish().
         self.pending_sets: dict[str, str] = {}
+        #: Job-level steps, whose ``set_symbols`` snapshot finish() keeps
+        #: only if some SET symbol is redefined after it was first set.
+        self.job_level_steps: list[Step] = []
+        self.set_redefined = False
         self.pending_exported: set[str] = set()
         self.pending_jcllib: list[str] = []
         self.pending_includes: list[str] = []
@@ -285,7 +292,15 @@ class JobBuilder:
             )
 
         self.current_step = _create_step_from_statement(stmt)
+        if self.job is not None and self.current_procedure is None:
+            # SET values in effect at this step (see finish()).
+            self.current_step.set_symbols = {
+                **self.pending_sets,
+                **self.job.set_statements,
+            }
+            self.job_level_steps.append(self.current_step)
         self.in_joblib_concat = False  # JOBLIB concatenation ends at first EXEC
+        self.concat_override_key = None
 
         # Attach any orphaned DDs to this first step
         if self.orphaned_dds:
@@ -331,11 +346,20 @@ class JobBuilder:
                 # Store as override on the current step, keeping the
                 # qualified name for matching during explosion.
                 self.current_step.dd_overrides[stmt.name] = current_dd
+                self.concat_override_key = stmt.name
             else:
                 # Regular DD statement
                 self.current_step.add_dd(current_dd)
+        elif not stmt.name and self.concat_override_key is not None:
+            # An unnamed DD after a PROCSTEP.DDNAME override overrides the
+            # next member of that DD's concatenation; added to the step's own
+            # DDs it was appended after the PROC step's last DD instead.
+            self.current_step.dd_override_concatenations.setdefault(
+                self.concat_override_key, []
+            ).append(current_dd)
         else:
             # Regular DD statement
+            self.concat_override_key = None
             self.current_step.add_dd(current_dd)
 
         # Check for inline data marker (only for non-override DDs)
@@ -394,6 +418,11 @@ class JobBuilder:
         def _record(symbol: str, value: str) -> None:
             resolved = _resolve_set_value(value, symbols)
             if self.job:
+                previous = self.job.set_statements.get(
+                    symbol, self.pending_sets.get(symbol)
+                )
+                if previous is not None and previous != resolved:
+                    self.set_redefined = True
                 self.job.add_set(symbol, resolved)
             else:
                 self.pending_sets[symbol] = resolved
@@ -461,9 +490,9 @@ class JobBuilder:
     def _on_conditional(self, stmt: Statement, line_num: int) -> None:
         # Conditional logic - track conditionals properly
         if stmt.type == "IF":
+            # stmt.name is the IF statement's label (``//CHK1 IF ...``), never
+            # part of its relational expression.
             condition_parts = []
-            if stmt.name and stmt.name != "IF":
-                condition_parts.append(stmt.name)
             for key, value in stmt.parameters.items():
                 if not key.startswith("_"):
                     condition_parts.append(f"{key}={value}")
@@ -633,6 +662,14 @@ class JobBuilder:
         # buffered values only fill in symbols the job does not already define.
         for symbol, value in self.pending_sets.items():
             job.set_statements.setdefault(symbol, value)
+        # A step's SET snapshot only matters when a later SET redefined a
+        # symbol it could see; everywhere else the final table is the same.
+        for step in self.job_level_steps:
+            if not self.set_redefined or all(
+                job.set_statements.get(k) == v
+                for k, v in (step.set_symbols or {}).items()
+            ):
+                step.set_symbols = None
         job.exported_symbols |= self.pending_exported
         job.jcllib_order[:0] = self.pending_jcllib
         for member in self.pending_includes:

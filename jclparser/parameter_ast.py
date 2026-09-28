@@ -7,15 +7,19 @@ Provides structured representation of complex parameters like DCB, SPACE, etc.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Module-level frozensets for DCB/SPACE validation (avoids per-call list construction)
-_VALID_RECFM = frozenset(
-    {"F", "FB", "FBA", "FBM", "FBS", "V", "VB", "VBA", "VBM", "VBS", "U", "D", "DB"}
-)
+# RECFM is a record-format letter followed by optional attribute letters:
+# B (blocked; not with U), S (standard / spanned; not with U), T (track
+# overflow; not with D), and one control-character letter, A (ANSI) or M
+# (machine).  So FA, VBSA, UA and FBSA are as valid as FB -- a fixed set of
+# a dozen spellings reported every other one as invalid.
+_RE_VALID_RECFM = re.compile(r"(?:F|V)B?S?T?[AM]?|UT?[AM]?|DB?S?A?")
 _VALID_DSORG = frozenset({"PS", "PO", "DA", "IS", "VS"})
 
 
@@ -87,7 +91,7 @@ class DCBParameter(NestedParameter):
         errors = []
 
         # Validate RECFM
-        if self.recfm and self.recfm not in _VALID_RECFM:
+        if self.recfm and not _RE_VALID_RECFM.fullmatch(str(self.recfm).upper()):
             errors.append(f"Invalid RECFM value: {self.recfm}")
 
         # Validate LRECL
@@ -96,8 +100,9 @@ class DCBParameter(NestedParameter):
 
         # Validate BLKSIZE
         if self.blksize is not None:
-            if self.blksize < 1 or self.blksize > 32760:
-                errors.append(f"BLKSIZE out of range (1-32760): {self.blksize}")
+            # BLKSIZE=0 asks the system to pick the block size (SDB).
+            if self.blksize < 0 or self.blksize > 32760:
+                errors.append(f"BLKSIZE out of range (0-32760): {self.blksize}")
 
             # BLKSIZE should be multiple of LRECL for fixed-length records
             if (

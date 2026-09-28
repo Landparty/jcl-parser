@@ -1067,3 +1067,57 @@ class TestCLIPaths:
         rc = main([SORT_JCL, "paths"])
         capsys.readouterr()
         assert rc == 0
+
+
+_PROC_JCL = (
+    "//J        JOB (ACCT),'T'\n"
+    "//P        PROC\n"
+    "//PS       EXEC PGM=IEFBR14\n"
+    "//IN       DD DSN=PROC.DATA,DISP=SHR\n"
+    "//         PEND\n"
+    "//CALL     EXEC P\n"
+)
+
+
+@pytest.mark.unit
+class TestCLIQueryAfterExplode:
+    """Exploded step names ("CALL.PS") contain a dot and must stay queryable."""
+
+    @pytest.fixture
+    def proc_jcl(self, tmp_path: Path) -> str:
+        path = tmp_path / "proc.jcl"
+        path.write_text(_PROC_JCL)
+        return str(path)
+
+    def test_exploded_step_query(self, proc_jcl, capsys):
+        rc = main(["--explode", proc_jcl, "CALL.PS"])
+        assert rc == 0
+        assert "Step: CALL.PS" in capsys.readouterr().out
+
+    def test_exploded_step_dd_query(self, proc_jcl, capsys):
+        rc = main(["--explode", "--json", proc_jcl, "CALL.PS.IN"])
+        assert rc == 0
+        assert json.loads(capsys.readouterr().out)["dataset_name"] == "PROC.DATA"
+
+    def test_step_dd_query_unexploded_still_works(self, proc_jcl, capsys):
+        rc = main([proc_jcl, "CALL.IN"])
+        assert rc == 1
+        assert "DD 'IN' not found in step CALL" in capsys.readouterr().err
+
+
+@pytest.mark.unit
+class TestCLIFlagBetweenFileAndQuery:
+    """Flags may sit between FILE and the query tokens."""
+
+    def test_json_flag_before_query(self, capsys):
+        rc = main([SORT_JCL, "--json", "steps"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert [s["name"] for s in data] == ["STEP1", "STEP2"]
+
+    def test_explode_flag_before_query(self, tmp_path, capsys):
+        path = tmp_path / "proc.jcl"
+        path.write_text(_PROC_JCL)
+        rc = main([str(path), "--explode", "CALL.PS"])
+        assert rc == 0
+        assert "Step: CALL.PS" in capsys.readouterr().out

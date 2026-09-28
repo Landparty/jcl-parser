@@ -30,7 +30,7 @@ timestamp: 2026-09-16T00:00:00Z
 
 9. **JES control statements are parsed separately.** `/*JOBPARM`, `/*ROUTE`, etc. are in `jes_statements.py`, **not** in `job.steps`.
 
-10. **SET symbols resolve left-to-right.** A SET can reference an earlier SET but not a later one.
+10. **SET symbols resolve left-to-right.** A SET can reference an earlier SET but not a later one. A SET that redefines a symbol affects only the statements after it: steps read before the redefinition carry a `Step.set_symbols` snapshot that `resolve_set_symbols` / `explode_job` resolve against (fixed 2026-09-28). A reference to a symbol whose *first* SET comes later still resolves against the final table (historical leniency, kept).
 
 11. **Vendoring is always manual.** Changes to `jclparser/` are not auto-propagated. Always run `rm -rf ../backend/_vendor/jcl-parser/jclparser && cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser` after changes — plain `cp -r` nests into `jclparser/jclparser/` and silently leaves stale files in place when the destination already exists (discovered 2026-07-24: it left the backend's vendored copy missing `_job_builder.py`/`_model_factories.py`/`_post_parse.py` for two PRs).
 
@@ -48,7 +48,11 @@ timestamp: 2026-09-16T00:00:00Z
     after it is a comment field, and `_statement_parser.split_comment_field()` removes it *before*
     continuation merging. Parsing the comment as operands made `PGM=X    RUN THE THING` a program
     name, and a comment after a trailing comma hid the comma — silently dropping every continued
-    operand of that statement. `IF`/`THEN`/`ELSE`/`ENDIF` are exempt (blank-delimited by syntax), and
+    operand of that statement. `IF` operands are blank-delimited, so an IF's comment field starts
+    after its `THEN` keyword; everything after `ELSE`/`ENDIF` is comment (an apostrophe in such a
+    comment used to raise "Unclosed quote"; fixed 2026-09-27). An IF with no `THEN` yet continues on
+    the next blank-name-field record, joined with a blank (`ContinuationLineHandler._continues_if`).
+    The IF's label (`//CHK1 IF ...`) is not part of `ConditionalBlock.condition`. And
     a blank after a comma still counts as inside the operands when a quoted string, `(` or
     `KEY=VALUE` follows. A removed comment containing `=` is reported on `job.warnings` rather than
     vanishing. Fixed 2026-09-02.

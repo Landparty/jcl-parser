@@ -119,6 +119,29 @@ class Jes3RouteXeqStatement(JESControlStatement):
 # ---------------------------------------------------------------------------
 
 
+def _operand_field(params: str) -> str:
+    """Return *params* up to its first blank outside quotes and parentheses.
+
+    Like a JCL statement, a JES2 ``/*JOBPARM`` or JES3 ``//*MAIN`` statement's
+    operand field ends at the first blank; what follows is a comment and must
+    not be absorbed into the last parameter value.
+    """
+    depth = 0
+    in_quotes = False
+    for i, ch in enumerate(params):
+        if ch == "'":
+            in_quotes = not in_quotes
+        elif in_quotes:
+            continue
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch.isspace() and depth == 0:
+            return params[:i]
+    return params
+
+
 def _split_keyword_params(params: str) -> dict[str, str]:
     """Split a simple ``K=V,K=V`` parameter string.
 
@@ -183,7 +206,7 @@ def parse_jes_control(command: str, params: str, line_number: int = 0) -> Any:
             name=command,
             raw=raw,
             line_number=line_number,
-            parameters=_split_keyword_params(raw),
+            parameters=_split_keyword_params(_operand_field(raw)),
         )
 
     if cmd_upper == "ROUTE":
@@ -270,6 +293,10 @@ JES3_COMMANDS: frozenset[str] = frozenset(
 )
 
 
+#: JES3 statements whose operand is free text (a message), not keywords.
+_JES3_FREE_TEXT_COMMANDS: frozenset[str] = frozenset({"OPERATOR"})
+
+
 def parse_jes3_control(comment_line: str, line_number: int = 0) -> Any:
     """Recognise a JES3 ``//*COMMAND`` control statement.
 
@@ -299,7 +326,9 @@ def parse_jes3_control(comment_line: str, line_number: int = 0) -> Any:
         name=parts[0],
         raw=body.strip(),
         line_number=line_number,
-        parameters=_split_keyword_params(params),
+        parameters=_split_keyword_params(
+            params if command in _JES3_FREE_TEXT_COMMANDS else _operand_field(params)
+        ),
     )
 
 

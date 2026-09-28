@@ -38,7 +38,7 @@ without importing, via `job.steps` / `job.procedures`).
 | `line_number` | `int` | Default `0` |
 | `explosion_audit` / `explosion_map` | `list[Any]` / `dict[str, Any]` | Populated by `explode_job(audit=True)` |
 | `jes_statements` | `list[str]` | `/*JOBPARM`, `/*ROUTE`… raw text |
-| `jes_typed_statements` | `list[Any]` | Same cards promoted to typed models; unknown JES commands stay raw-only |
+| `jes_typed_statements` | `list[Any]` | Same cards promoted to typed models; unknown JES commands stay raw-only. `parameters` stop at the first blank outside quotes/parens (the rest is a comment, kept in `raw`), except `//*OPERATOR` message text |
 | `output_statements` | `list[OutputStatement]` | OUTPUT statements |
 | `joblib_dds` | `list[DDStatement]` | JOBLIB concatenation |
 | `control_statements` | `list[Statement]` | `COMMAND` / `SCHEDULE` / `CNTL` kept verbatim; a CNTL block's records live in `parameters["_records"]` |
@@ -70,6 +70,8 @@ Useful accessors (not fields): `job.validate()`, `job.explode(...)`,
 | `is_exploded` | `bool` | True after `explode_job()` |
 | `original_proc_call` | `str \| None` | Set after explosion |
 | `dd_overrides` | `dict[str, DDStatement]` | Qualified `PROCSTEP.DDNAME` overrides |
+| `dd_override_concatenations` | `dict[str, list[DDStatement]]` | Unnamed DDs coded after a qualified override (same key): overrides of that DD's later concatenation members |
+| `set_symbols` | `dict[str, str] \| None` | SET table in effect when this job-level step was read; kept only when a later SET redefines a symbol (else `None`). Not part of `==` or `repr` |
 | `is_procedure()` | property → `bool` | **This is how you test for a PROC invocation.** Equivalent to `step.procedure is not None` |
 
 There is **no** `exec_type` and **no** `is_proc_invocation` attribute anywhere in
@@ -126,7 +128,7 @@ The generic pre-model record produced by `parse_statement()`:
 
 `ReturnCodeCondition`, `AbendCondition`, `RunCondition`, `NotCondition`, `AndCondition`, `OrCondition` — all importable from `jclparser`.
 
-`parse_condition()` accepts both keyword and symbolic Boolean operators (`AND`/`&`, `OR`/`|`, `NOT`/`¬`, with `^`/`~` for `¬`) and `ABEND`/`RUN` tests written as `= TRUE` / `= FALSE`. It returns `None` rather than a partial AST whenever it cannot consume the whole expression: `ABENDCC` tests, a non-numeric RC value (`RC GT &MAX`), leftover tokens. A missing final `)` and a stray trailing `)` are tolerated. When evaluating, a condition with no step name follows IBM semantics: `RC` is the **highest** RC of the steps in `step_results`, and `ABEND` is true if **any** of them abended.
+`parse_condition()` accepts both keyword and symbolic Boolean operators (`AND`/`&`, `OR`/`|`, `NOT`/`¬`, with `^`/`~` for `¬`) and `ABEND`/`RUN` tests written as `= TRUE` / `= FALSE`. It returns `None` rather than a partial AST whenever it cannot consume the whole expression: `ABENDCC` tests, a non-numeric RC value (`RC GT &MAX`), leftover tokens. A missing final `)` and a stray trailing `)` are tolerated. A value-first comparison is mirrored into RC-first form: `4 LT RC` is `RC GT 4`, `4 LT S1.RC` is `S1.RC GT 4` (fixed 2026-09-27; the operator used to be kept as written, inverting the test), and `4 GT` with no RC after it is `None`. When evaluating, a condition with no step name follows IBM semantics: `RC` is the **highest** RC of the steps in `step_results`, and `ABEND` is true if **any** of them abended.
 
 # Key Field Notes
 
