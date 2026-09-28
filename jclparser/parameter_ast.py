@@ -20,7 +20,26 @@ logger = logging.getLogger(__name__)
 # (machine).  So FA, VBSA, UA and FBSA are as valid as FB -- a fixed set of
 # a dozen spellings reported every other one as invalid.
 _RE_VALID_RECFM = re.compile(r"(?:F|V)B?S?T?[AM]?|UT?[AM]?|DB?S?A?")
-_VALID_DSORG = frozenset({"PS", "PO", "DA", "IS", "VS"})
+# DSORG values: the U suffix marks a data set with location-dependent
+# (unmovable) data; CX/GS/TX/TQ/TR are BTAM/GAM/TCAM organizations.
+_VALID_DSORG = frozenset(
+    {
+        "PS",
+        "PSU",
+        "PO",
+        "POU",
+        "DA",
+        "DAU",
+        "IS",
+        "ISU",
+        "VS",
+        "CX",
+        "GS",
+        "TX",
+        "TQ",
+        "TR",
+    }
+)
 
 
 @dataclass

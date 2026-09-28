@@ -606,8 +606,8 @@ def validate_jcl(source: str | Path | IO, level: str = "basic") -> list[ParseErr
                     ParseError(
                         error_type=err.error_type,
                         message=err.message,
-                        line_number=0,
-                        severity=ErrorSeverity.ERROR,
+                        line_number=err.line_number or 0,
+                        severity=err.severity,
                     )
                 )
 
@@ -630,7 +630,9 @@ def validate_jcl(source: str | Path | IO, level: str = "basic") -> list[ParseErr
                             error_type=err.error_type,
                             message=err.message,
                             line_number=err.line_number or 0,
-                            severity=ErrorSeverity.ERROR,
+                            # Keep a plugin's WARNING/INFO findings as such.
+                            severity=getattr(err, "severity", None)
+                            or ErrorSeverity.ERROR,
                         )
                     )
 

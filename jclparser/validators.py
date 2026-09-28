@@ -39,6 +39,25 @@ def validate_jcl_identifier(name: str) -> bool:
     return _RE_JCL_ID_VALID.match(name) is not None
 
 
+def validate_step_name(name: str) -> bool:
+    """
+    Validate a step name, allowing the qualified form of an exploded step.
+
+    ``explode_job()`` names each PROC step ``<callingstep>.<procstep>``
+    (e.g. ``S1.PS1``); each dot-separated component must itself be a valid
+    JCL identifier.
+
+    Args:
+        name: Step name to validate
+
+    Returns:
+        True if every component is a valid JCL identifier
+    """
+    if not name:
+        return False
+    return all(validate_jcl_identifier(part) for part in name.split("."))
+
+
 def validate_dataset_name(dsn: str) -> bool:
     """
     Validate dataset name format.
@@ -93,6 +112,11 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
     # Validate step name uniqueness
     step_names: set[str] = set()
     for step in flat_steps:
+        # An exploded step called from an unnamed EXEC carries a placeholder
+        # qualifier (``PROC.PS1``), so two unnamed calls of one PROC share a
+        # name without either being a coding error.
+        if step.is_exploded and not step.original_proc_call:
+            continue
         if step.name:
             if step.name in step_names:
                 errors.append(
@@ -162,7 +186,7 @@ def validate_step_structure(step: Step) -> list[ValidationError]:
     errors = []
 
     # Step name validation (if provided)
-    if step.name and not validate_jcl_identifier(step.name):
+    if step.name and not validate_step_name(step.name):
         errors.append(
             ValidationError(
                 f"Invalid step name '{step.name}': {_JCL_NAME_FORMAT}",
@@ -216,6 +240,18 @@ def validate_step_structure(step: Step) -> list[ValidationError]:
 # DD parameters other than DSN / SYSOUT / DUMMY / in-stream data that name
 # where the DD's data comes from.
 _OTHER_DD_SOURCES = ("DDNAME", "PATH", "SUBSYS")
+
+# DD parameters that, with no DSN, allocate a system-named temporary dataset.
+_TEMP_ALLOCATION_KEYS = (
+    "UNIT",
+    "SPACE",
+    "DATACLAS",
+    "STORCLAS",
+    "MGMTCLAS",
+    "LIKE",
+    "REFDD",
+    "AVGREC",
+)
 
 
 def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
@@ -272,8 +308,10 @@ def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
     has_other_source = (
         any(key in params for key in _OTHER_DD_SOURCES) or positional == "DYNAM"
     )
-    # UNIT= / SPACE= with no DSN allocates a system-named temporary dataset.
-    allocates_temporary = any(key in params for key in ("UNIT", "SPACE"))
+    # UNIT= / SPACE= (or SMS classes / LIKE= / REFDD= / AVGREC= supplying the
+    # allocation attributes) with no DSN allocates a system-named temporary
+    # dataset.
+    allocates_temporary = any(key in params for key in _TEMP_ALLOCATION_KEYS)
 
     conflict_count = sum([has_dsn, has_sysout, has_inline])
     source_count = conflict_count + sum(
@@ -348,7 +386,8 @@ def validate_data_dependencies(job: Job) -> list[ValidationError]:
 
         for dd in step.dd_statements:
             if dd.dataset_name and dd.dataset_name.startswith("&&"):
-                temp_ds = dd.dataset_name
+                # &&GOSET(GO) names a member of &&GOSET: key on the dataset.
+                temp_ds = dd.dataset_name.split("(", 1)[0]
                 tokens = dd._disp_tokens() if dd.disposition else []
                 extends_existing = (
                     bool(tokens)
@@ -374,9 +413,13 @@ def validate_data_dependencies(job: Job) -> list[ValidationError]:
                         temp_datasets_used[temp_ds] = []
                     temp_datasets_used[temp_ds].append(step_name)
 
-                if len(tokens) >= 2 and tokens[1] == "DELETE":
-                    # Deleted at the end of this step: a later step may
-                    # create a temporary dataset of the same name again.
+                normal_disp = tokens[1] if len(tokens) >= 2 else ""
+                if normal_disp == "DELETE" or (
+                    tokens and tokens[0] == "NEW" and not normal_disp
+                ):
+                    # Deleted at the end of this step (an omitted normal
+                    # disposition on a NEW dataset defaults to DELETE): a
+                    # later step may create one of the same name again.
                     temp_datasets_active.pop(temp_ds, None)
 
     # Check that temporary datasets are created before use.
