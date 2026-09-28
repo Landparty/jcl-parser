@@ -748,6 +748,23 @@ class TestCommentFieldStripping:
         assert job.steps[0].dd_statements[0].parameters["DSN"] == "A.B.C"
         assert any("looks like operands" in w for w in job.warnings)
 
+    def test_suspect_comment_is_reported_once(self):
+        # The look-ahead for continuations used to record the next record's
+        # comment before learning it starts a new statement, which then
+        # recorded it again.
+        jcl = "//J JOB (A)\n//S1 EXEC PGM=X  CMT X=1\n"
+        warnings = [w for w in parse_jcl(jcl).warnings if "looks like operands" in w]
+        assert warnings == [
+            "Line 2: text after the operand field ignored as a comment, "
+            "but it looks like operands: 'CMT X=1'"
+        ]
+
+    def test_suspect_comment_on_continuation_record_is_reported_once(self):
+        jcl = "//J JOB (A)\n//S1 EXEC PGM=X,\n//  REGION=0M  CMT X=1\n//S2 EXEC PGM=Y\n"
+        warnings = [w for w in parse_jcl(jcl).warnings if "looks like operands" in w]
+        assert len(warnings) == 1
+        assert warnings[0].startswith("Line 3:")
+
     def test_ordinary_comment_field_produces_no_warning(self):
         jcl = "//J JOB (A)\n//S1 EXEC PGM=X                  RUN IT\n"
         assert parse_jcl(jcl).warnings == []

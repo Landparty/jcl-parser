@@ -192,9 +192,12 @@ class ContinuationLineHandler:
         :attr:`suspect_comments` for the caller to report.
         """
         statement, comment = split_comment_field(line, group_operation)
+        self._record_suspect_comment(line_num, comment)
+        return statement
+
+    def _record_suspect_comment(self, line_num: int, comment: str) -> None:
         if "=" in comment:
             self.suspect_comments.append((line_num, comment))
-        return statement
 
     def merge_continuation_lines(self, lines: list[str]) -> list[tuple[str, int]]:
         """
@@ -274,8 +277,15 @@ class ContinuationLineHandler:
                 # when the statement so far is syntactically closed (the
                 # blank that starts a comment would otherwise be inside the
                 # quoted string or parenthesised list being continued).
+                # The comment is only recorded once the record is known to be
+                # merged: a record that starts the next statement is stripped
+                # (and recorded) again as that statement, which would report
+                # the same comment twice.
+                next_comment = ""
                 if not cached_ctx.in_quotes and cached_ctx.paren_depth == 0:
-                    next_line = self._strip_comment(next_line, group_operation, j + 1)
+                    next_line, next_comment = split_comment_field(
+                        next_line, group_operation
+                    )
 
                 # Check if next line is a continuation, passing cached context
                 # to avoid re-scanning the full (growing) merged_line.
@@ -285,6 +295,7 @@ class ContinuationLineHandler:
                 if continues_if or self.is_continuation_line(
                     next_line, merged_line, ctx=cached_ctx
                 ):
+                    self._record_suspect_comment(j + 1, next_comment)
                     raw_after_slashes = (next_line.removeprefix("//")).lstrip()
                     had_leading_comma = raw_after_slashes.startswith(",")
 
