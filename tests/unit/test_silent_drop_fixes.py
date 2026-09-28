@@ -755,8 +755,10 @@ class TestCommentFieldStripping:
         jcl = "//J JOB (A)\n//S1 EXEC PGM=X  CMT X=1\n"
         warnings = [w for w in parse_jcl(jcl).warnings if "looks like operands" in w]
         assert warnings == [
-            "Line 2: text after the operand field ignored as a comment, "
-            "but it looks like operands: 'CMT X=1'"
+            (
+                "Line 2: text after the operand field ignored as a comment, "
+                "but it looks like operands: 'CMT X=1'"
+            )
         ]
 
     def test_suspect_comment_on_continuation_record_is_reported_once(self):
