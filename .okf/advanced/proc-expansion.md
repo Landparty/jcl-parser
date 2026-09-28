@@ -25,6 +25,8 @@ timestamp: 2026-09-16T00:00:00Z
 
 **Builtins are structural approximations, not verbatim IBM PROCs.** Safe for static analysis; must not be submitted to a real mainframe.
 
+**Which loader `explode_job()` uses** (fixed 2026-09-28): the caller's `proc_loader=` if given; else, when `parse_jcl()` was given `proc_base_path` / found a `JCLLIB`, a `CompositeProcedureLoader` of the job's inline PROCs followed by the loader `parse_jcl()` attached to the job (`job._proc_loader`); else `create_default_loader(job.procedures)`. So an external PROC called from inside another external PROC (or from an IF block) is found in the same libraries as the top-level ones; before, the default chain was always rebuilt and such a nested call raised `ProcedureNotFoundError`. `parse_jcl()`'s pre-loading of external PROCs also walks `IF`/`THEN`/`ELSE` blocks (`iter_execution_steps`), not just top-level steps.
+
 # Usage
 
 ```python
@@ -67,8 +69,12 @@ entry.step_name, entry.proc_name, entry.parameters, entry.depth, entry.expanded_
 - `&NAME` → substituted value from symbol table
 - `&&` → literal `&` (escaped ampersand)
 - `&&TEMP` in a DSN means temporary dataset, not an escaped ampersand
+- A DSN that is one bare single-`&` reference (`DSN=&TEMP`, `DSN=&TEMP(MEM)`) with no symbol of that name is kept as written — the single-ampersand spelling of a temporary dataset name — instead of being blanked with an undefined-symbol warning (`_dsn_keep_undefined`; fixed 2026-09-28). `strict_symbols=True` still raises for it.
 - SET symbols resolve left-to-right; a step read before a SET redefined a symbol expands its PROC with the value in effect at that step (`Step.set_symbols`, fixed 2026-09-28)
-- With `strict_symbols=False`, an undefined `&SYMBOL` elides to `""` **and is recorded on `exploded_job.warnings`** (not just symbols undefined at `parse_jcl()` time — an `&SYMBOL` that only resolves against PROC defaults/EXEC overrides/system symbols, and is therefore only ever substituted inside `explode_job()`, warns too; fixed 2026-07-24, previously silently discarded). When that symbol was a PDS member — `DSN=LIB(&MEM)` → `LIB()` — `substitute_dd_statement` strips the empty `()` and collapses to the bare PDS name `LIB` (an empty member is meaningless). Non-empty members (`LIB(MEMBER)`) and GDG generations (`GDG(+1)`) are untouched.
+- **SETs coded inside a PROC body** are kept on `Procedure.set_statements`, not in `job.set_statements`, and apply only when that PROC is expanded (`expand_proc_invocation` builds the expansion scope's SET table as `{**job SETs, **procedure.set_statements}`). They never leak into job steps, even when the PROC is never called. Precedence inside a PROC expansion: **EXEC overrides > PROC-statement defaults > the PROC's own SETs > job SETs > system symbols**. A cataloged PROC's SETs are kept too (with PROC/PEND the parser records them on the `Procedure`; a member with no PROC/PEND gets its wrapper job's SETs). Parsed on its own, a JOB-less member also exposes its procedures' SETs on the synthetic job's `set_statements`. Fixed 2026-09-28; before, an in-stream PROC's SET changed the job-level value and a cataloged PROC's SET was dropped.
+- **EXEC override values are substituted**: symbols in keyword overrides and symbolic values on the calling `EXEC procname` (`PARM.PS1='&SYSUID'`, `COND.PS2=(&RC,LT)`, `HLQ=&SYSUID`) are resolved against the job scope before expansion (fixed 2026-09-28; they used to reach the expanded steps verbatim). An EXEC keyword collapses `&&` → `&`; a symbolic parameter value keeps `&&`, since it may carry a temporary dataset name (`TMP='&&WORK'`).
+- `// INCLUDE MEMBER=&M` resolves `&M` against the `// SET` values seen so far (`resolve_includes` tracks them across nesting levels); an unset symbol is left as written (fixed 2026-09-28).
+- With `strict_symbols=False`, an undefined `&SYMBOL` elides to `""` **and is recorded on `exploded_job.warnings`** (not just symbols undefined at `parse_jcl()` time — an `&SYMBOL` that only resolves against PROC defaults/EXEC overrides/system symbols, and is therefore only ever substituted inside `explode_job()`, warns too; fixed 2026-07-24, previously silently discarded). This covers every DD parameter, not only DSN/DISP (`UNIT=&NOPE` warns too; fixed 2026-09-28), with a message already recorded for the dataset name not repeated for `DSN=`. When that symbol was a PDS member — `DSN=LIB(&MEM)` → `LIB()` — `substitute_dd_statement` strips the empty `()` and collapses to the bare PDS name `LIB` (an empty member is meaningless). Non-empty members (`LIB(MEMBER)`) and GDG generations (`GDG(+1)`) are untouched.
 - `exploded_job.warnings` also carries forward everything already on `job.warnings` from `parse_jcl()` — `explode_job()` rebuilds a new `Job`, and prior to 2026-07-24 the rebuild silently dropped this field.
 
 # DD Overrides
@@ -96,7 +102,7 @@ Inside a procedure, a step name in an `IF` condition (`IF (PS1.RC = 0)`) or an E
 
 # EXEC Parameter Overrides
 
-EXEC keyword parameters coded on an `EXEC procname` statement (`ACCT`, `ADDRSPC`, `COND`, `DYNAMNBR`, `MEMLIMIT`, `PARM`, `PARMDD`, `PERFORM`, `RD`, `REGION`, `TIME`, …) are applied to the expanded steps by `apply_exec_parameter_overrides`, called from `_explode_step` before the DD overrides (fixed 2026-09-27; previously every one was silently dropped):
+EXEC keyword parameters coded on an `EXEC procname` statement (`ACCT`, `ADDRSPC`, `COND`, `DYNAMNBR`, `MEMLIMIT`, `PARM`, `PARMDD`, `PERFORM`, `RD`, `REGION`, `RLSTMOUT`, `TIME`, …; `RLSTMOUT` added 2026-09-28) are applied to the expanded steps by `apply_exec_parameter_overrides`, called from `_explode_step` before the DD overrides (fixed 2026-09-27; previously every one was silently dropped):
 
 | Form | Effect |
 |------|--------|
@@ -105,7 +111,7 @@ EXEC keyword parameters coded on an `EXEC procname` statement (`ACCT`, `ADDRSPC`
 | any other keyword (no procstep) | overrides the keyword on **every** step (`TIME=` really bounds the whole procedure; per-step is the closest model) |
 | `KEYWORD.procstep=` / `KEYWORD=` (empty) | nullifies the keyword |
 
-`PARM` and `PARMDD` displace each other. Unqualified overrides are applied before qualified ones. Steps inside `IF`/`ELSE` blocks in the procedure are reached too. Symbolic parameters (`EXEC P,MBR=X`) are unaffected: their names can never be EXEC keywords. Regression tests: `tests/unit/test_exec_parameter_overrides.py`.
+`PARM` and `PARMDD` displace each other. Unqualified overrides are applied before qualified ones. Steps inside `IF`/`ELSE` blocks in the procedure are reached too. Symbolic parameters (`EXEC P,MBR=X`) are unaffected: their names can never be EXEC keywords. Symbols in override values are substituted first (see [Symbol Substitution](#symbol-substitution)). Regression tests: `tests/unit/test_exec_parameter_overrides.py`, `tests/unit/test_bughunt_explosion.py`.
 
 # Error Types
 

@@ -37,8 +37,8 @@ errors = job.validate()
 | Member | `validate_jcl(level=...)` string | Description |
 |--------|----------------------------------|-------------|
 | `ValidationLevel.BASIC` | `"basic"` (default) | Parse-time syntax/structure errors only |
-| `ValidationLevel.STRUCTURE` | `"structure"` | Adds `job.validate()` structural rules |
-| `ValidationLevel.SEMANTIC` | `"semantic"` | Adds registered `ValidationPlugin` checks: `validate_job(job)`, then `validate_step(step)` for every step (IF branches included) and `validate_dd(dd)` for each of its DDs. Findings keep the plugin's `line_number` (0 when it gives none); severity is always ERROR |
+| `ValidationLevel.STRUCTURE` | `"structure"` | Adds `job.validate()` structural rules. Each finding keeps its own severity and line number (fixed 2026-09-28; they used to be re-wrapped as ERROR at line 0, so e.g. a "Duplicate DD name" WARNING came back as an ERROR) |
+| `ValidationLevel.SEMANTIC` | `"semantic"` | Adds registered `ValidationPlugin` checks: `validate_job(job)`, then `validate_step(step)` for every step (IF branches included) and `validate_dd(dd)` for each of its DDs. Findings keep the plugin's `line_number` (0 when it gives none) and its `severity` (a plugin's WARNING/INFO stays one; ERROR when it sets none — fixed 2026-09-28, it was always ERROR) |
 
 `validate_jcl()` compares `level` against the **raw strings** above. `ValidationLevel` is a
 plain `Enum`, not a `StrEnum`, so passing `ValidationLevel.STRUCTURE` silently matches
@@ -46,7 +46,11 @@ nothing and degrades to basic validation — pass the string.
 
 ## What It Checks
 
-Identifier naming (max 8 chars), dataset names (max 44 chars), JOB card present, step structure, DD structure, parameter constraints (RECFM, TIME, REGION, MSGLEVEL).
+Identifier naming (max 8 chars), dataset names (max 44 chars), JOB card present, step structure, DD structure, parameter constraints (RECFM, DSORG, TIME, REGION, MSGLEVEL).
+
+Step names are checked with `validators.validate_step_name`, which accepts the qualified names `explode_job()` gives PROC steps (`S1.PS1`, `S1.PS1.IS1`) when every dot-separated part is a valid identifier, so `job.validate()` on an exploded job no longer reports "Invalid step name" for them. Exploded steps from an *unnamed* `EXEC procname` (placeholder qualifier, no `original_proc_call`) are skipped in the duplicate-step-name check; a real duplicate is still reported. Fixed 2026-09-28.
+
+`DSORG` accepts `PS`/`PO`/`DA`/`IS`/`VS`, their unmovable `U` forms (`PSU`/`POU`/`DAU`/`ISU`) and the BTAM/GAM/TCAM organizations `CX`/`GS`/`TX`/`TQ`/`TR` (fixed 2026-09-28).
 
 # Parameter Validation
 
@@ -64,7 +68,9 @@ validate_dataset_name("SYS1.PARMLIB")  # True (a plain bool)
 `validate_dd_statement` accepts every data source z/OS does: `DSN`/`DSNAME`,
 `SYSOUT`, `DUMMY` (stored as the positional `_pos_0`, and legal together with
 `DSN=`), in-stream data, `DDNAME=`, `PATH=`, `SUBSYS=`, `DYNAM`, and a
-`UNIT=`/`SPACE=` work file (a system-named temporary dataset). A DD with none
+work file with no DSN (a system-named temporary dataset) allocated by `UNIT=`/`SPACE=` or by
+`DATACLAS=`/`STORCLAS=`/`MGMTCLAS=`/`LIKE=`/`REFDD=`/`AVGREC=` (the SMS / model forms were
+reported as having no data source until 2026-09-28; a bare `DISP=` alone still is). A DD with none
 of them is an error, as is more than one of `DSN`/`SYSOUT`/in-stream data.
 Dataset names may carry a PDS member (`LIB(MEMBER)`) or GDG generation
 (`GDG(+1)`), and a backward reference (`*.STEP.DD`) is accepted as is; a name
@@ -103,9 +109,11 @@ issues = validate_dataset_lifecycle(
 )  # list[ValidationError] — catches disposed-before-use, etc.
 ```
 
-The catalog check follows a *state* per dataset, not a count: a normal-termination `CATLG` on a `NEW` allocation catalogs it, a normal `DELETE` / `UNCATLG` removes it. Abnormal-termination dispositions (`DISP=(NEW,PASS,CATLG)`, `(OLD,KEEP,UNCATLG)`) never change the state seen by later steps. So the IEFBR14 "delete if it exists" idiom (`DISP=(MOD,DELETE)`, then re-create `NEW,CATLG`, then read `SHR`) is clean, and a second `NEW,CATLG` after that re-create is still a duplicate.
+The catalog check follows a *state* per dataset, not a count: any normal-termination `CATLG` catalogs it (`NEW,CATLG` and also `MOD,CATLG` — the latter since 2026-09-28), a normal `DELETE` / `UNCATLG` removes it. Abnormal-termination dispositions (`DISP=(NEW,PASS,CATLG)`, `(OLD,KEEP,UNCATLG)`) never change the state seen by later steps. So the IEFBR14 "delete if it exists" idiom (`DISP=(MOD,DELETE)`, then re-create with `NEW,CATLG` or `MOD,CATLG`, then read `SHR`) is clean, and a second `NEW,CATLG` after that re-create is still a duplicate. A `MOD` use never warns "opened ... after being uncataloged" (MOD creates a missing dataset); `OLD`/`SHR` after a delete still does.
 
-`validate_data_dependencies` (temporary `&&` datasets, part of `job.validate()`): `DISP=MOD` on a temporary that still exists extends it (the `&&LOADSET` object-deck accumulation of several compiles) rather than creating it twice; an explicit normal `DELETE` ends it, so a later `NEW` of the same name is a fresh creation. `NEW` while the earlier one still exists (passed) is an ERROR, as is `NEW` twice with the default normal disposition (not modelled).
+A backward reference `DSN=*.STEP.DD` is recorded under the dataset of the DD it refers to, so a delete through a referback ends that dataset (`NULLFILE` and unresolvable references record no event). `IF`/`THEN`/`ELSE` branches are walked separately, each from the state before the IF, and merged at `ENDIF`: the same `NEW,CATLG` in the THEN and the ELSE branch is not a duplicate, a duplicate within one branch still is, and after `ENDIF` a dataset counts as cataloged (or uncataloged) when either branch left it so. Both fixed 2026-09-28.
+
+`validate_data_dependencies` (temporary `&&` datasets, part of `job.validate()`): `DISP=MOD` on a temporary that still exists extends it (the `&&LOADSET` object-deck accumulation of several compiles) rather than creating it twice; an explicit normal `DELETE` ends it, and so does an *omitted* normal disposition on a `NEW` allocation (`DISP=NEW`, `DISP=(NEW,,DELETE)` — the default is DELETE; fixed 2026-09-28), so a later `NEW` of the same name is a fresh creation. `NEW` while the earlier one still exists (`DISP=(NEW,PASS)`) is an ERROR. A temporary is keyed without its member: `&&GOSET(GO)` and `&&GOSET` are one dataset.
 
 # Lint Rules (SARIF output)
 
