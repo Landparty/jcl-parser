@@ -50,8 +50,26 @@ _RE_OPERATOR_LINE = re.compile(
     r"^\s*(" + "|".join(_OPERATORS) + r")\b(.*)$",
     re.IGNORECASE | re.MULTILINE,
 )
-_RE_FROM = re.compile(r"\bFROM\s*\(\s*([A-Za-z0-9$#@]+)\s*\)", re.IGNORECASE)
-_RE_TO = re.compile(r"\bTO\s*\(\s*([A-Za-z0-9$#@]+)\s*\)", re.IGNORECASE)
+# ``FROM(dd)`` / ``TO(dd)`` / ``TO(dd1,dd2,...)``: the group is the DD list.
+_RE_FROM = re.compile(r"\bFROM\s*\(([A-Za-z0-9$#@,\s]+)\)", re.IGNORECASE)
+_RE_TO = re.compile(r"\bTO\s*\(([A-Za-z0-9$#@,\s]+)\)", re.IGNORECASE)
+# A ``*`` in column 1 makes a comment statement.
+_RE_COMMENT_LINE = re.compile(r"^\s*\*.*$", re.MULTILINE)
+# A trailing ``-`` continues the statement on the next line.
+_RE_CONTINUATION = re.compile(r"-[ \t]*\r?\n")
+
+
+def _normalize_toolin(text: str) -> str:
+    """Drop comment statements and join continued lines, so each is whole."""
+    text = _RE_COMMENT_LINE.sub("", text)
+    return _RE_CONTINUATION.sub(" ", text)
+
+
+def _dd_names(lists: list[str]) -> list[str]:
+    """Flatten the matched ``(dd1,dd2,...)`` lists into DD names."""
+    return [
+        name.strip() for group in lists for name in group.split(",") if name.strip()
+    ]
 
 
 def _toolin_text(step: Step) -> str:
@@ -69,11 +87,11 @@ class ICETOOLProfile(ProgramProfile):
         text = _toolin_text(step)
         notes: list[str] = []
 
-        for m in _RE_OPERATOR_LINE.finditer(text):
+        for m in _RE_OPERATOR_LINE.finditer(_normalize_toolin(text)):
             operator = m.group(1).upper()
             tail = m.group(2)
-            froms = _RE_FROM.findall(tail)
-            tos = _RE_TO.findall(tail)
+            froms = _dd_names(_RE_FROM.findall(tail))
+            tos = _dd_names(_RE_TO.findall(tail))
             parts = []
             if froms:
                 parts.append(f"FROM({','.join(froms)})")

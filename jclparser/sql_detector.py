@@ -30,6 +30,21 @@ DB2_PROGRAMS: frozenset[str] = frozenset(
     }
 )
 
+# Catalogued PROCs that run DB2 work (``EXEC DSNUPROC`` names a PROC, not a
+# program).  On an exploded job their steps run the DB2 programs themselves.
+DB2_PROCEDURES: frozenset[str] = frozenset(
+    {
+        "DSNUPROC",  # DB2 online utility PROC (runs DSNUTILB)
+        "DSNHASM",  # DB2 precompile + assemble
+        "DSNHC",  # DB2 precompile + C compile
+        "DSNHCOB",  # DB2 precompile + COBOL compile
+        "DSNHCOB2",
+        "DSNHCPP",  # DB2 precompile + C++ compile
+        "DSNHICOB",  # DB2 precompile + Enterprise COBOL compile
+        "DSNHPLI",  # DB2 precompile + PL/I compile
+    }
+)
+
 # Programs whose in-stream data is their own control language, not SQL.  Their
 # statements reuse SQL verbs -- IDCAMS ``DELETE`` / ``ALTER``, FTP ``DELETE``
 # / ``RENAME`` -- so scanning that data for SQL only yields false positives.
@@ -112,7 +127,8 @@ class SQLDetectionResult:
     Attributes:
         step_name: Name of the step.
         program: Program executed by the step (if any).
-        is_db2_program: True when the program is a known DB2 utility.
+        is_db2_program: True when the program is a known DB2 utility, or
+            the step executes a known DB2 PROC (:data:`DB2_PROCEDURES`).
         sql_statements: SQL statement keywords found in inline data,
             each as ``(keyword, category, dd_name)`` tuples.
         has_sql: True if any SQL was detected (program or inline).
@@ -174,7 +190,8 @@ def detect_sql_in_dd(dd: DDStatement) -> list[tuple[str, str]]:
 def detect_sql_in_step(step: Step) -> SQLDetectionResult:
     """Analyse a step for SQL content.
 
-    Checks both the program name and inline data of every DD statement.
+    Checks the program name (or, for ``EXEC procname``, the PROC name) and
+    the inline data of every DD statement.
     In-stream data of a program in :data:`NON_SQL_CONTROL_PROGRAMS` is not
     scanned, and in a ``SYSTSIN`` DD (TSO commands) only DB2 subcommands such
     as ``BIND`` count.
@@ -182,7 +199,8 @@ def detect_sql_in_step(step: Step) -> SQLDetectionResult:
     result = SQLDetectionResult(
         step_name=step.name,
         program=step.program,
-        is_db2_program=is_db2_program(step.program),
+        is_db2_program=is_db2_program(step.program)
+        or bool(step.procedure and step.procedure.upper() in DB2_PROCEDURES),
     )
     if step.program and step.program.upper() in NON_SQL_CONTROL_PROGRAMS:
         return result

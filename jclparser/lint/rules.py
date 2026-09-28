@@ -31,6 +31,10 @@ class HardcodedHLQRule(LintRule):
                 dsn = dd.dataset_name
                 if not dsn or dsn.startswith("&&"):
                     continue
+                # A backward reference (*.STEP.DD) names no HLQ of its own,
+                # and NULLFILE is a dummy data set.
+                if dsn.startswith("*.") or dsn.upper() == "NULLFILE":
+                    continue
                 # A name built from symbols (&HLQ..DATA) is what this rule
                 # asks for, even after SET / PROC substitution resolved it.
                 if "&" in dsn or "&" in (dd.coded_dataset_name or ""):

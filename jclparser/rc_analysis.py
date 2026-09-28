@@ -3,11 +3,15 @@ Return-code feasibility analysis.
 
 Walks a :class:`~jclparser.model.Job` in execution order and, for each
 ``IF …`` conditional, determines whether the condition can be satisfied under
-*any* combination of predecessor return codes drawn from a small symbolic
-domain (defaults ``{0, 4, 8, 12, 16}``).  The predecessors of an ``IF`` are
-the steps that precede it in execution order; a step that may not run (it sits
-inside an ``IF`` branch or carries ``COND=``) is also explored as "not run", so
-``STEP.RUN`` / ``NOT STEP.RUN`` are judged correctly.  Step-level ``COND=``
+*any* combination of predecessor return codes.  Each step's return codes are
+drawn from one representative per class of the constants the condition
+compares it against (preferring values of the ``{0, 4, 8, 12, 16}`` default
+domain), so the search is exact over 0..4095 -- a range such as
+``RC GT 4 AND RC LT 8`` is explored.  The predecessors of an
+``IF`` are the steps that precede it in execution order; a step that may not
+run (it sits inside an ``IF`` branch or carries ``COND=``) is also explored as
+"not run" (:data:`~jclparser.condition_parser.NOT_RUN`), so ``STEP.RUN`` /
+``NOT STEP.RUN`` and tests of a skipped step's RC are judged correctly.  Step-level ``COND=``
 guards themselves are not analysed.
 
 The analysis is conservative: it reports a step as *unreachable* only when
@@ -29,7 +33,13 @@ import itertools
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .condition_parser import ConditionNode
+from .condition_parser import (
+    NOT_RUN,
+    AbendCondition,
+    ConditionNode,
+    ReturnCodeCondition,
+    StepResult,
+)
 from .model import ConditionalBlock, Step, iter_execution_steps
 
 if TYPE_CHECKING:
@@ -37,6 +47,9 @@ if TYPE_CHECKING:
 
 
 DEFAULT_RC_DOMAIN = (0, 4, 8, 12, 16)
+
+#: Highest return code a z/OS step can end with.
+_MAX_RC = 4095
 
 #: Stands for every predecessor a condition does not name (not a valid step
 #: name, so it cannot collide with one).
@@ -65,7 +78,7 @@ def _collect_optional_steps(job: Job) -> frozenset[str]:
     """Names of steps that may not run: inside an IF branch, or with ``COND=``."""
     names: set[str] = set()
 
-    def _walk(items: list, nested: bool) -> None:
+    def _walk(items: list[Step | ConditionalBlock], nested: bool) -> None:
         for item in items:
             if isinstance(item, ConditionalBlock):
                 _walk(item.then_steps, True)
@@ -102,6 +115,61 @@ def _collect_referenced_steps(ast: ConditionNode) -> set[str]:
     return referenced
 
 
+def _collect_tested_attributes(
+    ast: ConditionNode,
+) -> tuple[dict[str | None, set[int]], set[str | None]]:
+    """Return what *ast* tests about each step (``None`` = unqualified atom).
+
+    The first map gives, per step, the constants its ``RC`` is compared
+    against; the set names the steps whose ``ABEND`` flag is tested.
+    """
+    constants: dict[str | None, set[int]] = {}
+    abends: set[str | None] = set()
+
+    def _walk(node: ConditionNode) -> None:
+        key = getattr(node, "step_name", None)
+        key = key.upper() if isinstance(key, str) and key else None
+        if isinstance(node, ReturnCodeCondition):
+            constants.setdefault(key, set()).add(node.value)
+        elif isinstance(node, AbendCondition):
+            abends.add(key)
+        for attr in ("operand", "left", "right"):
+            child = getattr(node, attr, None)
+            if isinstance(child, ConditionNode):
+                _walk(child)
+
+    _walk(ast)
+    return constants, abends
+
+
+def _representative_rcs(
+    rc_domain: tuple[int, ...], values: set[int]
+) -> tuple[int, ...]:
+    """One RC per class of return codes that compare alike against *values*.
+
+    The constants split 0..4095 into the constants themselves and the gaps
+    between them; every RC in one class gives every comparison against the
+    constants the same outcome, so one representative per class is exact
+    (a range test such as ``RC GT 4 AND RC LT 8`` is satisfiable here
+    whenever it is satisfiable at all) and costs at most ``2k + 1`` values
+    for ``k`` constants.  A gap is represented by its smallest *rc_domain*
+    value when it has one, else by its lower bound.
+    """
+    classes: list[tuple[int, int]] = []
+    low = 0
+    for c in sorted(v for v in values if 0 <= v <= _MAX_RC):
+        if low < c:
+            classes.append((low, c - 1))
+        classes.append((c, c))
+        low = c + 1
+    if low <= _MAX_RC:
+        classes.append((low, _MAX_RC))
+    preferred = sorted(rc_domain)
+    return tuple(
+        next((rc for rc in preferred if lo <= rc <= hi), lo) for lo, hi in classes
+    )
+
+
 def _evaluate_over_domain(
     ast: ConditionNode,
     predecessors: list[str],
@@ -109,7 +177,7 @@ def _evaluate_over_domain(
     abend_values: tuple[bool, ...] = (False,),
     optional_steps: frozenset[str] = frozenset(),
 ) -> tuple[bool, bool, bool]:
-    """Evaluate *ast* over the Cartesian product of ``rc_domain`` per predecessor.
+    """Evaluate *ast* over the product of every predecessor's possible outcomes.
 
     Returns ``(ever_true, ever_false, ever_unknown)`` — a triple of booleans
     indicating whether the condition evaluated to True, False, or ``None``
@@ -129,7 +197,7 @@ def _evaluate_over_domain(
     referenced = _collect_referenced_steps(ast)
 
     if not predecessors and not referenced:
-        step_results: dict[str, tuple[int, bool]] = {}
+        step_results: dict[str, StepResult] = {}
         result = ast.evaluate(step_results)
         return (result is True, result is False, result is None)
 
@@ -146,23 +214,39 @@ def _evaluate_over_domain(
         names.append(_ANONYMOUS_PREDECESSOR)
         if all(name in optional_steps for name in anonymous):
             optional_steps = optional_steps | {_ANONYMOUS_PREDECESSOR}
-    # Bound the search to keep the cost predictable: with the default domain
-    # (5 RCs × 2 abend values) 8 steps are 10**8 evaluations.
+    # Bound the search to keep the cost predictable: a step tested on one RC
+    # constant and its ABEND flag has 3 RCs × 2 abend values, so 8 such
+    # steps are 6**8 (~1.7 million) evaluations.
     capped = names[-8:]
 
-    ran_states: list[tuple[int, bool] | None] = [
-        (rc, ab) for rc in rc_domain for ab in abend_values
-    ]
-    # A step that may not have run (inside an IF branch, or with COND=) is
-    # also explored as absent from the results, which is what makes
-    # ``STEP.RUN`` false for it.
-    per_step = [
-        ran_states + [None] if name in optional_steps else ran_states for name in capped
-    ]
+    # Each step's RC only meets the constants it is compared against (and,
+    # through the unqualified ``RC`` = highest RC, the unqualified ones), so
+    # its domain is one representative per class of those constants rather
+    # than a fixed list.  A dimension the condition never tests for a step
+    # (its RC, its ABEND flag) is pinned to a single value -- together these
+    # keep the product small when a condition tests several steps.
+    constants, abends = _collect_tested_attributes(ast)
+    unqualified = constants.get(None)
+
+    def _states(name: str) -> list[StepResult]:
+        if name in constants or unqualified is not None:
+            domain = _representative_rcs(
+                rc_domain, constants.get(name, set()) | (unqualified or set())
+            )
+        else:
+            domain = rc_domain[:1]
+        flags = abend_values if name in abends or None in abends else (False,)
+        states: list[StepResult] = [(rc, ab) for rc in domain for ab in flags]
+        # A step that may not have run (inside an IF branch, or with COND=)
+        # is also explored as not run, which makes ``STEP.RUN`` and any
+        # ``STEP.RC`` / ``STEP.ABEND`` test of it false.
+        if name in optional_steps:
+            states.append(NOT_RUN)
+        return states
+
+    per_step = [_states(name) for name in capped]
     for states in itertools.product(*per_step):
-        results = {
-            name: state for name, state in zip(capped, states) if state is not None
-        }
+        results = dict(zip(capped, states))
         r = ast.evaluate(results)
         if r is True:
             ever_true = True
@@ -184,8 +268,12 @@ def compute_feasible_paths(
 
     Args:
         job: Job to analyse.  Not modified.
-        rc_domain: RC values to explore per predecessor.  Default covers the
-            canonical JCL "success / warning / error / severe / fatal" set.
+        rc_domain: Preferred RC values.  Each predecessor is explored with one
+            RC per class of the constants the condition compares it against,
+            taken from this domain when the class contains one of its values
+            (else the class's lowest RC); a predecessor whose RC is never
+            tested uses its first value.  Default covers the canonical JCL
+            "success / warning / error / severe / fatal" set.
         include_abends: When True, also explore the ``abended`` flag per
             predecessor to exercise ``ABEND`` / ``NOT ABEND`` atoms.
 
@@ -198,13 +286,14 @@ def compute_feasible_paths(
     # differently-sized tuple literals of a single conditional expression
     # into one C-level type and rejects it (this module is cythonized for
     # the closed-source PyPI release build -- see setup.py).
+    abend_values: tuple[bool, ...]
     if include_abends:
         abend_values = (False, True)
     else:
         abend_values = (False,)
 
     def _walk(
-        steps: list,
+        steps: list[Step | ConditionalBlock],
         enclosing_condition_signatures: list[str],
         preds_before: list[str],
     ) -> list[str]:
