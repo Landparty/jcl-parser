@@ -208,8 +208,19 @@ def resolve_includes(
     if _budget is None:
         _budget = [max_lines]
 
+    # Records of in-stream data (``DD *`` / ``DD DATA,DLM=``) and CNTL blocks
+    # are not JCL: a ``// INCLUDE`` among them is data and must stay as-is.
+    # They are located with the same scan the parser itself uses.
+    from .parser import _merge_source_lines
+
+    _, inline_data, control_data, _ = _merge_source_lines(content)
+    data_indices = inline_data | control_data
+
     result: list[str] = []
-    for line in content.splitlines(keepends=True):
+    for index, line in enumerate(content.splitlines(keepends=True)):
+        if index in data_indices:
+            result.append(line)
+            continue
         # Preserve leading whitespace: only strip the line terminator so that
         # in-stream data lines (which may contain '//' after leading spaces)
         # are never mistaken for JCL statements.

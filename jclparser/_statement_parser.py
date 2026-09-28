@@ -694,6 +694,10 @@ def _extract_jcllib_order(content: str) -> list[str]:
             rest = rest[1:end] if end != -1 else rest[1:]
         for lib in rest.split(","):
             lib = lib.strip()
+            # A library name may be coded in quotes (``ORDER=('MY.PROCLIB')``);
+            # the main parse drops them, so the pre-scan must too.
+            if len(lib) >= 2 and lib[0] == lib[-1] == "'":
+                lib = lib[1:-1].strip()
             if lib:
                 libraries.append(lib)
     return libraries

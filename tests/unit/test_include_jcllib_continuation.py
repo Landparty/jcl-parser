@@ -30,6 +30,8 @@ class TestIncludeJcllibContinuation:
             ("//L JCLLIB ORDER=(A.LIB,B.LIB)   COMMENT (X)\n", ["A.LIB", "B.LIB"]),
             ("// JCLLIB ORDER=A.LIB\n", ["A.LIB"]),
             ("//L JCLLIB ORDER=(A.LIB,\n//S EXEC PGM=X\n", ["A.LIB"]),
+            ("//L JCLLIB ORDER=('A.LIB',B.LIB)\n", ["A.LIB", "B.LIB"]),
+            ("//L JCLLIB ORDER='A.LIB'\n", ["A.LIB"]),
         ],
     )
     def test_prescan_follows_continuations(self, jcl, expected):

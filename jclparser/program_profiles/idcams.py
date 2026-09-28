@@ -30,8 +30,25 @@ _RE_DELETE = re.compile(
     r"^\s*DEL(?:ETE)?\b\s*(\((?:[^()]|\([^()]*\))*\)|" + _ENTRY_NAME + ")",
     re.IGNORECASE | re.MULTILINE,
 )
+# ``DEFINE`` and its object keywords have IDCAMS abbreviations (``DEF CL``,
+# ``DEF NVSAM``, ...); each is reported under its full keyword.
+_DEFINE_KINDS = {
+    "CLUSTER": "CLUSTER",
+    "CL": "CLUSTER",
+    "GENERATIONDATAGROUP": "GDG",
+    "GDG": "GDG",
+    "ALTERNATEINDEX": "AIX",
+    "AIX": "AIX",
+    "PATH": "PATH",
+    "NONVSAM": "NONVSAM",
+    "NVSAM": "NONVSAM",
+    "USERCATALOG": "USERCATALOG",
+    "UCAT": "USERCATALOG",
+}
 _RE_DEFINE = re.compile(
-    r"^\s*DEFINE\s+(CLUSTER|GDG|AIX|PATH|NONVSAM|USERCATALOG)\b",
+    r"^\s*DEF(?:INE)?\s+("
+    + "|".join(sorted(_DEFINE_KINDS, key=len, reverse=True))
+    + r")\b",
     re.IGNORECASE | re.MULTILINE,
 )
 _RE_NAME_PARAM = re.compile(r"NAME\s*\(\s*([A-Z0-9.@#$\-']+)\s*\)", re.IGNORECASE)
@@ -80,7 +97,7 @@ class IDCAMSProfile(ProgramProfile):
 
         # DEFINE CLUSTER / GDG / ... — pair with the nearest NAME(...) parameter
         for m in _RE_DEFINE.finditer(text):
-            define_kind = m.group(1).upper()
+            define_kind = _DEFINE_KINDS[m.group(1).upper()]
             # Search for NAME(...) starting at the DEFINE position.
             tail = text[m.end() :]
             name_m = _RE_NAME_PARAM.search(tail)

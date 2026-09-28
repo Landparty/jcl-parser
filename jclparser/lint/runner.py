@@ -74,12 +74,23 @@ def lint_job(job: Job, config: LintConfig | None = None) -> list[ValidationError
     return findings
 
 
-def to_sarif(errors: list[ValidationError], tool_name: str = "jclparser") -> dict:
+def to_sarif(
+    errors: list[ValidationError],
+    tool_name: str = "jclparser",
+    artifact_uri: str | None = None,
+) -> dict:
     """Render a minimal SARIF 2.1.0 report for *errors*.
 
     Produces a single-run document with every distinct ``error_code`` as a
     rule.  Findings without a code are mapped to rule ``JCL-GEN-000``.
+
+    SARIF 2.1.0 requires every ``physicalLocation`` to carry an
+    ``artifactLocation`` (or an ``address``), so one is always emitted;
+    pass *artifact_uri* (the linted file's path or URI) to fill in its
+    ``uri``, which consumers such as GitHub code scanning need to place a
+    result in a file.
     """
+    artifact_location: dict = {} if artifact_uri is None else {"uri": artifact_uri}
     severity_map = {
         "error": "error",
         "warning": "warning",
@@ -105,6 +116,7 @@ def to_sarif(errors: list[ValidationError], tool_name: str = "jclparser") -> dic
                     [
                         {
                             "physicalLocation": {
+                                "artifactLocation": dict(artifact_location),
                                 "region": {"startLine": err.line_number},
                             }
                         }

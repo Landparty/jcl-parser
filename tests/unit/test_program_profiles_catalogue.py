@@ -662,3 +662,23 @@ class TestIDCAMSContinuedCommands:
         # raw_control is still the SYSIN text as coded.
         assert result.raw_control is not None
         assert "DELETE -\n" in result.raw_control
+
+    def test_abbreviated_define_commands(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IDCAMS\n"
+            "//SYSIN    DD *\n"
+            "  DEF CL (NAME(MY.KSDS) INDEXED KEYS(8 0))\n"
+            "  DEF NVSAM (NAME(MY.NV) DEVT(3390) VOL(X))\n"
+            "  DEFINE GENERATIONDATAGROUP (NAME(MY.GDG) LIMIT(5))\n"
+            "  DEF UCAT (NAME(MY.CAT))\n"
+            "/*\n"
+        )
+        result = analyze_job(jp.parse_jcl(src))[0]
+        assert result.notes == [
+            "IDCAMS DEFINE CLUSTER MY.KSDS",
+            "IDCAMS DEFINE NONVSAM MY.NV",
+            "IDCAMS DEFINE GDG MY.GDG",
+            "IDCAMS DEFINE USERCATALOG MY.CAT",
+        ]
+        assert [e.action for e in result.dataset_events] == ["ALLOCATE"] * 4

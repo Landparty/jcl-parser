@@ -109,8 +109,10 @@ issues = validate_dataset_lifecycle(
 from jclparser import lint_job, lint_to_sarif, LintConfig
 
 findings = lint_job(job, config=LintConfig())
-sarif = lint_to_sarif(findings)
+sarif = lint_to_sarif(findings, artifact_uri="jobs/MYJOB.jcl")
 ```
+
+Every result location carries `physicalLocation.artifactLocation` (SARIF 2.1.0 requires it); `artifact_uri` fills its `uri` — omit it and the `artifactLocation` is empty, which is schema-valid but gives consumers such as GitHub code scanning no file to place the result in.
 
 Built-in rule IDs follow `JCL-LINT-NNN`. Custom rules extend `LintRule` ABC.
 
