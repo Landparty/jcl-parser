@@ -79,6 +79,35 @@ def _walk(steps: list, depth: int = 0) -> tuple[int, int, int]:
     return max_depth, cond_count, branch_count
 
 
+def _counted_dataset_name(
+    dsn: str, step_name: str, by_dd: dict[str, str]
+) -> str | None:
+    """Return the dataset *dsn* names, uppercased, or None when it names none.
+
+    ``DSN=NULLFILE`` is a dummy data set.  A backward reference
+    (``DSN=*.STEP.DD`` / ``*.STEP.PROCSTEP.DD`` / ``*.DD``) is not a dataset
+    name of its own: it counts as the dataset of the DD it points at, found in
+    *by_dd* (``"STEP.DD"`` keys of the DDs seen so far), and not at all when
+    that DD is unknown or names no dataset.
+    """
+    upper = dsn.upper()
+    if upper == "NULLFILE":
+        return None
+    if not upper.startswith("*."):
+        return upper
+    ref = upper[2:]
+    step_upper = step_name.upper()
+    if "." not in ref:
+        return by_dd.get(f"{step_upper}.{ref}")
+    if ref in by_dd:
+        return by_dd[ref]
+    # In an exploded job a PROC's own *.PROCSTEP.DD references are left as
+    # coded while its steps are named CALLER.PROCSTEP.
+    if "." in step_upper:
+        return by_dd.get(f"{step_upper.rsplit('.', 1)[0]}.{ref}")
+    return None
+
+
 def compute_metrics(job: Job) -> JobMetrics:
     """Compute structural metrics for *job*.
 
@@ -93,17 +122,25 @@ def compute_metrics(job: Job) -> JobMetrics:
     inputs: set[str] = set()
     outputs: set[str] = set()
     all_ds: set[str] = set()
+    by_dd: dict[str, str] = {}  # "STEP.DD" -> dataset, for backward references
     for step in flat_steps:
         if isinstance(step, Step):
             exec_steps += 1
+            step_name = step.name or ""
             for dd in step.dd_statements:
                 dd_count += 1
-                if dd.dataset_name:
-                    all_ds.add(dd.dataset_name.upper())
-                    if dd.is_input():
-                        inputs.add(dd.dataset_name.upper())
-                    if dd.is_output():
-                        outputs.add(dd.dataset_name.upper())
+                if not dd.dataset_name:
+                    continue
+                dsn = _counted_dataset_name(dd.dataset_name, step_name, by_dd)
+                if dsn is None:
+                    continue
+                if dd.name:
+                    by_dd[f"{step_name}.{dd.name}".upper()] = dsn
+                all_ds.add(dsn)
+                if dd.is_input():
+                    inputs.add(dsn)
+                if dd.is_output():
+                    outputs.add(dsn)
 
     max_depth, cond_count, branch_count = _walk(job.steps)
 

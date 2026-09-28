@@ -49,7 +49,7 @@ Stable but may evolve. Key groups:
 | INCLUDE Expansion | `resolve_includes`, `IncludeMemberLoader`, `DictMemberLoader`, `JCLLIBMemberLoader` |
 | Dataset Lifecycle | `DatasetEvent`, `analyze_dataset_lifecycle`, `validate_dataset_lifecycle` (only a *normal* `UNCATLG`/`DELETE` counts as uncataloging; an abnormal one such as `DISP=(OLD,KEEP,UNCATLG)` does not) |
 | JES Control | `JESControlStatement`, `JobParmStatement`, `RouteStatement`, `XmitStatement`, `parse_jes_control` |
-| Metrics / RC | `JobMetrics`, `compute_metrics`, `FeasibilityReport`, `compute_feasible_paths`, `DEFAULT_RC_DOMAIN` (IF conditions only — step `COND=` is not analysed; an IF's predecessors are the steps before it in execution order, and a step inside an IF branch or with `COND=` is also explored as not run) |
+| Metrics / RC | `JobMetrics`, `compute_metrics` (dataset counts resolve a `DSN=*.STEP.DD` backward reference to the referenced DD's dataset and skip `NULLFILE`), `FeasibilityReport`, `compute_feasible_paths`, `DEFAULT_RC_DOMAIN` (IF conditions only — step `COND=` is not analysed; an IF's predecessors are the steps before it in execution order, and a step inside an IF branch or with `COND=` is also explored as not run) |
 | Lint | `LintRule`, `LintConfig`, `lint_job`, `lint_to_sarif`, `register_lint_rule` |
 | Program Profiles | `ProgramProfile`, `ProgramAnalysis`, `register_profile`, `analyze_step`, `analyze_job` |
 

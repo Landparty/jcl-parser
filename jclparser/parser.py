@@ -75,6 +75,7 @@ from .model import (  # noqa: F401
     Procedure,
     Statement,
     Step,
+    iter_execution_steps,
 )
 from .plugins import ParserConfig, get_plugin_registry
 from .profiling import ProfilerContext, ProfilingResult
@@ -613,14 +614,22 @@ def validate_jcl(source: str | Path | IO, level: str = "basic") -> list[ParseErr
         # Plugin-based validation
         if level == "semantic":
             registry = get_plugin_registry()
+            flat_steps = list(iter_execution_steps(job.steps))
             for validator in registry.get_validators():
-                validation_errors = validator.validate_job(job)
+                # A ValidationPlugin has three hooks; run each of them, so a
+                # rule written against validate_step / validate_dd is not
+                # silently skipped.
+                validation_errors = list(validator.validate_job(job))
+                for step in flat_steps:
+                    validation_errors.extend(validator.validate_step(step))
+                    for dd in step.dd_statements:
+                        validation_errors.extend(validator.validate_dd(dd))
                 for err in validation_errors:
                     errors.append(
                         ParseError(
                             error_type=err.error_type,
                             message=err.message,
-                            line_number=0,
+                            line_number=err.line_number or 0,
                             severity=ErrorSeverity.ERROR,
                         )
                     )

@@ -204,15 +204,25 @@ def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:
         if dsn.startswith("&&"):
             continue
 
-        # Index where each event occurs (position = step order)
-        _catalog_steps: list[int] = []  # positions where dataset was CATLGed
-        _uncatalog_steps: list[int] = []  # positions where it was UNCATLGed
+        # Catalog state as the steps run: the event that cataloged the
+        # dataset (None while it is not known to be cataloged by this job)
+        # and the event that last deleted / uncataloged it.  A state, not a
+        # count: a delete of a pre-existing dataset (the IEFBR14
+        # DISP=(MOD,DELETE) idiom) followed by a re-create must leave the
+        # dataset cataloged, not at "zero catalogs".
+        cataloged_by: DatasetEvent | None = None
+        uncataloged_by: DatasetEvent | None = None
         _first_alloc_pos: int | None = None
 
         for pos, evt in enumerate(events):
             is_catlg = (
                 evt.disp_normal in _CATLG_VALUES or evt.disp_abnormal in _CATLG_VALUES
             )
+            # Only a normal-termination CATLG leaves the dataset cataloged for
+            # the steps that follow: an abnormal one (DISP=(NEW,PASS,CATLG),
+            # DISP=(NEW,KEEP,CATLG)) takes effect only if the step abends,
+            # and the later steps are then normally bypassed with it.
+            catalogs_for_later_steps = evt.disp_normal in _CATLG_VALUES
 
             if evt.action == "ALLOCATE":
                 if _first_alloc_pos is None:
@@ -220,9 +230,8 @@ def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:
                 if is_catlg:
                     # Check for duplicate cataloging: already cataloged and not
                     # subsequently deleted/uncataloged
-                    active_catalogs = len(_catalog_steps) - len(_uncatalog_steps)
-                    if active_catalogs > 0:
-                        first_catlg_evt = events[_catalog_steps[0]]
+                    if cataloged_by is not None:
+                        first_catlg_evt = cataloged_by
                         errors.append(
                             ValidationError(
                                 f"Dataset '{dsn}' allocated with DISP=NEW,CATLG in step "
@@ -234,13 +243,14 @@ def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:
                                 line_number=evt.line_number,
                             )
                         )
-                    _catalog_steps.append(pos)
+                    if catalogs_for_later_steps and cataloged_by is None:
+                        cataloged_by = evt
+                        uncataloged_by = None
 
             elif evt.action in ("OPEN_EXCLUSIVE", "OPEN_SHARED", "EXTEND"):
                 # Check for use after uncatalog
-                active_catalogs = len(_catalog_steps) - len(_uncatalog_steps)
-                if _uncatalog_steps and active_catalogs <= 0:
-                    last_uncatlg_evt = events[_uncatalog_steps[-1]]
+                if uncataloged_by is not None and cataloged_by is None:
+                    last_uncatlg_evt = uncataloged_by
                     errors.append(
                         ValidationError(
                             f"Dataset '{dsn}' opened in step '{evt.step_name}' "
@@ -282,10 +292,9 @@ def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:
             # counts: an abnormal one (DISP=(OLD,KEEP,UNCATLG)) takes effect
             # only if the step abends, and the later steps that would then
             # see the dataset uncataloged are normally bypassed with it.
-            if evt.disp_normal in _UNCATLG_VALUES:
-                _uncatalog_steps.append(pos)
-            elif evt.disp_normal in _DELETE_VALUES:
-                # DELETE resets the active-catalog count for subsequent steps
-                _uncatalog_steps.append(pos)
+            if evt.disp_normal in _UNCATLG_VALUES or evt.disp_normal in _DELETE_VALUES:
+                # DELETE removes the catalog entry along with the dataset.
+                cataloged_by = None
+                uncataloged_by = evt
 
     return errors
