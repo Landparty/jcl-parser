@@ -1,11 +1,14 @@
 """
 Return-code feasibility analysis.
 
-Walks a :class:`~jclparser.model.Job` in execution order and, for each step
-guarded by an ``IF …`` conditional or a step-level ``COND=`` clause,
-determines whether the guard can be satisfied under *any* combination of
-predecessor return codes drawn from a small symbolic domain (defaults
-``{0, 4, 8, 12, 16}``).
+Walks a :class:`~jclparser.model.Job` in execution order and, for each
+``IF …`` conditional, determines whether the condition can be satisfied under
+*any* combination of predecessor return codes drawn from a small symbolic
+domain (defaults ``{0, 4, 8, 12, 16}``).  The predecessors of an ``IF`` are
+the steps that precede it in execution order; a step that may not run (it sits
+inside an ``IF`` branch or carries ``COND=``) is also explored as "not run", so
+``STEP.RUN`` / ``NOT STEP.RUN`` are judged correctly.  Step-level ``COND=``
+guards themselves are not analysed.
 
 The analysis is conservative: it reports a step as *unreachable* only when
 the guard evaluates to ``False`` for every combination in the domain.  It
@@ -35,6 +38,10 @@ if TYPE_CHECKING:
 
 DEFAULT_RC_DOMAIN = (0, 4, 8, 12, 16)
 
+#: Stands for every predecessor a condition does not name (not a valid step
+#: name, so it cannot collide with one).
+_ANONYMOUS_PREDECESSOR = "*OTHER*"
+
 
 @dataclass
 class FeasibilityReport:
@@ -54,13 +61,21 @@ class FeasibilityReport:
         )
 
 
-def _collect_predecessors(job: Job) -> list[str]:
-    """Return the ordered list of predecessor step names for analysis."""
-    names: list[str] = []
-    for step in iter_execution_steps(job.steps):
-        if isinstance(step, Step) and step.name:
-            names.append(step.name.upper())
-    return names
+def _collect_optional_steps(job: Job) -> frozenset[str]:
+    """Names of steps that may not run: inside an IF branch, or with ``COND=``."""
+    names: set[str] = set()
+
+    def _walk(items: list, nested: bool) -> None:
+        for item in items:
+            if isinstance(item, ConditionalBlock):
+                _walk(item.then_steps, True)
+                _walk(item.else_steps, True)
+            elif isinstance(item, Step) and item.name:
+                if nested or item.parameters.get("COND") is not None:
+                    names.add(item.name.upper())
+
+    _walk(job.steps, False)
+    return frozenset(names)
 
 
 def _collect_referenced_steps(ast: ConditionNode) -> set[str]:
@@ -92,6 +107,7 @@ def _evaluate_over_domain(
     predecessors: list[str],
     rc_domain: tuple[int, ...],
     abend_values: tuple[bool, ...] = (False,),
+    optional_steps: frozenset[str] = frozenset(),
 ) -> tuple[bool, bool, bool]:
     """Evaluate *ast* over the Cartesian product of ``rc_domain`` per predecessor.
 
@@ -117,24 +133,45 @@ def _evaluate_over_domain(
         result = ast.evaluate(step_results)
         return (result is True, result is False, result is None)
 
-    # Bound the search to keep the cost predictable.  With the default
-    # domain (5 RCs × 2 abend values) and 6 predecessors that's 10**6 =
-    # 1M evaluations — still fast.  Cap at 8 predecessors to protect
-    # against pathological jobs.
-    capped = list(dict.fromkeys(predecessors[-8:] + sorted(referenced)))[-8:]
+    # Predecessors the condition does not name are only seen through the
+    # unqualified atoms (``RC`` = highest RC, ``ABEND`` = any abended,
+    # ``RUN`` = any ran), and every combination of those is already produced
+    # by a single representative step.  Folding them into one keeps the
+    # product exponential only in the steps the condition names — enumerating
+    # them all made an 8-step job take minutes.  The representative may be
+    # "not run" only when every step it stands for may not run.
+    anonymous = [name for name in predecessors if name not in referenced]
+    names = sorted(referenced)
+    if anonymous:
+        names.append(_ANONYMOUS_PREDECESSOR)
+        if all(name in optional_steps for name in anonymous):
+            optional_steps = optional_steps | {_ANONYMOUS_PREDECESSOR}
+    # Bound the search to keep the cost predictable: with the default domain
+    # (5 RCs × 2 abend values) 8 steps are 10**8 evaluations.
+    capped = names[-8:]
 
-    for rcs in itertools.product(rc_domain, repeat=len(capped)):
-        for abend_tuple in itertools.product(abend_values, repeat=len(capped)):
-            results = {name: (rc, ab) for name, rc, ab in zip(capped, rcs, abend_tuple)}
-            r = ast.evaluate(results)
-            if r is True:
-                ever_true = True
-            elif r is False:
-                ever_false = True
-            else:
-                ever_unknown = True
-            if ever_true and ever_false:
-                return (True, True, ever_unknown)
+    ran_states: list[tuple[int, bool] | None] = [
+        (rc, ab) for rc in rc_domain for ab in abend_values
+    ]
+    # A step that may not have run (inside an IF branch, or with COND=) is
+    # also explored as absent from the results, which is what makes
+    # ``STEP.RUN`` false for it.
+    per_step = [
+        ran_states + [None] if name in optional_steps else ran_states for name in capped
+    ]
+    for states in itertools.product(*per_step):
+        results = {
+            name: state for name, state in zip(capped, states) if state is not None
+        }
+        r = ast.evaluate(results)
+        if r is True:
+            ever_true = True
+        elif r is False:
+            ever_false = True
+        else:
+            ever_unknown = True
+        if ever_true and ever_false:
+            return (True, True, ever_unknown)
     return (ever_true, ever_false, ever_unknown)
 
 
@@ -156,7 +193,7 @@ def compute_feasible_paths(
         :class:`FeasibilityReport` aggregating the findings.
     """
     report = FeasibilityReport()
-    predecessors = _collect_predecessors(job)
+    optional_steps = _collect_optional_steps(job)
     # Not a ternary: Cython's type inference tries to unify the two
     # differently-sized tuple literals of a single conditional expression
     # into one C-level type and rejects it (this module is cythonized for
@@ -166,29 +203,35 @@ def compute_feasible_paths(
     else:
         abend_values = (False,)
 
-    def _walk(steps: list, enclosing_condition_signatures: list[str]) -> None:
-        running_preds: list[str] = []
+    def _walk(
+        steps: list,
+        enclosing_condition_signatures: list[str],
+        preds_before: list[str],
+    ) -> list[str]:
+        """Walk *steps*; return the predecessor list after the last of them.
+
+        *preds_before* are the steps that precede *steps* in execution order
+        (for a THEN/ELSE branch: everything before the IF), so an IF is never
+        evaluated against a step that runs after it.
+        """
+        running_preds = list(preds_before)
         for item in steps:
             if isinstance(item, ConditionalBlock):
                 ast = item.condition_ast
                 if ast is None:
                     # Can't analyse un-parsed conditions — still recurse to
                     # catch duplicate THEN/ELSE textual signatures below.
-                    _walk(
-                        item.then_steps,
-                        enclosing_condition_signatures + [item.condition],
-                    )
-                    _walk(
-                        item.else_steps,
-                        enclosing_condition_signatures + [f"NOT({item.condition})"],
+                    running_preds = _walk_branches(
+                        item, enclosing_condition_signatures, running_preds
                     )
                     continue
 
                 ever_true, ever_false, _ever_unknown = _evaluate_over_domain(
                     ast,
-                    predecessors=running_preds or predecessors,
+                    predecessors=running_preds,
                     rc_domain=rc_domain,
                     abend_values=abend_values,
+                    optional_steps=optional_steps,
                 )
                 # Only mark THEN as unreachable / ELSE as dead code when we
                 # have at least one concrete evaluation and *none* of them
@@ -214,19 +257,27 @@ def compute_feasible_paths(
                         (item.line_number, item.condition)
                     )
 
-                _walk(
-                    item.then_steps,
-                    enclosing_condition_signatures + [item.condition],
-                )
-                _walk(
-                    item.else_steps,
-                    enclosing_condition_signatures + [f"NOT({item.condition})"],
+                running_preds = _walk_branches(
+                    item, enclosing_condition_signatures, running_preds
                 )
             elif isinstance(item, Step):
                 if item.name:
                     running_preds.append(item.name.upper())
+        return running_preds
 
-    _walk(job.steps, [])
+    def _walk_branches(
+        block: ConditionalBlock, signatures: list[str], preds_before: list[str]
+    ) -> list[str]:
+        then_preds = _walk(
+            block.then_steps, signatures + [block.condition], preds_before
+        )
+        else_preds = _walk(
+            block.else_steps, signatures + [f"NOT({block.condition})"], preds_before
+        )
+        # After ENDIF, a step of either branch may have run.
+        return list(dict.fromkeys(then_preds + else_preds[len(preds_before) :]))
+
+    _walk(job.steps, [], [])
     return report
 
 

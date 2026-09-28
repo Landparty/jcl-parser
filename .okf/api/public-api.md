@@ -45,11 +45,11 @@ Stable but may evolve. Key groups:
 | Validation | `validate_jcl_identifier`, `validate_dataset_name`, `validate_job_structure`, `validate_step_structure`, `validate_dd_statement` |
 | File Type Detection | `FileType`, `detect_file_type`, `detect_file_type_from_content`, `is_jcl_file`, `is_proc_file` |
 | Condition Parsing | `parse_condition`, `ConditionNode`, `ReturnCodeCondition`, `AbendCondition`, `RunCondition`, `NotCondition`, `AndCondition`, `OrCondition` |
-| SQL/DB2 Detection | `SQLDetectionResult`, `detect_sql_in_step`, `detect_sql_in_job`, `detect_sql_in_dd`, `is_db2_program`, `DB2_PROGRAMS`, `NON_SQL_CONTROL_PROGRAMS` (programs whose in-stream data `detect_sql_in_step` does not scan; in `SYSTSIN` only DB2 subcommands such as `BIND` count) |
+| SQL/DB2 Detection | `SQLDetectionResult`, `detect_sql_in_step`, `detect_sql_in_job`, `detect_sql_in_dd`, `is_db2_program`, `DB2_PROGRAMS`, `NON_SQL_CONTROL_PROGRAMS` (programs whose in-stream data `detect_sql_in_step` does not scan; in `SYSTSIN` — and in unnamed DDs concatenated to it — only DB2 subcommands such as `BIND` count) |
 | INCLUDE Expansion | `resolve_includes`, `IncludeMemberLoader`, `DictMemberLoader`, `JCLLIBMemberLoader` |
-| Dataset Lifecycle | `DatasetEvent`, `analyze_dataset_lifecycle`, `validate_dataset_lifecycle` |
+| Dataset Lifecycle | `DatasetEvent`, `analyze_dataset_lifecycle`, `validate_dataset_lifecycle` (only a *normal* `UNCATLG`/`DELETE` counts as uncataloging; an abnormal one such as `DISP=(OLD,KEEP,UNCATLG)` does not) |
 | JES Control | `JESControlStatement`, `JobParmStatement`, `RouteStatement`, `XmitStatement`, `parse_jes_control` |
-| Metrics / RC | `JobMetrics`, `compute_metrics`, `FeasibilityReport`, `compute_feasible_paths`, `DEFAULT_RC_DOMAIN` |
+| Metrics / RC | `JobMetrics`, `compute_metrics`, `FeasibilityReport`, `compute_feasible_paths`, `DEFAULT_RC_DOMAIN` (IF conditions only — step `COND=` is not analysed; an IF's predecessors are the steps before it in execution order, and a step inside an IF branch or with `COND=` is also explored as not run) |
 | Lint | `LintRule`, `LintConfig`, `lint_job`, `lint_to_sarif`, `register_lint_rule` |
 | Program Profiles | `ProgramProfile`, `ProgramAnalysis`, `register_profile`, `analyze_step`, `analyze_job` |
 

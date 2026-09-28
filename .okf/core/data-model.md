@@ -38,7 +38,7 @@ without importing, via `job.steps` / `job.procedures`).
 | `line_number` | `int` | Default `0` |
 | `explosion_audit` / `explosion_map` | `list[Any]` / `dict[str, Any]` | Populated by `explode_job(audit=True)` |
 | `jes_statements` | `list[str]` | `/*JOBPARM`, `/*ROUTE`… raw text |
-| `jes_typed_statements` | `list[Any]` | Same cards promoted to typed models; unknown JES commands stay raw-only |
+| `jes_typed_statements` | `list[Any]` | Same cards promoted to typed models; unknown JES commands stay raw-only. `parameters` stop at the first blank outside quotes/parens (the rest is a comment, kept in `raw`), except `//*OPERATOR` message text |
 | `output_statements` | `list[OutputStatement]` | OUTPUT statements |
 | `joblib_dds` | `list[DDStatement]` | JOBLIB concatenation |
 | `control_statements` | `list[Statement]` | `COMMAND` / `SCHEDULE` / `CNTL` kept verbatim; a CNTL block's records live in `parameters["_records"]` |

@@ -186,8 +186,12 @@ def detect_sql_in_step(step: Step) -> SQLDetectionResult:
     )
     if step.program and step.program.upper() in NON_SQL_CONTROL_PROGRAMS:
         return result
+    is_tso_input = False
     for dd in step.dd_statements:
-        is_tso_input = (dd.name or "").upper() == _TSO_COMMAND_DD
+        # An unnamed DD is a concatenation member of the last named one, so
+        # ``//  DD *`` after ``//SYSTSIN DD ...`` is TSO input too.
+        if dd.name:
+            is_tso_input = dd.name.upper() == _TSO_COMMAND_DD
         for kw, cat in detect_sql_in_dd(dd):
             if is_tso_input and cat not in _TSO_SQL_CATEGORIES:
                 continue

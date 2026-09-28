@@ -278,11 +278,11 @@ def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:
                             )
                         )
 
-            # Track uncatalog dispositions
-            if (
-                evt.disp_normal in _UNCATLG_VALUES
-                or evt.disp_abnormal in _UNCATLG_VALUES
-            ):
+            # Track uncatalog dispositions.  Only the normal disposition
+            # counts: an abnormal one (DISP=(OLD,KEEP,UNCATLG)) takes effect
+            # only if the step abends, and the later steps that would then
+            # see the dataset uncataloged are normally bypassed with it.
+            if evt.disp_normal in _UNCATLG_VALUES:
                 _uncatalog_steps.append(pos)
             elif evt.disp_normal in _DELETE_VALUES:
                 # DELETE resets the active-catalog count for subsequent steps

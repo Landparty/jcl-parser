@@ -553,8 +553,7 @@ class Step:
     @property
     def dynamnbr(self) -> int | None:
         """Dynamic allocation count."""
-        val = self.parameters.get("DYNAMNBR")
-        return int(val) if val else None
+        return _to_int_or_none(self.parameters.get("DYNAMNBR"))
 
     @property
     def memlimit(self) -> str | None:
@@ -579,8 +578,7 @@ class Step:
     @property
     def perform(self) -> int | None:
         """Performance group."""
-        val = self.parameters.get("PERFORM")
-        return int(val) if val else None
+        return _to_int_or_none(self.parameters.get("PERFORM"))
 
     @property
     def rd(self) -> str | None:
