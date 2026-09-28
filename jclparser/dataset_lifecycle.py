@@ -243,7 +243,10 @@ def _merge_states(
     them is lost.
     """
     merged: dict[str, _CatalogState] = {}
-    for dsn in then_state.keys() | else_state.keys():
+    # dict.fromkeys, not ``keys() | keys()``: keeps a stable order, and the
+    # set union of two key views crashes Cython's OptimizeBuiltinCalls pass
+    # in the closed-source build.
+    for dsn in dict.fromkeys([*then_state, *else_state]):
         t_cat, t_uncat = then_state.get(dsn, (None, None))
         e_cat, e_uncat = else_state.get(dsn, (None, None))
         merged[dsn] = (t_cat or e_cat, t_uncat or e_uncat)
