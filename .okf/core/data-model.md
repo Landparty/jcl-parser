@@ -71,6 +71,7 @@ Useful accessors (not fields): `job.validate()`, `job.explode(...)`,
 | `original_proc_call` | `str \| None` | Set after explosion |
 | `dd_overrides` | `dict[str, DDStatement]` | Qualified `PROCSTEP.DDNAME` overrides |
 | `dd_override_concatenations` | `dict[str, list[DDStatement]]` | Unnamed DDs coded after a qualified override (same key): overrides of that DD's later concatenation members |
+| `set_symbols` | `dict[str, str] \| None` | SET table in effect when this job-level step was read; kept only when a later SET redefines a symbol (else `None`). Not part of `==` or `repr` |
 | `is_procedure()` | property → `bool` | **This is how you test for a PROC invocation.** Equivalent to `step.procedure is not None` |
 
 There is **no** `exec_type` and **no** `is_proc_invocation` attribute anywhere in

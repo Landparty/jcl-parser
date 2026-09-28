@@ -1110,19 +1110,34 @@ def apply_unqualified_dd_overrides(
     if first_step is None:
         return
 
-    index_by_name = {
-        dd.name: i for i, dd in enumerate(first_step.dd_statements) if dd.name
-    }
+    # Group each named override with the unnamed DDs coded right after it:
+    # those override members 2..n of the named DD's concatenation, exactly
+    # like the members of a qualified PROCSTEP.DDNAME override.
+    groups: list[tuple[DDStatement, list[DDStatement]]] = []
     for override_dd in override_dds:
-        existing = index_by_name.get(override_dd.name) if override_dd.name else None
-        if existing is not None:
-            first_step.dd_statements[existing] = _merge_dd_override(
-                first_step.dd_statements[existing], override_dd
-            )
+        if not override_dd.name and groups:
+            groups[-1][1].append(override_dd)
         else:
-            first_step.dd_statements.append(deepcopy(override_dd))
-            if override_dd.name:
-                index_by_name[override_dd.name] = len(first_step.dd_statements) - 1
+            groups.append((override_dd, []))
+
+    dd_statements = first_step.dd_statements
+    for override_dd, members in groups:
+        existing = next(
+            (
+                i
+                for i, dd in enumerate(dd_statements)
+                if override_dd.name and dd.name == override_dd.name
+            ),
+            None,
+        )
+        if existing is not None:
+            dd_statements[existing] = _merge_dd_override(
+                dd_statements[existing], override_dd
+            )
+            _override_concatenation_members(dd_statements, existing, members)
+        else:
+            dd_statements.append(deepcopy(override_dd))
+            dd_statements.extend(deepcopy(members))
 
 
 def explode_job(
@@ -1198,24 +1213,36 @@ def explode_job(
                 )
 
     # Process steps
+    def _step_scope(step: Step) -> SymbolScope:
+        # A step read before a later SET redefined a symbol resolves it to the
+        # value in effect at that step (Step.set_symbols).
+        if step.set_symbols is None:
+            return base_scope
+        return SymbolScope(
+            set_symbols={**job.set_statements, **step.set_symbols},
+            system_provider=system_provider,
+        )
+
     def _process_steps(steps_list):
         result = []
         for step in steps_list:
             if isinstance(step, ConditionalBlock):
                 result.append(_clone_conditional(step, _process_steps))
-            elif step.is_procedure:
+                continue
+            step_scope = _step_scope(step)
+            if step.is_procedure:
                 # The DDs coded under an ``EXEC procname`` (overrides and
                 # additions) are job-level JCL: resolve the job's SET and
                 # system symbols in them like in any other step's DDs. Any
                 # other symbol is left as written rather than blanked.
                 step = _clone_step_for_explosion(step)
                 for dd in _step_dds_and_overrides(step):
-                    substitute_dd_statement(dd, base_scope, allow_undefined=True)
+                    substitute_dd_statement(dd, step_scope, allow_undefined=True)
                 # Expand procedure
                 expanded = _explode_step(
                     step=step,
                     proc_loader=proc_loader,
-                    base_scope=base_scope,
+                    base_scope=step_scope,
                     call_chain=[],
                     call_chain_upper=frozenset(),
                     depth=0,
@@ -1235,14 +1262,14 @@ def explode_job(
                 if substituted_step.program:
                     substituted_step.program = substitute_symbols(
                         substituted_step.program,
-                        base_scope,
+                        step_scope,
                         strict=strict_symbols,
                         warnings=explosion_warnings,
                     )
 
                 substituted_step.parameters = substitute_parameters_dict(
                     substituted_step.parameters,
-                    base_scope,
+                    step_scope,
                     strict=strict_symbols,
                     warnings=explosion_warnings,
                 )
@@ -1250,7 +1277,7 @@ def explode_job(
                 for dd in substituted_step.dd_statements:
                     substitute_dd_statement(
                         dd,
-                        base_scope,
+                        step_scope,
                         strict=strict_symbols,
                         warnings=explosion_warnings,
                     )

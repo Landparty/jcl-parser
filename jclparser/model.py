@@ -458,6 +458,8 @@ class Step:
         dd_override_concatenations: For a qualified override key in
             ``dd_overrides``, the unnamed DDs coded after it -- overrides of
             the 2nd, 3rd, ... members of that DD's concatenation, in order
+        set_symbols: SET symbols in effect at this step when a later SET
+            redefines one of them, else None
     """
 
     name: str | None = None
@@ -473,6 +475,11 @@ class Step:
     dd_override_concatenations: dict[str, list[DDStatement]] = field(
         default_factory=dict
     )
+    #: The job's SET symbols as they stood when this step's EXEC was read,
+    #: kept only when a later ``SET`` redefines one of them (``None``
+    #: otherwise): a SET value is in effect from the SET statement onward, so
+    #: this step's ``&SYM`` references must not see the redefinition.
+    set_symbols: dict[str, str] | None = field(default=None, repr=False, compare=False)
 
     @property
     def is_procedure(self) -> bool:

@@ -30,7 +30,7 @@ timestamp: 2026-09-16T00:00:00Z
 
 9. **JES control statements are parsed separately.** `/*JOBPARM`, `/*ROUTE`, etc. are in `jes_statements.py`, **not** in `job.steps`.
 
-10. **SET symbols resolve left-to-right.** A SET can reference an earlier SET but not a later one.
+10. **SET symbols resolve left-to-right.** A SET can reference an earlier SET but not a later one. A SET that redefines a symbol affects only the statements after it: steps read before the redefinition carry a `Step.set_symbols` snapshot that `resolve_set_symbols` / `explode_job` resolve against (fixed 2026-09-28). A reference to a symbol whose *first* SET comes later still resolves against the final table (historical leniency, kept).
 
 11. **Vendoring is always manual.** Changes to `jclparser/` are not auto-propagated. Always run `rm -rf ../backend/_vendor/jcl-parser/jclparser && cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser` after changes — plain `cp -r` nests into `jclparser/jclparser/` and silently leaves stale files in place when the destination already exists (discovered 2026-07-24: it left the backend's vendored copy missing `_job_builder.py`/`_model_factories.py`/`_post_parse.py` for two PRs).
 

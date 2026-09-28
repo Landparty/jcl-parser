@@ -121,6 +121,10 @@ class JobBuilder:
         #: procedure, where no JOB statement ever arrives.  They used to be
         #: dropped on the floor; they are flushed onto the Job in finish().
         self.pending_sets: dict[str, str] = {}
+        #: Job-level steps, whose ``set_symbols`` snapshot finish() keeps
+        #: only if some SET symbol is redefined after it was first set.
+        self.job_level_steps: list[Step] = []
+        self.set_redefined = False
         self.pending_exported: set[str] = set()
         self.pending_jcllib: list[str] = []
         self.pending_includes: list[str] = []
@@ -288,6 +292,13 @@ class JobBuilder:
             )
 
         self.current_step = _create_step_from_statement(stmt)
+        if self.job is not None and self.current_procedure is None:
+            # SET values in effect at this step (see finish()).
+            self.current_step.set_symbols = {
+                **self.pending_sets,
+                **self.job.set_statements,
+            }
+            self.job_level_steps.append(self.current_step)
         self.in_joblib_concat = False  # JOBLIB concatenation ends at first EXEC
         self.concat_override_key = None
 
@@ -407,6 +418,11 @@ class JobBuilder:
         def _record(symbol: str, value: str) -> None:
             resolved = _resolve_set_value(value, symbols)
             if self.job:
+                previous = self.job.set_statements.get(
+                    symbol, self.pending_sets.get(symbol)
+                )
+                if previous is not None and previous != resolved:
+                    self.set_redefined = True
                 self.job.add_set(symbol, resolved)
             else:
                 self.pending_sets[symbol] = resolved
@@ -646,6 +662,14 @@ class JobBuilder:
         # buffered values only fill in symbols the job does not already define.
         for symbol, value in self.pending_sets.items():
             job.set_statements.setdefault(symbol, value)
+        # A step's SET snapshot only matters when a later SET redefined a
+        # symbol it could see; everywhere else the final table is the same.
+        for step in self.job_level_steps:
+            if not self.set_redefined or all(
+                job.set_statements.get(k) == v
+                for k, v in (step.set_symbols or {}).items()
+            ):
+                step.set_symbols = None
         job.exported_symbols |= self.pending_exported
         job.jcllib_order[:0] = self.pending_jcllib
         for member in self.pending_includes:

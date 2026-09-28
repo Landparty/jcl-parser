@@ -25,13 +25,20 @@ class DFSRRC00Profile(ProgramProfile):
 
     def analyze(self, step) -> ProgramAnalysis:
         notes: list[str] = []
-        parm: str = step.parameters.get("PARM") or ""
+        raw_parm = step.parameters.get("PARM")
 
         # PARM sub-parameters are comma-separated; quotes are stripped by the
-        # parser before they reach us.  Standard layout:
+        # parser before they reach us.  ``PARM='BMP,PROG,PSB'`` arrives as one
+        # string, the equally common unquoted ``PARM=(BMP,PROG,PSB)`` (the
+        # IBM-supplied DLIBATCH/IMSBATCH procedures code it that way) as a
+        # list of sub-parameters.  Standard layout:
         #   [0] region type  (BMP / MPP / DLI / DBB / IFP / …)
         #   [1] application program
         #   [2] PSB name  (optional)
+        if isinstance(raw_parm, list):
+            parm = ",".join(str(p) for p in raw_parm)
+        else:
+            parm = str(raw_parm) if raw_parm else ""
         parts = [p.strip() for p in parm.split(",")]
 
         region_type = parts[0].upper() if parts and parts[0] else ""
