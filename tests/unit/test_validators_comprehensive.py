@@ -245,9 +245,14 @@ class TestValidateDataDependencies:
         """Test multiple steps creating same temp dataset"""
         job = Job(name="TESTJOB", parameters={}, accounting_info="ACCT")
 
+        # PASS keeps &&TEMP alive; a bare DISP=NEW would delete it at step end
+        # (omitted normal disposition), so re-creating it would be legal.
         step1 = Step(name="STEP1", program="PROG1", line_number=2)
         dd1 = DDStatement(
-            name="OUT1", dataset_name="&&TEMP", disposition="NEW", line_number=3
+            name="OUT1",
+            dataset_name="&&TEMP",
+            disposition="(NEW,PASS)",
+            line_number=3,
         )
         step1.add_dd(dd1)
         job.add_step(step1)

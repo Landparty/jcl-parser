@@ -413,11 +413,20 @@ class JobBuilder:
     def _on_set(self, stmt: Statement) -> None:
         # SET symbol=value statement.  A SET before the JOB statement (or in a
         # JOB-less member) is buffered rather than dropped; finish() flushes it.
-        symbols = self.job.set_statements if self.job else self.pending_sets
+        # A SET inside a PROC/PEND body belongs to the procedure: it only takes
+        # effect when the procedure is expanded (explosion applies it), so it
+        # must not leak into the job's SET table.
+        procedure = self.current_procedure
+        if procedure is not None:
+            symbols = procedure.set_statements
+        else:
+            symbols = self.job.set_statements if self.job else self.pending_sets
 
         def _record(symbol: str, value: str) -> None:
             resolved = _resolve_set_value(value, symbols)
-            if self.job:
+            if procedure is not None:
+                procedure.set_statements[symbol] = resolved
+            elif self.job:
                 previous = self.job.set_statements.get(
                     symbol, self.pending_sets.get(symbol)
                 )
@@ -646,6 +655,11 @@ class JobBuilder:
                 job = Job(name="", line_number=0)
                 for proc in self.pending_procedures:
                     job.add_procedure(proc)
+                    # A JOB-less member (a cataloged procedure) has no job
+                    # scope of its own: its procedures' SETs are the member's
+                    # SETs, so the synthetic job exposes them too. The
+                    # Procedure keeps its own copy for explosion.
+                    job.set_statements.update(proc.set_statements)
             else:
                 raise JCLSyntaxError("No JOB statement found", 0)
 

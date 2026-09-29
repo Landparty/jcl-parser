@@ -46,6 +46,8 @@ def _build_procedure_from_content(content: str, proc_name: str) -> Procedure | N
             return proc
 
     # No explicit PROC/PEND: treat the whole file's steps as the procedure body.
+    # Its SETs landed in the wrapper job's table; they belong to the procedure.
+    # (With PROC/PEND, the parser already records them on the Procedure.)
     if job.steps:
         return Procedure(
             name=proc_name,
@@ -53,6 +55,7 @@ def _build_procedure_from_content(content: str, proc_name: str) -> Procedure | N
             steps=job.steps,
             line_number=0,
             is_external=True,
+            set_statements=dict(job.set_statements),
         )
     return None
 

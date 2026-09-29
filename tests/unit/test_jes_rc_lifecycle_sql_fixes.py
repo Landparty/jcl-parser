@@ -88,7 +88,7 @@ class TestRcAnalysis:
 
     def test_many_steps_are_fast_and_still_flag_dead_code(self):
         src = "//J JOB 1\n" + "".join(f"//S{i} EXEC PGM=A\n" for i in range(12))
-        src += "// IF S0.RC GT 100 THEN\n//X EXEC PGM=B\n// ENDIF\n"
+        src += "// IF S0.RC GT 4095 THEN\n//X EXEC PGM=B\n// ENDIF\n"
         src += "// IF RC GE 0 THEN\n//Y EXEC PGM=B\n// ELSE\n//Z EXEC PGM=B\n// ENDIF\n"
         start = time.perf_counter()
         report = compute_feasible_paths(parse_jcl(src))

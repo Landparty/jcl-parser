@@ -400,11 +400,11 @@ class TestRCFeasibility:
         assert "STEP2" not in report.unreachable_steps
 
     def test_unsatisfiable_rc_marks_unreachable(self):
-        # RC > 100 is outside the default domain {0,4,8,12,16} → never true
+        # RC > 4095 exceeds the highest possible return code → never true
         src = (
             "//MYJOB    JOB  (ACCT)\n"
             "//STEP1    EXEC PGM=PROG1\n"
-            "//         IF (STEP1.RC GT 100) THEN\n"
+            "//         IF (STEP1.RC GT 4095) THEN\n"
             "//STEP2    EXEC PGM=PROG2\n"
             "//         ENDIF\n"
         )
@@ -751,7 +751,7 @@ class TestReviewFixes:
         src = (
             "//MYJOB    JOB  (ACCT)\n"
             "//STEP1    EXEC PGM=PROG1\n"
-            "//         IF (STEP1.RC GT 100) THEN\n"
+            "//         IF (STEP1.RC GT 4095) THEN\n"
             "//DEAD     EXEC PGM=PROG2\n"
             "//         ENDIF\n"
         )

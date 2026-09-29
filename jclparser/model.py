@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from .errors import ValidationError
 from .parameter_ast import DCBParameter, ParameterParser, SPACEParameter
@@ -210,6 +210,9 @@ class Procedure:
         parameters: PROC parameters with defaults
         steps: Steps within the procedure
         line_number: Source line number
+        set_statements: Symbols assigned by ``SET`` statements coded inside
+            the procedure body. They take effect only when the procedure is
+            expanded, and never leak into the calling job's SET table.
     """
 
     name: str
@@ -217,6 +220,7 @@ class Procedure:
     steps: list[Step | ConditionalBlock] = field(default_factory=list)
     line_number: int = 0
     is_external: bool = False
+    set_statements: dict[str, str] = field(default_factory=dict)
 
     def add_step(self, step: Step | ConditionalBlock) -> None:
         """Add a step to this procedure"""
@@ -318,8 +322,31 @@ class DDStatement:
             >>> dd.dcb.recfm  # 'FB'
             >>> dd.dcb.lrecl  # 80
             >>> dd.dcb.blksize  # 27920
+
+        DCB subparameters coded directly on the DD (``RECFM=FB,LRECL=80``
+        with no ``DCB=``) are included too, and override the same
+        subparameter inside ``DCB=``.
         """
-        return self._lazy_parse_param("DCB", "_dcb_parsed", "parse_dcb")
+        if self._dcb_parsed is not None:
+            return self._dcb_parsed
+        dcb = self._lazy_parse_param("DCB", "_dcb_parsed", "parse_dcb")
+        dd_level = {
+            key: str(value)
+            for key in self._DD_LEVEL_DCB_KEYWORDS
+            if isinstance(value := self.parameters.get(key), (str, int))
+        }
+        if dd_level:
+            if dcb is None:
+                dcb = DCBParameter(
+                    key="DCB",
+                    raw_value=",".join(f"{k}={v}" for k, v in dd_level.items()),
+                    subparameters=dict(dd_level),
+                    line_number=self.line_number,
+                )
+            else:
+                dcb.subparameters.update(dd_level)
+            object.__setattr__(self, "_dcb_parsed", dcb)
+        return dcb
 
     @property
     def space(self) -> SPACEParameter | None:
@@ -394,10 +421,20 @@ class DDStatement:
         """True if this DD contains inline data (DD *)"""
         return self.inline_data is not None
 
-    # Disposition sets used by is_input / is_output.  Defined at class scope
-    # so the sets are built once and shared across all instances.
-    _INPUT_DISPOSITIONS: frozenset = frozenset({"OLD", "SHR"})
-    _OUTPUT_DISPOSITIONS: frozenset = frozenset({"NEW", "MOD", "CATLG", "UNCATLG"})
+    # DISP status values used by is_input / is_output.  Defined at class scope
+    # (ClassVar, so not dataclass fields) and shared across all instances.
+    _INPUT_DISPOSITIONS: ClassVar[frozenset[str]] = frozenset({"OLD", "SHR"})
+    _OUTPUT_DISPOSITIONS: ClassVar[frozenset[str]] = frozenset({"NEW", "MOD"})
+    # DCB subparameters that may also be coded as DD keywords of their own.
+    _DD_LEVEL_DCB_KEYWORDS: ClassVar[tuple[str, ...]] = (
+        "RECFM",
+        "LRECL",
+        "BLKSIZE",
+        "DSORG",
+        "BUFNO",
+        "KEYLEN",
+        "OPTCD",
+    )
 
     def _disp_tokens(self) -> list[str]:
         """Return disposition as an uppercase list of individual tokens (cached).
@@ -422,17 +459,29 @@ class DDStatement:
             self._disp_tokens_cache = result
         return self._disp_tokens_cache
 
-    def is_input(self) -> bool:
-        """True if this DD defines input data (DISP status is OLD or SHR)."""
+    def _disp_status(self) -> str | None:
+        """Return the DISP status (first token), or None with no DISP."""
         if self.disposition:
-            return any(t in self._INPUT_DISPOSITIONS for t in self._disp_tokens())
-        return False
+            tokens = self._disp_tokens()
+            return tokens[0] if tokens else None
+        return None
+
+    def is_input(self) -> bool:
+        """True if this DD defines input data (DISP status is OLD or SHR).
+
+        Only the status subparameter counts; the normal/abnormal
+        dispositions (KEEP, CATLG, ...) say nothing about data direction.
+        """
+        return self._disp_status() in self._INPUT_DISPOSITIONS
 
     def is_output(self) -> bool:
-        """True if this DD defines output data (DISP status is NEW, MOD, CATLG, or UNCATLG)."""
-        if self.disposition:
-            return any(t in self._OUTPUT_DISPOSITIONS for t in self._disp_tokens())
-        return False
+        """True if this DD defines output data (DISP status is NEW or MOD).
+
+        An omitted status (``DISP=(,CATLG)``) defaults to NEW.  CATLG/UNCATLG
+        in the disposition positions do not make ``DISP=(SHR,PASS,CATLG)`` an
+        output.
+        """
+        return self._disp_status() in self._OUTPUT_DISPOSITIONS
 
     def is_temporary(self) -> bool:
         """True if dataset is temporary (&&name)"""

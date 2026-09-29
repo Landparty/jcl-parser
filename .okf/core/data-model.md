@@ -31,7 +31,7 @@ without importing, via `job.steps` / `job.procedures`).
 | `steps` | `list[Step \| ConditionalBlock]` | Executable structure only |
 | `procedures` | `list[Procedure]` | Inline `PROC…PEND` blocks |
 | `conditionals` | `list[ConditionalBlock]` | Flat list of IF/THEN/ELSE blocks |
-| `set_statements` | `dict[str, str]` | SET symbol definitions |
+| `set_statements` | `dict[str, str]` | Job-level SET symbol definitions. A SET inside a `PROC`…`PEND` body is **not** here — it is on `Procedure.set_statements` (since 2026-09-28). For a JOB-less member the synthetic job also carries its procedures' SETs |
 | `jcllib_order` | `list[str]` | JCLLIB library concatenation |
 | `includes` | `list[str]` | INCLUDE member references |
 | `comments` | `list[str]` | Present on the model but never populated — see invariant 8 |
@@ -91,12 +91,14 @@ the codebase; use `step.procedure` / `step.is_procedure`.
 | `line_number` | `int` | |
 | `output_refs` | `list[OutputStatement]` | Resolved `OUTPUT=*.name` back-references |
 | `is_temporary()` | method → `bool` | True when `dataset_name` starts with `&&`. **Call it** |
-| `is_input()` / `is_output()` | methods → `bool` | Derived from DISP status tokens |
+| `is_input()` / `is_output()` | methods → `bool` | Derived from the DISP **status** only: `OLD`/`SHR` → input; `NEW`/`MOD`, or an omitted status (`DISP=(,CATLG)`, default NEW) → output. Normal/abnormal dispositions do not count, so `(SHR,PASS,CATLG)` and `(OLD,KEEP,UNCATLG)` are inputs, not outputs (changed 2026-09-28; every token used to be tested). No DISP → both `False` |
 | `has_inline_data` | property → `bool` | |
-| `dcb` / `space` | properties | Typed `DCBParameter` / `SPACEParameter` from `parameter_ast.py` |
+| `dcb` / `space` | properties | Typed `DCBParameter` / `SPACEParameter` from `parameter_ast.py`. `dcb` also includes DCB subparameters coded directly on the DD (`RECFM`, `LRECL`, `BLKSIZE`, `DSORG`, `BUFNO`, `KEYLEN`, `OPTCD`) — a `DCBParameter` is synthesised when there is no `DCB=`, and a DD-level keyword overrides the same subparameter inside `DCB=` (since 2026-09-28; `dd.dcb` was `None` for `RECFM=FB,LRECL=80` alone). Cached |
 | `dataclas` / `mgmtclas` / `storclas` / `dsntype` | properties → `str \| None` | SMS classes |
 
 There is no `is_sysout` attribute — read `dd.parameters.get("SYSOUT")`.
+
+The disposition sets behind `is_input()` / `is_output()` (and `_DD_LEVEL_DCB_KEYWORDS`) are `ClassVar`s, not dataclass fields, so `dataclasses.asdict(job)` is JSON-serialisable (fixed 2026-09-28).
 
 ## ConditionalBlock
 
@@ -117,6 +119,7 @@ There is no `is_sysout` attribute — read `dd.parameters.get("SYSOUT")`.
 | `steps` | `list[Step \| ConditionalBlock]` | |
 | `line_number` | `int` | |
 | `is_external` | `bool` | True when loaded through the loader chain rather than inline |
+| `set_statements` | `dict[str, str]` | Symbols assigned by `SET` statements coded inside the procedure body. Applied only when the procedure is expanded (above job SETs, below PROC defaults and EXEC overrides); never merged into the calling job's `set_statements`. Added 2026-09-28 — see [advanced/proc-expansion](../advanced/proc-expansion.md#symbol-substitution) |
 
 ## Statement
 
@@ -128,7 +131,7 @@ The generic pre-model record produced by `parse_statement()`:
 
 `ReturnCodeCondition`, `AbendCondition`, `RunCondition`, `NotCondition`, `AndCondition`, `OrCondition` — all importable from `jclparser`.
 
-`parse_condition()` accepts both keyword and symbolic Boolean operators (`AND`/`&`, `OR`/`|`, `NOT`/`¬`, with `^`/`~` for `¬`) and `ABEND`/`RUN` tests written as `= TRUE` / `= FALSE`. It returns `None` rather than a partial AST whenever it cannot consume the whole expression: `ABENDCC` tests, a non-numeric RC value (`RC GT &MAX`), leftover tokens. A missing final `)` and a stray trailing `)` are tolerated. A value-first comparison is mirrored into RC-first form: `4 LT RC` is `RC GT 4`, `4 LT S1.RC` is `S1.RC GT 4` (fixed 2026-09-27; the operator used to be kept as written, inverting the test), and `4 GT` with no RC after it is `None`. When evaluating, a condition with no step name follows IBM semantics: `RC` is the **highest** RC of the steps in `step_results`, and `ABEND` is true if **any** of them abended.
+`parse_condition()` accepts both keyword and symbolic Boolean operators (`AND`/`&`, `OR`/`|`, `NOT`/`¬`, with `^`/`~` for `¬`) and `ABEND`/`RUN` tests written as `= TRUE` / `= FALSE`. It returns `None` rather than a partial AST whenever it cannot consume the whole expression: `ABENDCC` tests, a non-numeric RC value (`RC GT &MAX`), leftover tokens. A missing final `)` and a stray trailing `)` are tolerated. A value-first comparison is mirrored into RC-first form: `4 LT RC` is `RC GT 4`, `4 LT S1.RC` is `S1.RC GT 4` (fixed 2026-09-27; the operator used to be kept as written, inverting the test), and `4 GT` with no RC after it is `None`. The mnemonic `NG` (not greater, → `LE`) and `NL` (not less, → `GE`) operators are accepted (since 2026-09-28; they used to make the result `None`). When evaluating, `step_results` maps an uppercase step name to `(rc, abended)`, or to `condition_parser.NOT_RUN` for a step known not to have executed: `STEP.RC op n`, `STEP.ABEND` and `STEP.RUN` on a `NOT_RUN` step are `False` (IBM), whereas a step absent from the mapping is unknown and its `RC`/`ABEND` tests give `None` (since 2026-09-28). A condition with no step name follows IBM semantics: `RC` is the **highest** RC of the steps that ran, and `ABEND` is true if **any** of them abended (`NOT_RUN` steps are ignored). `NOT_RUN` is not re-exported from `jclparser`; import it from `jclparser.condition_parser`.
 
 # Key Field Notes
 

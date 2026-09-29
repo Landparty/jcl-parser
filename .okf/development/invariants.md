@@ -18,7 +18,7 @@ timestamp: 2026-09-16T00:00:00Z
 
 3. **Inline PROCs always win.** Same-name external PROC or builtin template is ignored. No override possible.
 
-4. **`&&` is an escaped ampersand in JCL — except in a dataset name.** Symbol substitution replaces `&NAME` → value and `&&` → `&`. In a DSN (`DDStatement.dataset_name` and the `DSN` / `DSNAME` parameters) `&&TEMP` signals a temporary dataset, so `substitute_dd_statement` always keeps the `&&` there — including during `explode_job()` — and `is_temporary()` stays true.
+4. **`&&` is an escaped ampersand in JCL — except in a dataset name.** Symbol substitution replaces `&NAME` → value and `&&` → `&`. In a DSN (`DDStatement.dataset_name` and the `DSN` / `DSNAME` parameters) `&&TEMP` signals a temporary dataset, so `substitute_dd_statement` always keeps the `&&` there — including during `explode_job()` — and `is_temporary()` stays true. Likewise a DSN that is one bare single-`&` name with no symbol of that name (`DSN=&TEMP`, the single-ampersand temporary spelling) is kept as written rather than blanked, unless `strict_symbols=True` (fixed 2026-09-28; `is_temporary()` still keys on `&&`). Symbolic parameter values on a PROC call keep `&&` too (`TMP='&&WORK'` feeds a DSN); EXEC keyword override values collapse it.
 
 5. **Dataset names are case-insensitive on z/OS but stored as-is.** Comparisons against DSN values must account for case variation.
 
@@ -30,7 +30,7 @@ timestamp: 2026-09-16T00:00:00Z
 
 9. **JES control statements are parsed separately.** `/*JOBPARM`, `/*ROUTE`, etc. are in `jes_statements.py`, **not** in `job.steps`.
 
-10. **SET symbols resolve left-to-right.** A SET can reference an earlier SET but not a later one. A SET that redefines a symbol affects only the statements after it: steps read before the redefinition carry a `Step.set_symbols` snapshot that `resolve_set_symbols` / `explode_job` resolve against (fixed 2026-09-28). A reference to a symbol whose *first* SET comes later still resolves against the final table (historical leniency, kept).
+10. **SET symbols resolve left-to-right.** A SET can reference an earlier SET but not a later one. A SET that redefines a symbol affects only the statements after it: steps read before the redefinition carry a `Step.set_symbols` snapshot that `resolve_set_symbols` / `explode_job` resolve against (fixed 2026-09-28). A reference to a symbol whose *first* SET comes later still resolves against the final table (historical leniency, kept). A SET inside a `PROC`…`PEND` body is procedure-scoped: it is stored on `Procedure.set_statements`, never in `job.set_statements`, and applies only while that PROC is expanded — precedence there is EXEC overrides > PROC defaults > the PROC's own SETs > job SETs > system symbols (fixed 2026-09-28).
 
 11. **Vendoring is always manual.** Changes to `jclparser/` are not auto-propagated. Always run `rm -rf ../backend/_vendor/jcl-parser/jclparser && cp -r jclparser/ ../backend/_vendor/jcl-parser/jclparser` after changes — plain `cp -r` nests into `jclparser/jclparser/` and silently leaves stale files in place when the destination already exists (discovered 2026-07-24: it left the backend's vendored copy missing `_job_builder.py`/`_model_factories.py`/`_post_parse.py` for two PRs).
 
@@ -67,7 +67,9 @@ timestamp: 2026-09-16T00:00:00Z
     `Job` with `name == ""` (empty string, never `None`) and its PROCs, SET/EXPORT/JCLLIB/INCLUDE/
     OUTPUT/IF content intact — those handlers no longer short-circuit on a missing job. A bare
     `EXEC` before any JOB card is still a `JCLSyntaxError`; it is the PROC/member shape that is
-    supported. Fixed 2026-09-02.
+    supported. Fixed 2026-09-02. SETs inside the member's PROC/PEND live on
+    `Procedure.set_statements` and are also copied to the synthetic job's `set_statements` (the
+    member has no job scope of its own; since 2026-09-28).
 
 # Citations
 

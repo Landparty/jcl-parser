@@ -29,7 +29,12 @@ from .model import (
     Step,
     iter_execution_steps,
 )
-from .proc_loader import ProcedureLoader, create_default_loader
+from .proc_loader import (
+    CompositeProcedureLoader,
+    InlineProcedureLoader,
+    ProcedureLoader,
+    create_default_loader,
+)
 from .system_symbols import SystemSymbolProvider, get_default_provider
 from .utils import jcl_value_text
 
@@ -481,9 +486,12 @@ def expand_proc_invocation(
     Returns:
         List of expanded steps with substituted parameters
     """
-    # Create new scope with overrides
+    # Create new scope with overrides. SETs coded inside the procedure body
+    # apply to this expansion only, overriding same-named job-level SETs; they
+    # rank as SET symbols, so -- as for job-level SETs -- EXEC-statement
+    # overrides and PROC-statement defaults still take precedence over them.
     expansion_scope = SymbolScope(
-        set_symbols=scope.set_symbols.copy(),
+        set_symbols={**scope.set_symbols, **procedure.set_statements},
         proc_params=procedure.parameters.copy(),
         exec_overrides=overrides.copy(),
         system_provider=scope.system_provider,
@@ -670,6 +678,29 @@ def _strip_empty_member(dataset_name: str) -> str:
 
 _DSN_KEYS = ("DSN", "DSNAME")
 
+# A dataset name that is one bare ``&NAME`` reference, optionally with a member
+# or generation (``&TEMP``, ``&TEMP(MEM)``). With no symbol NAME defined it is
+# the single-ampersand spelling of a temporary dataset name, not a symbol to
+# blank out. Strict symbol mode still reports it as undefined.
+_BARE_SYMBOL_DSN_RE = re.compile(r"&([A-Z0-9@#$]+)(?:\([^()]*\))?")
+
+
+def _dsn_keep_undefined(
+    dataset_name: str, keep_undefined: Callable[[str], bool] | None, strict: bool
+) -> Callable[[str], bool] | None:
+    """Extend *keep_undefined* to keep an undefined bare-``&NAME`` dataset name."""
+    match = None if strict else _BARE_SYMBOL_DSN_RE.fullmatch(dataset_name)
+    if match is None:
+        return keep_undefined
+    temp_name = match.group(1)
+
+    def _keep(name: str) -> bool:
+        return name == temp_name or (
+            keep_undefined is not None and keep_undefined(name)
+        )
+
+    return _keep
+
 
 def substitute_dd_statement(
     dd: DDStatement,
@@ -712,7 +743,7 @@ def substitute_dd_statement(
             allow_undefined=allow_undefined,
             warnings=local_warnings,
             collapse_double_amp=False,
-            keep_undefined=keep_undefined,
+            keep_undefined=_dsn_keep_undefined(dd.dataset_name, keep_undefined, strict),
         )
         dd.dataset_name = _strip_empty_member(dd.dataset_name)
 
@@ -750,31 +781,52 @@ def substitute_dd_statement(
                 keep_undefined=keep_undefined,
             )
 
-    # Substitute all parameters
+    # Substitute all parameters. DSN= / DISP= usually repeat dataset_name /
+    # disposition above, so a message already recorded there is not repeated.
     original_parameters = dd.parameters
+    param_warnings: list[str] | None = [] if local_warnings is not None else None
     dd.parameters = substitute_parameters_dict(
-        original_parameters,
+        {k: v for k, v in original_parameters.items() if k not in _DSN_KEYS},
         scope,
         strict=strict,
         allow_undefined=allow_undefined,
+        warnings=param_warnings,
         collapse_double_amp=collapse_double_amp,
         keep_undefined=keep_undefined,
     )
     # The dataset-name parameters keep "&&" (temporary dataset), matching
     # dataset_name above.
     for key in _DSN_KEYS:
-        value = original_parameters.get(key)
+        if key not in original_parameters:
+            continue
+        value = original_parameters[key]
         if isinstance(value, str):
-            dd.parameters[key] = _strip_empty_member(
+            value = _strip_empty_member(
                 substitute_symbols(
                     value,
                     scope,
                     strict=strict,
                     allow_undefined=allow_undefined,
+                    warnings=param_warnings,
                     collapse_double_amp=False,
-                    keep_undefined=keep_undefined,
+                    keep_undefined=_dsn_keep_undefined(value, keep_undefined, strict),
                 )
             )
+        else:
+            value = substitute_parameters_dict(
+                {key: value},
+                scope,
+                strict=strict,
+                allow_undefined=allow_undefined,
+                warnings=param_warnings,
+                collapse_double_amp=False,
+                keep_undefined=keep_undefined,
+            )[key]
+        dd.parameters[key] = value
+    # Restore coded key order (DSN keys were substituted separately).
+    dd.parameters = {k: dd.parameters[k] for k in original_parameters}
+    if local_warnings is not None and param_warnings:
+        local_warnings.extend(m for m in param_warnings if m not in local_warnings)
 
     # Note: inline_data intentionally NOT substituted (data content preserved)
 
@@ -900,6 +952,7 @@ _EXEC_OVERRIDE_KEYWORDS = frozenset(
         "RD",
         "REGION",
         "REGIONX",
+        "RLSTMOUT",
         "TIME",
         "TVSMSG",
         "TVSAMCOM",
@@ -1175,9 +1228,18 @@ def explode_job(
         ProcedureNotFoundError: If referenced procedure not found
         UndefinedSymbolError: If strict_symbols=True and symbol undefined
     """
-    # Create default loader if not provided
+    # Loader precedence: the caller's, else the one parse_jcl() attached for
+    # the job's JCLLIB / proc_base_path (so an external PROC called from inside
+    # another PROC or an IF block is found where the top-level ones were),
+    # else the default chain. Inline procedures always win.
     if proc_loader is None:
-        proc_loader = create_default_loader(job.procedures)
+        job_loader: ProcedureLoader | None = getattr(job, "_proc_loader", None)
+        if job_loader is not None:
+            proc_loader = CompositeProcedureLoader(
+                [InlineProcedureLoader(job.procedures), job_loader]
+            )
+        else:
+            proc_loader = create_default_loader(job.procedures)
 
     # Get system provider
     if system_provider is None:
@@ -1238,6 +1300,19 @@ def explode_job(
                 step = _clone_step_for_explosion(step)
                 for dd in _step_dds_and_overrides(step):
                     substitute_dd_statement(dd, step_scope, allow_undefined=True)
+                # So are its EXEC keyword overrides (PARM.PS1='&SYSUID') and
+                # symbolic values (HLQ=&SYSUID). A symbolic value keeps "&&":
+                # it may carry a temporary dataset name (TMP='&&WORK').
+                step.parameters = {
+                    key: substitute_parameters_dict(
+                        {key: value},
+                        step_scope,
+                        allow_undefined=True,
+                        collapse_double_amp=key.upper().partition(".")[0]
+                        in _EXEC_OVERRIDE_KEYWORDS,
+                    )[key]
+                    for key, value in step.parameters.items()
+                }
                 # Expand procedure
                 expanded = _explode_step(
                     step=step,

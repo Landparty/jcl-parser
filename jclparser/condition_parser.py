@@ -29,6 +29,11 @@ Usage::
 Without a step name, ``RC`` is the highest return code of the steps run so far
 and ``ABEND`` is true if any of them abended (IBM semantics).
 
+A step known *not* to have run is mapped to :data:`NOT_RUN`; a relational
+expression naming it (``STEP.RC op n``, ``STEP.ABEND``, ``STEP.RUN``) is then
+false, as IBM specifies.  A step absent from the mapping is *unknown*, so its
+``RC`` / ``ABEND`` tests evaluate to ``None``.
+
 Unparseable conditions — including any trailing text the grammar does not
 cover, such as ``ABENDCC`` tests — return ``None`` from :func:`parse_condition` so the raw
 string stored on :attr:`~jclparser.model.ConditionalBlock.condition` always
@@ -45,20 +50,42 @@ from dataclasses import dataclass
 # ---------------------------------------------------------------------------
 
 
+class _NotRun:
+    """Type of :data:`NOT_RUN`, the result of a step that did not execute."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "NOT_RUN"
+
+
+#: ``step_results`` value for a step known not to have executed (as opposed
+#: to a step absent from the mapping, whose outcome is unknown).
+NOT_RUN = _NotRun()
+
+StepResult = tuple[int, bool] | _NotRun
+
+
+def _ran_results(step_results: dict[str, StepResult]) -> list[tuple[int, bool]]:
+    """The ``(rc, abended)`` results of the steps that actually ran."""
+    return [r for r in step_results.values() if not isinstance(r, _NotRun)]
+
+
 class ConditionNode:
     """Base class for all condition expression nodes."""
 
-    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
+    def evaluate(self, step_results: dict[str, StepResult]) -> bool | None:
         """
         Evaluate the condition against known step results.
 
         Args:
             step_results: Mapping of *uppercase* step name to
-                ``(return_code, abended)`` tuples.
+                ``(return_code, abended)`` tuples, or :data:`NOT_RUN` for a
+                step known not to have executed.
 
         Returns:
             ``True`` or ``False`` when all referenced steps are present,
-            ``None`` when a referenced step has not yet run.
+            ``None`` when a referenced step's outcome is unknown.
         """
         raise NotImplementedError
 
@@ -71,16 +98,19 @@ class ReturnCodeCondition(ConditionNode):
     operator: str  # EQ NE LT GT LE GE
     value: int
 
-    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
+    def evaluate(self, step_results: dict[str, StepResult]) -> bool | None:
         if self.step_name:
             result = step_results.get(self.step_name.upper())
             if result is None:
                 return None
+            if isinstance(result, _NotRun):
+                return False  # IBM: a test of a step that did not run is false
             rc = result[0]
         else:
-            if not step_results:
+            ran = _ran_results(step_results)
+            if not ran:
                 return None
-            rc = max(result[0] for result in step_results.values())
+            rc = max(r[0] for r in ran)
 
         op, v = self.operator, self.value
         if op == "EQ":
@@ -104,15 +134,18 @@ class AbendCondition(ConditionNode):
 
     step_name: str | None
 
-    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
+    def evaluate(self, step_results: dict[str, StepResult]) -> bool | None:
         if self.step_name:
             result = step_results.get(self.step_name.upper())
             if result is None:
                 return None
+            if isinstance(result, _NotRun):
+                return False
             return result[1]
-        if not step_results:
+        ran = _ran_results(step_results)
+        if not ran:
             return None
-        return any(result[1] for result in step_results.values())
+        return any(r[1] for r in ran)
 
 
 @dataclass
@@ -121,10 +154,11 @@ class RunCondition(ConditionNode):
 
     step_name: str | None
 
-    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
+    def evaluate(self, step_results: dict[str, StepResult]) -> bool | None:
         if self.step_name:
-            return self.step_name.upper() in step_results
-        return bool(step_results)
+            result = step_results.get(self.step_name.upper())
+            return result is not None and not isinstance(result, _NotRun)
+        return bool(_ran_results(step_results))
 
 
 @dataclass
@@ -133,7 +167,7 @@ class NotCondition(ConditionNode):
 
     operand: ConditionNode
 
-    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
+    def evaluate(self, step_results: dict[str, StepResult]) -> bool | None:
         inner = self.operand.evaluate(step_results)
         return None if inner is None else not inner
 
@@ -145,7 +179,7 @@ class AndCondition(ConditionNode):
     left: ConditionNode
     right: ConditionNode
 
-    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
+    def evaluate(self, step_results: dict[str, StepResult]) -> bool | None:
         lv = self.left.evaluate(step_results)
         rv = self.right.evaluate(step_results)
         if lv is False or rv is False:
@@ -162,7 +196,7 @@ class OrCondition(ConditionNode):
     left: ConditionNode
     right: ConditionNode
 
-    def evaluate(self, step_results: dict[str, tuple[int, bool]]) -> bool | None:
+    def evaluate(self, step_results: dict[str, StepResult]) -> bool | None:
         lv = self.left.evaluate(step_results)
         rv = self.right.evaluate(step_results)
         if lv is True or rv is True:
@@ -203,6 +237,9 @@ _OP_MAP: dict[str, str] = {
     "^>": "LE",
     "~>": "LE",
     "!>": "LE",
+    # Mnemonic NOT-greater-than / NOT-less-than
+    "NG": "LE",
+    "NL": "GE",
 }
 
 # Symbolic Boolean operators (IBM: & is AND, | is OR, ¬ is NOT; ^ and ~ stand in

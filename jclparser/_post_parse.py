@@ -24,7 +24,7 @@ from typing import Any
 
 from ._model_factories import _has_unresolved_symbol_ref
 from .errors import JCLStructureError, JCLSyntaxError
-from .model import Job, Step
+from .model import Job, Step, iter_execution_steps
 
 logger = logging.getLogger(__name__)
 
@@ -130,13 +130,10 @@ def load_external_procedures(
         job._proc_loader = proc_loader
 
         # Try to load any external PROCs that were referenced but not found inline
-        # This happens when EXEC PROC is used but PROC is not defined inline
-        for step in job.steps:
-            if (
-                isinstance(step, Step)
-                and step.procedure
-                and not job.get_procedure(step.procedure)
-            ):
+        # This happens when EXEC PROC is used but PROC is not defined inline.
+        # A call inside an IF/THEN/ELSE block is a call all the same.
+        for step in iter_execution_steps(job.steps):
+            if step.procedure and not job.get_procedure(step.procedure):
                 # Try to load external PROC
                 libraries_list = list(job.jcllib_order) if job.jcllib_order else None
                 proc = proc_loader.load_procedure(step.procedure, libraries_list)
@@ -152,12 +149,8 @@ def load_external_procedures(
     else:
         # External loading disabled or no JCLLIB - check for missing PROCs in strict mode
         if strict_mode:
-            for step in job.steps:
-                if (
-                    isinstance(step, Step)
-                    and step.procedure
-                    and not job.get_procedure(step.procedure)
-                ):
+            for step in iter_execution_steps(job.steps):
+                if step.procedure and not job.get_procedure(step.procedure):
                     reason = (
                         "external PROC loading is disabled"
                         if not enable_external_procs

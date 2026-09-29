@@ -12,8 +12,12 @@ specifications.
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from .base import ProgramAnalysis, ProgramProfile, _sysin_text
+
+if TYPE_CHECKING:
+    from ..model import Step
 
 _RE_SORT_FIELDS = re.compile(r"\bSORT\s+FIELDS\s*=", re.IGNORECASE)
 _RE_INCLUDE = re.compile(r"\bINCLUDE\b", re.IGNORECASE)
@@ -21,13 +25,18 @@ _RE_OMIT = re.compile(r"\bOMIT\b", re.IGNORECASE)
 _RE_INREC = re.compile(r"\bINREC\b", re.IGNORECASE)
 _RE_OUTREC = re.compile(r"\bOUTREC\b", re.IGNORECASE)
 _RE_MERGE = re.compile(r"\bMERGE\s+FIELDS\s*=", re.IGNORECASE)
+# A ``*`` in column 1 makes a DFSORT comment statement.
+_RE_COMMENT_LINE = re.compile(r"^\s*\*.*$", re.MULTILINE)
 
 
 class SortProfile(ProgramProfile):
     program_names = frozenset({"SORT", "DFSORT", "ICEMAN", "SORTD", "SYNCSORT"})
 
-    def analyze(self, step) -> ProgramAnalysis:
-        text = _sysin_text(step) or ""
+    def analyze(self, step: Step) -> ProgramAnalysis:
+        raw = _sysin_text(step) or ""
+        # Comment statements are not control statements: ``* OMIT ...`` must
+        # not read as an OMIT filter.
+        text = _RE_COMMENT_LINE.sub("", raw)
         notes: list[str] = []
 
         if _RE_SORT_FIELDS.search(text):
@@ -61,5 +70,5 @@ class SortProfile(ProgramProfile):
             summary=summary,
             dataset_events=[],
             notes=notes,
-            raw_control=text or None,
+            raw_control=raw or None,
         )

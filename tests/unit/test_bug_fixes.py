@@ -164,12 +164,15 @@ class TestDispositionHelpers:
         assert self._make_dd(["MOD", "KEEP"]).is_output() is True
 
     def test_is_output_catlg(self):
-        assert self._make_dd(["SHR", "CATLG"]).is_output() is True
+        """Only the status decides: cataloging an existing dataset writes nothing."""
+        assert self._make_dd(["SHR", "CATLG"]).is_output() is False
+        assert self._make_dd(["NEW", "CATLG"]).is_output() is True
 
     def test_is_output_uncatlg(self):
-        """UNCATLG must now be recognised as an output disposition."""
-        assert self._make_dd(["OLD", "UNCATLG"]).is_output() is True
-        assert self._make_dd("UNCATLG").is_output() is True
+        """UNCATLG (normal or abnormal disposition) does not make a DD an output."""
+        assert self._make_dd(["OLD", "UNCATLG"]).is_output() is False
+        assert self._make_dd(["OLD", "KEEP", "UNCATLG"]).is_output() is False
+        assert self._make_dd(["MOD", "UNCATLG"]).is_output() is True
 
     def test_is_output_omitted_status_catlg(self):
         """DISP=(,CATLG,DELETE) — empty first field, CATLG in second."""

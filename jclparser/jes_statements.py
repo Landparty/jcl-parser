@@ -210,9 +210,11 @@ def parse_jes_control(command: str, params: str, line_number: int = 0) -> Any:
         )
 
     if cmd_upper == "ROUTE":
+        # ``/*ROUTE PRINT RMT5  comment``: subcommand, then the destination's
+        # operand field -- the text after it is a comment.
         parts = raw.split(None, 1)
         sub = parts[0].upper() if parts else None
-        dest = parts[1].strip() if len(parts) > 1 else None
+        dest = (_operand_field(parts[1].strip()) or None) if len(parts) > 1 else None
         return RouteStatement(
             name=command,
             raw=raw,
@@ -224,7 +226,11 @@ def parse_jes_control(command: str, params: str, line_number: int = 0) -> Any:
     if cmd_upper == "XMIT":
         parts = raw.split(None, 1)
         dest = parts[0] if parts else None
-        kv = _split_keyword_params(parts[1]) if len(parts) > 1 else {}
+        kv = (
+            _split_keyword_params(_operand_field(parts[1].strip()))
+            if len(parts) > 1
+            else {}
+        )
         return XmitStatement(
             name=command,
             raw=raw,
@@ -246,7 +252,7 @@ def parse_jes_control(command: str, params: str, line_number: int = 0) -> Any:
             name=command,
             raw=raw,
             line_number=line_number,
-            account=raw or None,
+            account=_operand_field(raw) or None,
         )
 
     if cmd_upper == "NOTIFY":
@@ -254,12 +260,13 @@ def parse_jes_control(command: str, params: str, line_number: int = 0) -> Any:
             name=command,
             raw=raw,
             line_number=line_number,
-            destination=raw or None,
+            destination=_operand_field(raw) or None,
         )
 
     if cmd_upper == "PRIORITY":
+        operand = _operand_field(raw)
         try:
-            value = int(raw) if raw else None
+            value = int(operand) if operand else None
         except ValueError:
             value = None
         return PriorityStatement(
