@@ -15,7 +15,11 @@ from pathlib import Path
 
 from .errors import JCLSyntaxError, JCLValidationError
 from .model import Procedure
-from .utils import _read_file_with_fallback, is_within_directory
+from .utils import (
+    MAX_LIBRARY_MEMBER_BYTES,
+    _read_file_with_fallback,
+    is_within_directory,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +132,9 @@ class JCLLIBProcedureLoader(ProcedureLoader):
 
     Reads procedure definitions from files in specified library directories.
     Supports environment variable JCL_PROCLIB_PATH for base path configuration.
+    With neither a base path nor that variable it reads no files at all: the
+    process's working directory is never searched implicitly, since JCLLIB
+    ORDER comes from the JCL being parsed.
     """
 
     def __init__(self, base_path: Path | None = None):
@@ -135,14 +142,14 @@ class JCLLIBProcedureLoader(ProcedureLoader):
         Initialize JCLLIB loader.
 
         Args:
-            base_path: Base directory for procedure libraries
-                      (defaults to JCL_PROCLIB_PATH env var or current directory)
+            base_path: Base directory for procedure libraries (defaults to the
+                JCL_PROCLIB_PATH env var; with neither, no library is searched)
         """
         if base_path is None:
             env_path = os.environ.get("JCL_PROCLIB_PATH")
-            base_path = Path(env_path) if env_path else Path.cwd()
+            base_path = Path(env_path) if env_path else None
 
-        self.base_path = Path(base_path)
+        self.base_path: Path | None = Path(base_path) if base_path is not None else None
         self._cache: dict = {}
 
     def load_procedure(
@@ -180,7 +187,11 @@ class JCLLIBProcedureLoader(ProcedureLoader):
         returns a mapping of library_name -> sorted list of PROC names.
         """
         result: dict[str, list[str]] = {}
-        if not self.base_path.exists() or not self.base_path.is_dir():
+        if (
+            self.base_path is None
+            or not self.base_path.exists()
+            or not self.base_path.is_dir()
+        ):
             return result
         for lib_dir in sorted(self.base_path.iterdir()):
             if not lib_dir.is_dir():
@@ -208,6 +219,8 @@ class JCLLIBProcedureLoader(ProcedureLoader):
         Returns:
             Procedure if found, None otherwise
         """
+        if self.base_path is None:
+            return None
         # Construct library path
         library_path = self.base_path / library
 
@@ -260,7 +273,9 @@ class JCLLIBProcedureLoader(ProcedureLoader):
         """
         try:
             # Read the file content once using the shared encoding-fallback reader
-            content = _read_file_with_fallback(file_path)
+            content = _read_file_with_fallback(
+                file_path, max_bytes=MAX_LIBRARY_MEMBER_BYTES
+            )
             return _build_procedure_from_content(content, proc_name)
         except (JCLSyntaxError, JCLValidationError, OSError, ValueError) as exc:
             # Parsing/reading failed - log the cause and return None so the

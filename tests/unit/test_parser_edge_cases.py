@@ -86,10 +86,10 @@ class TestValidationEdgeCases:
             validate_jcl(nonexistent)
 
     def test_validate_nonexistent_file_string(self):
-        """Test validation with non-existent file as string."""
-        # validate_jcl tries to parse first, which raises FileNotFoundError
+        """A file name passed as str is content, never opened; a Path is."""
+        validate_jcl("nonexistent_file_12345.jcl")  # parsed as text, no I/O
         with pytest.raises(FileNotFoundError):
-            validate_jcl("nonexistent_file_12345.jcl")
+            validate_jcl(Path("nonexistent_file_12345.jcl"))
 
     def test_validate_semantic_level(self):
         """Test semantic validation level."""

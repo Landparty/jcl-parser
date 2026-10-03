@@ -12,7 +12,7 @@ timestamp: 2026-09-16T00:00:00Z
 
 ```
 Input (string / file / IO)
-  → [1] read_source()                     utils.py          — resolves str/Path/file-like to text; file reads fall back utf-8 → latin-1 → cp1252
+  → [1] read_source()                     utils.py          — a str is always content, a Path is read, a file-like is read(); file reads fall back utf-8 → latin-1 → cp1252
   → [2] ContinuationLineHandler.process() continuation_handler.py — merges col-71 continuations
   → [3] resolve_includes()                include_loader.py [optional] — expands // INCLUDE
   → [4] parse_jcl() core loop             parser.py         — orchestrates; statement-line parsing lives in _statement_parser.py, model assembly in _job_builder.py (JobBuilder) + _model_factories.py, post-parse passes in _post_parse.py

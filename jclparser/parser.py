@@ -81,6 +81,7 @@ from .plugins import ParserConfig, get_plugin_registry
 from .profiling import ProfilerContext, ProfilingResult
 from .utils import (
     POSITIONAL_PARAM_PREFIX,  # noqa: F401
+    instream_delimiter,
     is_positional_key,
     normalize_jcl_line,
     read_source,
@@ -264,39 +265,27 @@ def _merge_source_lines(
 def _instream_delimiter(operands: str) -> tuple[str, bool] | None:
     """Return ``(delimiter, ends_at_slash)`` if a DD's operands open in-stream data.
 
-    In-stream data starts at ``DD *`` / ``DD DATA`` / any DD with an explicit
-    ``DLM=``. *operands* is the DD's whole operand field (continuations
-    joined, comment field removed). ``DD *`` without ``DLM=`` also ends at the
-    next ``//`` record; ``DD DATA`` does not, so ``//`` can be data.
+    *operands* is the DD's whole operand field (continuations joined, comment
+    field removed). They are tokenized exactly as the JobBuilder tokenizes
+    them and judged by the same :func:`~jclparser.utils.instream_delimiter`
+    rule, so the pre-scan can never mark records as data that the builder
+    then has no DD to attach to (the old substring test did, for any DD
+    mentioning ``DLM=``, silently dropping the rest of the job).
     """
-    first_operand = operands.split(",", 1)[0].strip().upper()
-    is_star = first_operand == "*"
-    upper_operands = operands.upper()
-    has_dlm = "DLM=" in upper_operands
-    if not (is_star or first_operand == "DATA" or has_dlm):
+    try:
+        parameters = _parse_parameters(operands)
+    except JCLSyntaxError:
+        # Unbalanced operands: the statement parser reports them; no data.
         return None
-    delimiter = "/*"
-    if has_dlm:
-        dlm_start = upper_operands.index("DLM=") + 4
-        dlm_end = dlm_start
-        if operands[dlm_start : dlm_start + 1] == "'":
-            # Quoted: ``DLM='$)'`` may hold ``,`` or ``)``; ``''`` is a quote.
-            dlm_end += 1
-            while dlm_end < len(operands):
-                if operands[dlm_end] == "'":
-                    if operands[dlm_end + 1 : dlm_end + 2] != "'":
-                        dlm_end += 1
-                        break
-                    dlm_end += 1
-                dlm_end += 1
-        while dlm_end < len(upper_operands) and upper_operands[dlm_end] not in (
-            ",) \t\r\n"
-        ):
-            dlm_end += 1
-        delimiter = operands[dlm_start:dlm_end]
-        if delimiter.startswith("'") and delimiter.endswith("'"):
-            delimiter = delimiter[1:-1]
-    return delimiter, is_star and not has_dlm
+    instream = instream_delimiter(parameters)
+    if instream is None:
+        return None
+    delimiter, ends_at_slash = instream
+    if not isinstance(delimiter, str):
+        # A malformed DLM= is rejected by the JobBuilder; keep the default
+        # delimiter here so the pre-scan stays in step until then.
+        delimiter = "/*"
+    return delimiter, ends_at_slash
 
 
 def _expects_continuation(lines: list[str], index: int) -> bool:
@@ -531,11 +520,13 @@ def parse_jcl(
     Parse JCL script from various input sources into structured Job object.
 
     Args:
-        source: JCL script content as string, file path, or file-like object
+        source: JCL text as a ``str``, a :class:`pathlib.Path` naming a file,
+            or a file-like object. A ``str`` is always content, never a path.
         strict_mode: Enable strict parsing mode
         config: Optional parser configuration
         proc_base_path: Base directory for external PROC libraries
-                       (defaults to JCL_PROCLIB_PATH env var or current directory)
+                       (defaults to the JCL_PROCLIB_PATH env var; with neither,
+                       no external PROC or INCLUDE member is read)
         enable_external_procs: Enable loading PROCs from file system via JCLLIB ORDER
         include_loader: Optional :class:`~jclparser.include_loader.IncludeMemberLoader`
             used to resolve ``INCLUDE MEMBER=name`` statements before parsing.

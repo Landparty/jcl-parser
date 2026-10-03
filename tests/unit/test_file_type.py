@@ -132,14 +132,14 @@ class TestSourceTypes:
         assert result == FileType.JCL
 
     def test_from_string_path(self):
-        """Test detection from string path."""
+        """A str is content, not a path: a file name is never opened."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jcl", delete=False) as f:
             f.write("//MYPROC PROC\n//STEP1 EXEC PGM=IEFBR14\n//PEND")
             temp_path = f.name
 
         try:
-            result = detect_file_type(temp_path)
-            assert result == FileType.PROC
+            assert detect_file_type(Path(temp_path)) == FileType.PROC
+            assert detect_file_type(temp_path) != FileType.PROC
         finally:
             os.unlink(temp_path)
 

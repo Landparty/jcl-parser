@@ -21,12 +21,12 @@ class TestReadSource:
         with pytest.raises(FileNotFoundError):
             read_source(tmp_path / "nope.jcl")
 
-    def test_string_with_jcl_extension_reads_file(self, tmp_path: Path):
+    def test_string_with_jcl_extension_is_content(self, tmp_path: Path):
         f = tmp_path / "job.jcl"
         f.write_text("//J JOB\n")
-        assert read_source(str(f)) == "//J JOB\n"
+        assert read_source(str(f)) == str(f)
 
-    def test_plain_string_naming_existing_file_is_read(
+    def test_plain_string_naming_existing_file_is_not_read(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         # No extension and no separator in the name, but it exists on disk.
@@ -34,7 +34,7 @@ class TestReadSource:
         f.write_text("//STEP EXEC PGM=X\n")
         # Pass just the file name while cwd is tmp_path so there is no separator.
         monkeypatch.chdir(tmp_path)
-        assert read_source("PROCMEMB") == "//STEP EXEC PGM=X\n"
+        assert read_source("PROCMEMB") == "PROCMEMB"
 
     def test_plain_jcl_content_returned_as_is(self):
         content = "//J JOB\n//S EXEC PGM=X\n"

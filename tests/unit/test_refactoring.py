@@ -248,24 +248,18 @@ class TestReadSource:
         jcl_file.write_text("//MYJOB JOB\n")
         assert read_source(jcl_file) == "//MYJOB JOB\n"
 
-    def test_path_string_with_jcl_extension(self, tmp_path):
+    def test_path_string_with_jcl_extension_is_content(self, tmp_path):
         from jclparser.utils import read_source
 
         jcl_file = tmp_path / "test.jcl"
         jcl_file.write_text("//MYJOB JOB\n")
-        assert read_source(str(jcl_file)) == "//MYJOB JOB\n"
+        assert read_source(str(jcl_file)) == str(jcl_file)
 
     def test_missing_path_raises_file_not_found(self, tmp_path):
         from jclparser.utils import read_source
 
         with pytest.raises(FileNotFoundError):
             read_source(tmp_path / "nonexistent.jcl")
-
-    def test_missing_path_string_raises_file_not_found(self, tmp_path):
-        from jclparser.utils import read_source
-
-        with pytest.raises(FileNotFoundError):
-            read_source(str(tmp_path / "nonexistent.jcl"))
 
     def test_jcl_content_string_not_treated_as_path(self):
         from jclparser.utils import read_source

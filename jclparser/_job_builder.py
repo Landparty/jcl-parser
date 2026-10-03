@@ -53,7 +53,12 @@ from .model import (
     Statement,
     Step,
 )
-from .utils import POSITIONAL_PARAM_PREFIX, is_positional_key, jcl_value_text
+from .utils import (
+    POSITIONAL_PARAM_PREFIX,
+    instream_delimiter,
+    is_positional_key,
+    jcl_value_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -363,11 +368,8 @@ class JobBuilder:
             self.current_step.add_dd(current_dd)
 
         # Check for inline data marker (only for non-override DDs)
-        has_star_pos = any(
-            v == "*" for k, v in current_dd.parameters.items() if is_positional_key(k)
-        )
-        is_star_dd = bool(current_dd.parameters.get("*") or has_star_pos)
-        if current_dd and (is_star_dd or "DATA" in current_dd.parameters):
+        instream = instream_delimiter(current_dd.parameters)
+        if instream is not None:
             logger.debug(
                 "inline-data block started at DD %s (line %d)",
                 current_dd.name or "(unnamed)",
@@ -375,21 +377,15 @@ class JobBuilder:
             )
             self.in_inline_data = True
             self.inline_data_lines = []
-            has_dlm = "DLM" in current_dd.parameters
-            current_delimiter = current_dd.parameters.get("DLM", "/*")
+            current_delimiter, terminates_on_slash = instream
             if not isinstance(current_delimiter, str):
                 raise JCLSyntaxError(
                     f"DLM= must be a one- or two-character delimiter, got "
                     f"{jcl_value_text(current_delimiter)}",
                     line_num,
                 )
-            # Handle quoted delimiter
-            if current_delimiter.startswith("'") and current_delimiter.endswith("'"):
-                current_delimiter = current_delimiter[1:-1]
             self.current_delimiter = current_delimiter
-            # ``DD *`` without an explicit ``DLM=`` also terminates at the
-            # next ``//`` record; ``DD DATA`` does not (so // can be data).
-            self.current_terminates_on_slash = is_star_dd and not has_dlm
+            self.current_terminates_on_slash = terminates_on_slash
 
     def _on_proc(self, stmt: Statement) -> None:
         # Inline procedure definition - start tracking procedure

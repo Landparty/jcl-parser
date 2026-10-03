@@ -40,6 +40,11 @@ from .utils import jcl_value_text
 
 logger = logging.getLogger(__name__)
 
+#: Default ``max_steps`` for :func:`explode_job`. z/OS itself allows at most
+#: 255 steps in a job, PROC steps included, so a real job stays far below this;
+#: the limit only exists to stop a runaway PROC fan-out early.
+DEFAULT_MAX_STEPS: int = 10_000
+
 
 # Single-pass pattern: matches && (escaped ampersand) OR &SYMBOL with optional trailing period
 _SYMBOL_SUB_PATTERN = re.compile(r"&&|&([A-Z0-9@#$]+)\.?")
@@ -1197,7 +1202,7 @@ def explode_job(
     job: Job,
     proc_loader: ProcedureLoader | None = None,
     max_depth: int = 10,
-    max_steps: int = 0,
+    max_steps: int = DEFAULT_MAX_STEPS,
     audit: bool = True,
     system_provider: SystemSymbolProvider | None = None,
     strict_symbols: bool = False,
@@ -1212,8 +1217,10 @@ def explode_job(
         job: Original job with procedure invocations
         proc_loader: Procedure loader (defaults to inline + JCLLIB)
         max_depth: Maximum procedure nesting depth
-        max_steps: Maximum total expanded steps (0 = unlimited). Protects against
-                   runaway step proliferation when a PROC is called many times.
+        max_steps: Maximum total expanded steps (0 = unlimited; default
+                   :data:`DEFAULT_MAX_STEPS`). Checked as each step is
+                   produced, so a PROC fan-out stops at the limit instead of
+                   being built in full first.
         audit: Whether to generate audit logs
         system_provider: System symbol provider (defaults to mock provider)
         strict_symbols: If True, raise errors for undefined symbols
@@ -1274,6 +1281,9 @@ def explode_job(
                     f"limit or check for runaway PROC expansion."
                 )
 
+    def _count_one_step() -> None:
+        _check_step_limit(1)
+
     # Process steps
     def _step_scope(step: Step) -> SymbolScope:
         # A step read before a later SET redefined a symbol resolves it to the
@@ -1327,8 +1337,8 @@ def explode_job(
                     strict_symbols=strict_symbols,
                     jcllib_order=job.jcllib_order or None,
                     warnings=explosion_warnings,
+                    on_step=_count_one_step,
                 )
-                _check_step_limit(len(expanded))
                 result.extend(expanded)
             else:
                 # Regular step - just substitute symbols
@@ -1430,6 +1440,7 @@ def _explode_step(
     jcllib_order: list[str] | None = None,
     call_chain_upper: frozenset | None = None,
     warnings: list[str] | None = None,
+    on_step: Callable[[], None] | None = None,
 ) -> list[Step]:
     """
     Recursively explode a single step.
@@ -1450,6 +1461,10 @@ def _explode_step(
         warnings: List to append symbol-substitution diagnostics to (e.g. an
                   undefined &SYMBOL referenced inside the PROC body). None
                   means diagnostics are discarded, matching audit_records.
+        on_step: Called once for every plain (non-PROC) step this produces,
+                 before it is added, at every nesting level -- the hook
+                 ``explode_job`` enforces ``max_steps`` through, so a fan-out
+                 is stopped while it is being built.
 
     Returns:
         List of exploded steps
@@ -1470,6 +1485,8 @@ def _explode_step(
 
     proc_name = step.procedure
     if not proc_name:
+        if on_step is not None:
+            on_step()
         return [step]
 
     logger.debug("expanding PROC %s at depth %d", proc_name, depth)
@@ -1575,9 +1592,12 @@ def _explode_step(
                     strict_symbols=strict_symbols,
                     jcllib_order=jcllib_order,
                     warnings=warnings,
+                    on_step=on_step,
                 )
                 result.extend(nested)
             else:
+                if on_step is not None:
+                    on_step()
                 result.append(s)
         return result
 
