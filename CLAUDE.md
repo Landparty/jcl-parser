@@ -6,11 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 >
 > **Documentation index:** [`.okf/index.md`](.okf/index.md) — OKF knowledge bundle; start here for all reference topics (pipeline, API tiers, PROC chain, invariants, task → file map, backend contract).
 >
-> **One doc tree only.** `index.md`, `log.md`, `core/`, `api/`, `advanced/`, `development/` and
-> `integration/` at the repo root are a **pre-OKF duplicate** that predates the `.okf/` bundle.
-> They are stale and unlinked — do not edit or cite them; every reference link above points into
-> `.okf/`. (Doc updates have twice landed in the root copy instead of the bundle, most recently
-> in `e739f1d`; that is why the bundle missed the 2026-09-02 parser fixes.)
+> **One doc tree only.** `.okf/` is the only documentation tree. A stale pre-OKF copy
+> (`index.md`, `log.md`, `core/`, `api/`, … at the repo root) was deleted on 2026-10-03 after doc
+> updates twice landed there instead of the bundle; do not recreate it.
 
 ## Project Overview
 
@@ -121,7 +119,7 @@ Set `JCL_PROCLIB_PATH` env var or pass `proc_base_path` to `parse_jcl()`. Layout
 2. **Column 71 is the continuation boundary** — column 72 is the continuation indicator, 73-80 the sequence field; `normalize_jcl_line()` strips both from fixed-format records and `ContinuationLineHandler` merges what is left. Never pass pre-stripped lines.
 3. **`ConditionalBlock.condition` (raw string) is authoritative** — `condition_ast` may be `None` if the expression was unparseable; always use `condition` for display.
 4. **`&&` is an escaped ampersand in JCL** — symbol substitution replaces `&NAME` → value and `&&` → `&`, except in a dataset name, where `&&TEMP` is a temporary dataset and is kept. Handled in `explosion.py`.
-5. **mypy strict is not yet clean** — known violations in `profiling.py`, `explosion.py`, and the parser modules (`parser.py` / `_statement_parser.py` / `_post_parse.py`). Add annotations when touching a file; never widen the config.
+5. **mypy strict is not yet clean** — known violations in `profiling.py`, `explosion.py`, and the parser modules (`parser.py` / `_statement_parser.py` / `_post_parse.py`). Add annotations when touching a file; never widen the config. CI's `typecheck` job runs `scripts/mypy_ratchet.py`, which fails only on errors missing from `mypy-baseline.txt`; after fixing errors, shrink it with `python scripts/mypy_ratchet.py --update` (mypy 2.4.0, as pinned in CI).
 6. **Coverage floor is 90%** — every `pytest` run enforces it. Add tests alongside any new module.
 7. **A statement's operand field ends at the first blank** outside quotes/parens — the rest is a comment field, stripped before continuation merging (`split_comment_field()`). `IF`/`THEN`/`ELSE`/`ENDIF` are exempt.
 

@@ -24,6 +24,19 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
 
+  # mypy strict still reports known errors (CLAUDE.md invariant 5), so this
+  # fails only on errors missing from mypy-baseline.txt. After fixing some,
+  # tighten it: python scripts/mypy_ratchet.py --update (same mypy version).
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install "mypy==2.4.0"
+      - run: python scripts/mypy_ratchet.py
+
   test:
     runs-on: ubuntu-latest
     strategy:

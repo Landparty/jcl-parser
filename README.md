@@ -51,7 +51,7 @@ rm -rf ../backend/_vendor/jcl-parser/jclparser && cp -r jclparser/ ../backend/_v
 
 ## Documentation
 
-Full reference: [`index.md`](index.md)
+Full reference: [`.okf/index.md`](.okf/index.md)
 
 ## License
 
