@@ -245,7 +245,7 @@ def _merge_states(
     merged: dict[str, _CatalogState] = {}
     # dict.fromkeys, not ``keys() | keys()``: keeps a stable order, and the
     # set union of two key views crashes Cython's OptimizeBuiltinCalls pass
-    # in the closed-source build.
+    # if the module is ever compiled.
     for dsn in dict.fromkeys([*then_state, *else_state]):
         t_cat, t_uncat = then_state.get(dsn, (None, None))
         e_cat, e_uncat = else_state.get(dsn, (None, None))

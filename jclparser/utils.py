@@ -90,12 +90,9 @@ def _read_file_with_fallback(path: Path) -> str:
     Returns:
         File content as a string.
     """
-    # Via the `builtins` module rather than a bare `open(...)` call: this
-    # module is cythonized for the closed-source PyPI release build (see
-    # setup.py), and Cython caches a bare builtin name's target at first
-    # use, which is invisible to a `unittest.mock.patch("builtins.open")`
-    # made afterward. Routing through the module object keeps every call a
-    # live attribute lookup, matching plain-Python monkeypatch semantics.
+    # Via the `builtins` module rather than a bare `open(...)` call, so a
+    # `unittest.mock.patch("builtins.open")` is honoured even if this module
+    # is ever compiled (Cython caches a bare builtin name at first use).
     # utf-8-sig reads plain UTF-8 too, and drops a byte-order mark.
     for encoding in ("utf-8-sig", "latin-1", "cp1252"):
         try:

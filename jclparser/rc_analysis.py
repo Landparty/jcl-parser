@@ -282,10 +282,9 @@ def compute_feasible_paths(
     """
     report = FeasibilityReport()
     optional_steps = _collect_optional_steps(job)
-    # Not a ternary: Cython's type inference tries to unify the two
-    # differently-sized tuple literals of a single conditional expression
-    # into one C-level type and rejects it (this module is cythonized for
-    # the closed-source PyPI release build -- see setup.py).
+    # Not a ternary: Cython's type inference rejects unifying two
+    # differently-sized tuple literals in one conditional expression, and
+    # this keeps the module compilable.
     abend_values: tuple[bool, ...]
     if include_abends:
         abend_values = (False, True)
