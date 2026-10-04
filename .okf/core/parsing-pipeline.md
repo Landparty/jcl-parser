@@ -3,7 +3,7 @@ type: Pipeline
 title: JCL Parsing Pipeline
 description: Seven-stage pipeline that transforms raw JCL text into a structured Job object; stages 1, 2, and 4 are mandatory.
 tags: [parsing, pipeline, core]
-timestamp: 2026-09-16T00:00:00Z
+timestamp: 2026-10-04T00:00:00Z
 ---
 
 # Overview
@@ -12,7 +12,7 @@ timestamp: 2026-09-16T00:00:00Z
 
 ```
 Input (string / file / IO)
-  → [1] read_source()                     utils.py          — a str is always content, a Path is read, a file-like is read(); file reads fall back utf-8 → latin-1 → cp1252
+  → [1] read_source()                     utils.py          — a str is always content, a Path is read, a file-like is read(); file reads try utf-8 (BOM dropped) → latin-1 → cp1252
   → [2] ContinuationLineHandler.process() continuation_handler.py — merges col-71 continuations
   → [3] resolve_includes()                include_loader.py [optional] — expands // INCLUDE
   → [4] parse_jcl() core loop             parser.py         — orchestrates; statement-line parsing lives in _statement_parser.py, model assembly in _job_builder.py (JobBuilder) + _model_factories.py, post-parse passes in _post_parse.py
@@ -25,6 +25,9 @@ Input (string / file / IO)
 # Key Behaviors
 
 - `parse_jcl()` **never** expands PROCs — call `explode_job()` separately.
+- **A `str` source is always JCL text, never a file name** (breaking change 2026-10-03, `utils._read_source_raw`). `parse_jcl("job.jcl")` parses the five characters `job.jcl`; to read a file pass `pathlib.Path("job.jcl")` (a missing `Path` raises `FileNotFoundError`) or an open file object. The old guess (one line ending in `.jcl`, containing a slash, or naming an existing file) let uploaded text such as `/etc/passwd` read a server file. Applies to everything that calls `read_source`: `parse_jcl`, `validate_jcl`, `detect_file_type`. A leading UTF-8 BOM is stripped from the content.
+- In-stream data opens only on `DD *` / `DD DATA`: `utils.instream_delimiter(parameters)` is the one rule both the source pre-scan (`_merge_source_lines`) and `JobBuilder` use, so a `DLM=` on any other DD (or inside a quoted `PATH=`) no longer swallows the rest of the job (fixed 2026-10-03).
+- External PROC and INCLUDE libraries are read only from `proc_base_path` or `JCL_PROCLIB_PATH`; with neither, the JCLLIB loaders read nothing (the cwd is never searched), and a member over `utils.MAX_LIBRARY_MEMBER_BYTES` (4 MiB) is refused with a warning (since 2026-10-03).
 - Comment lines (`//*`) are **dropped** — there is no `job.statements` field and no
   `Statement(type="COMMENT")` in the model. The one exception is a JES3 `//*ROUTE XEQ`
   card, recorded in `job.jes_typed_statements` before the comment is discarded. See

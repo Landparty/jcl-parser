@@ -1,14 +1,14 @@
 ---
 type: Development Workflow
 title: Development Workflow
-description: Install, test, lint, vendor sync, version bump, and task-to-file map for jcl-parser contributors.
+description: Install, test, lint, mypy ratchet, CI, vendor sync, version bump, release, module inventory and task-to-file map for jcl-parser contributors.
 tags: [development, workflow, testing, tooling]
-timestamp: 2026-07-24T12:00:00Z
+timestamp: 2026-10-04T00:00:00Z
 ---
 
 # Overview
 
-Python 3.10+, no runtime dependencies. Dev toolchain: `pytest`, `ruff`, `mypy`.
+Python 3.10+ (CI tests 3.10, 3.11, 3.12, 3.13), no runtime dependencies. Dev toolchain: `pytest`, `ruff`, `mypy`. Licensed AGPL-3.0-or-later (`LICENSE`).
 
 # Diagnostic Logging
 
@@ -41,15 +41,30 @@ pytest tests/unit/test_parser_api.py::Class::method # single test
 
 Coverage: minimum 90% (`--cov-fail-under=90`), branch coverage enabled, HTML to `htmlcov/`, XML to `coverage.xml`. Benchmarks excluded via `norecursedirs`.
 
+Layout: `tests/unit/` (95 `test_*.py` files), `tests/integration/` (15), `tests/benchmarks/` (pytest-benchmark, not collected by default), `tests/fixtures/`. Markers (strict): `unit`, `integration`, `contract`, `performance`, `slow`, `benchmark`.
+
 # Lint / Format / Type-check
 
 ```bash
 ruff check .      # lint (line-length=88, target=py310)
 ruff format .     # format (do not use black)
-mypy jclparser/   # strict mode — not yet clean (known violations in profiling.py, explosion.py, and the parser modules parser.py/_statement_parser.py/_post_parse.py)
+mypy jclparser/   # strict mode — not yet clean (88 known errors across ~25 modules, recorded in mypy-baseline.txt)
+python scripts/mypy_ratchet.py           # what CI runs: fails only on errors missing from mypy-baseline.txt
+python scripts/mypy_ratchet.py --update  # after fixing errors, shrink the baseline (use mypy 2.4.0, as pinned in CI)
 ```
 
-When touching a file, add type annotations where missing. Do not widen the mypy config.
+When touching a file, add type annotations where missing. Do not widen the mypy config. The ratchet drops line/column numbers when comparing, so code that merely moves does not count as a new error.
+
+# CI (`.github/workflows/ci.yml`)
+
+| Job | Runs | What |
+|-----|------|------|
+| `lint` | push to `main`, PRs, dispatch | `ruff check .` + `ruff format --check .` (Python 3.13) |
+| `typecheck` | push to `main`, PRs, dispatch | `scripts/mypy_ratchet.py` with `mypy==2.4.0` (Python 3.13) |
+| `test` | push to `main`, PRs, dispatch | `pip install -e .[dev]` + `pytest` on Python 3.10 / 3.11 / 3.12 / 3.13 |
+| `build` | PRs and dispatch only | `python -m build` (sdist + pure-Python wheel), `twine check`, install the wheel in a fresh venv and import it outside the tree |
+
+The pre-commit hook (`.githooks/pre-commit` → `scripts/okf_staleness_check.py`) maps source paths to their `.okf/` pages; a change is covered when any mapped page, or `.okf/log.md`, is staged.
 
 # Vendor Sync (required after any jclparser/ change)
 
@@ -67,6 +82,48 @@ which rewrites the line marked `# x-release-please-version`). A manual bump must
 `tests/unit/test_audit_patch_fixes.py::TestPackageMetadata` fails if they differ.
 
 CLI `--version` reads from `__init__.py`, not package metadata.
+
+# Release
+
+`release-please` (`.github/workflows/release-please.yml`, Conventional Commits, `release-please-config.json` / `.release-please-manifest.json`) opens the release PR and, when it is merged, builds an sdist plus one pure-Python `py3-none-any` wheel with `python -m build`, attaches them to the GitHub Release and publishes them to PyPI as `jcl-parser` via Trusted Publishing. `workflow_dispatch` with `target: testpypi` (the default) rehearses the publish against test.pypi.org. There is no `setup.py` and no compiled build — the closed-source Cython build was dropped on 2026-10-03. The PyPI package does not change the backend's vendoring flow.
+
+# Module Inventory
+
+Line counts as of 2026-10-04 (`wc -l`).
+
+| Module | Lines | Role |
+|--------|------:|------|
+| `__init__.py` | 279 | Public API re-exports, `parse()` alias, `__version__` |
+| `__main__.py` | 5 | `python -m jclparser` |
+| `parser.py` | 764 | `parse_jcl()`, `validate_jcl()`, core loop, `_merge_source_lines` |
+| `_statement_parser.py` | 717 | Single-statement parsing, `_STATEMENT_TYPES`, `split_comment_field()`, INCLUDE/JCLLIB pre-scans |
+| `_job_builder.py` | 713 | `JobBuilder` per-statement-type dispatch |
+| `_model_factories.py` | 176 | `Statement` → `Job`/`Step`/`DDStatement` factories, SET-value helpers |
+| `_post_parse.py` | 336 | External PROC loading, `OUTPUT=*.name` refs, SET substitution, strict DD structure |
+| `model.py` | 985 | `Job`, `Step`, `DDStatement`, `ConditionalBlock`, `Procedure`, `Statement`, `OutputStatement`, `Parameter` |
+| `explosion.py` | 1604 | `explode_job()`, `SymbolScope`, DD/EXEC overrides, `DEFAULT_MAX_STEPS` |
+| `proc_loader.py` | 427 | Loader chain, `create_default_loader()` |
+| `builtin_procs.py` | 246 | `BUILTIN_UTILITY_PROCS` last-resort templates |
+| `include_loader.py` | 400 | `resolve_includes()`, member loaders |
+| `continuation_handler.py` | 420 | `ContinuationLineHandler` |
+| `parameter_ast.py` | 397 | Typed parameter AST (`DCBParameter`, `SPACEParameter`, …) |
+| `parameter_validators.py` | 262 | Parameter value validators |
+| `validators.py` | 439 | Structural validation |
+| `condition_parser.py` | 554 | `// IF` condition AST, `NOT_RUN` |
+| `dataset_lifecycle.py` | 407 | Cross-step dataset lifecycle analysis |
+| `rc_analysis.py` | 376 | RC feasibility (`compute_feasible_paths`) |
+| `metrics.py` | 167 | `compute_metrics` |
+| `sql_detector.py` | 232 | SQL / DB2 detection |
+| `jes_statements.py` | 382 | Typed JES2/JES3 control statements |
+| `jcl_file_type.py` | 279 | JCL vs PROC detection |
+| `system_symbols.py` | 253 | System symbol providers |
+| `utils.py` | 228 | `read_source()`, `normalize_jcl_line()`, `instream_delimiter()`, `MAX_LIBRARY_MEMBER_BYTES` |
+| `errors.py` | 173 | Exception hierarchy |
+| `profiling.py` | 147 | `FunctionProfile`, `ProfilingResult` |
+| `cli.py` | 966 | `jcl-parser` CLI |
+| `lint/` (5 files) | 467 | `LintRule`, built-in rules, runner, SARIF |
+| `plugins/` (2 files) | 248 | `ParserConfig`, `ValidationLevel`, plugin registry |
+| `program_profiles/` (26 files) | 2012 | Known-program profiles (SORT, ICETOOL, IDCAMS, IEBGENER, DFSRRC00, …) and registry |
 
 # Common Task → File Map
 

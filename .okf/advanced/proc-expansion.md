@@ -3,7 +3,7 @@ type: Subsystem
 title: PROC Expansion
 description: explode_job() replaces PROC invocations with their full step content and substitutes &SYMBOL parameters; always a separate call from parse_jcl().
 tags: [proc, explosion, symbol-substitution, advanced]
-timestamp: 2026-09-16T00:00:00Z
+timestamp: 2026-10-04T00:00:00Z
 ---
 
 # Overview
@@ -12,18 +12,21 @@ timestamp: 2026-09-16T00:00:00Z
 
 # Loader Chain (priority order)
 
+`create_default_loader(inline_procedures, base_path=None, include_jcllib=True, include_builtins=True)` builds a `CompositeProcedureLoader` of:
+
 ```
-1. Inline PROCs (PROC…PEND in the same JCL)      ← always wins; no override possible
-2. JCLLIB filesystem  (JCL_PROCLIB_PATH env var or proc_base_path arg;
+1. InlineProcedureLoader (PROC…PEND in the same JCL)  ← always wins; no override possible
+2. JCLLIBProcedureLoader  (JCL_PROCLIB_PATH env var or proc_base_path arg;
    with neither, NO files are read -- the cwd is never searched implicitly)
    Layout: <base_path>/<DATASET.NAME>/<PROCNAME>.jcl
    Members over utils.MAX_LIBRARY_MEMBER_BYTES (4 MiB) are refused (warning)
-3. DictProcedureLoader  (user-supplied in-memory dict)
-4. builtin_procs.py   BUILTIN_UTILITY_PROCS  ← last resort
+3. builtin_procs.py   BUILTIN_UTILITY_PROCS  ← last resort (create_builtin_proc_loader)
    Covers: IMS (IMSBATCH, DLIBATCH…), DB2 (DSNUPROC, DSNHICOB), COBOL (IGYWCL…)
        ↓ not found
    ProcedureNotFoundError
 ```
+
+`DictProcedureLoader` (an in-memory `{name: JCL text}` dict) is **not** in the default chain — compose it yourself, e.g. `CompositeProcedureLoader([InlineProcedureLoader(job.procedures), DictProcedureLoader(d), ...])` (keep the inline loader first), and pass it as `proc_loader=`.
 
 **Builtins are structural approximations, not verbatim IBM PROCs.** Safe for static analysis; must not be submitted to a real mainframe.
 

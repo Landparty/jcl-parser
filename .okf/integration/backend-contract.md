@@ -3,7 +3,7 @@ type: Integration Contract
 title: Backend Adapter Contract
 description: Stability contract between jcl-parser and backend/src/parsers/jcl/parser.py (JCLLegacyParser); changes to listed attributes are breaking changes.
 tags: [integration, backend, contract, vendoring]
-timestamp: 2026-09-16T00:00:00Z
+timestamp: 2026-10-04T00:00:00Z
 ---
 
 # Overview
@@ -25,6 +25,8 @@ The backend imports from `backend/_vendor/jcl-parser/`.
 ```python
 job = parse_jcl(content: str)   # returns Job (never None); raises JCLSyntaxError | JCLValidationError | JCLStructureError
 ```
+
+The adapter passes uploaded **text**. Since 2026-10-03 (`fix!`, commit a0c30c9) a `str` is always parsed as JCL content and never opened as a file, whatever it looks like — before, a one-line upload such as `/etc/passwd` or `X.jcl` was read from the server's filesystem. Code that passed a file *name* as a `str` must now pass `pathlib.Path`.
 
 ## 2. job.validate()
 
