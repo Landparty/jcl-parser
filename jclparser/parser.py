@@ -349,8 +349,15 @@ def _parse_jcl_core(
     proc_base_path: str | Path | None = None,
     enable_external_procs: bool = True,
     include_loader: IncludeMemberLoader | None = None,
+    *,
+    validate_job: bool = True,
 ) -> Job:
-    """Core parsing implementation. See parse_jcl() for full documentation."""
+    """Core parsing implementation. See parse_jcl() for full documentation.
+
+    *validate_job* = False skips the strict-mode ``job.validate()`` pass, for
+    :func:`validate_jcl`, which reports those findings itself rather than
+    losing them to a :class:`JCLValidationError` (#57).
+    """
     # The keyword and the config are two ways to ask for strict parsing;
     # either one turns it on.
     strict_mode = strict_mode or (config is not None and config.strict_mode)
@@ -469,7 +476,7 @@ def _parse_jcl_core(
     # Validate the parsed job if in strict mode.  Only ERROR-severity findings
     # are fatal — WARNING/INFO findings (e.g. unresolved OUTPUT back-references,
     # forward dataset references) are advisory and must not break strict parsing.
-    if strict_mode:
+    if strict_mode and validate_job:
         logger.debug("running strict-mode validation for job %s", job.name)
         validation_errors = job.validate()
         fatal = [
@@ -638,20 +645,31 @@ def validate_jcl(
 
     # First try normal parsing to catch basic structure issues
     try:
-        job = parse_jcl(source, strict_mode=True, config=config)
+        # Strict parse for the parse-time structure errors (unresolvable
+        # PROC, orphaned DD), but without the job.validate() pass: strict
+        # mode turns its ERROR findings into one JCLValidationError, which
+        # used to land in the syntax-only fallback below and vanish (#57).
+        job = _parse_jcl_core(
+            source, strict_mode=True, config=config, validate_job=False
+        )
 
-        # Additional validation based on level
-        if effective_level in (ValidationLevel.STRUCTURE, ValidationLevel.SEMANTIC):
-            validation_errors = job.validate()
-            for err in validation_errors:
-                errors.append(
-                    ParseError(
-                        error_type=err.error_type,
-                        message=err.message,
-                        line_number=err.line_number or 0,
-                        severity=err.severity,
-                    )
+        # job.validate() findings.  The basic level reports the ERROR ones --
+        # exactly what makes a strict parse fail; structure and semantic
+        # report every finding, warnings included.
+        for err in job.validate():
+            if (
+                effective_level == ValidationLevel.BASIC
+                and err.severity != ErrorSeverity.ERROR
+            ):
+                continue
+            errors.append(
+                ParseError(
+                    error_type=err.error_type,
+                    message=err.message,
+                    line_number=err.line_number or 0,
+                    severity=err.severity,
                 )
+            )
 
         # Plugin-based validation (opt-in: only the plugins the config enables)
         if effective_level == ValidationLevel.SEMANTIC and config is not None:

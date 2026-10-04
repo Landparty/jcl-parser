@@ -48,7 +48,7 @@ Flags may appear anywhere, including between `FILE` and the query (`jcl-parser F
 | Flag | Description |
 |------|-------------|
 | `--json` | Output as JSON instead of text |
-| `--validate` | `validate_jcl(path, level="structure")`; exits 1 if it reports anything (warnings included), else prints `OK - no errors found.` |
+| `--validate` | `validate_jcl(path, level="structure")`; exits 1 if it reports anything (warnings included; `job.validate()` ERRORs such as a duplicate step name are reported since #57, they used to print `OK`), else prints `OK - no errors found.` |
 | `--explode` | Expand procedure calls (`job.explode()`) before displaying |
 | `--proc-path PATH` | Base path for external PROC libraries (enables `enable_external_procs`) |
 | `--list-available` | With `procs`: list PROCs found under `--proc-path` (requires `--proc-path`) |

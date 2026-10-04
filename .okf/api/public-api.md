@@ -20,7 +20,7 @@ Will not be removed or signature-broken without a major version bump.
 |--------|-------------|
 | `parse_jcl(source, ...)` | Main entry — parses JCL text (`str`), a file (`pathlib.Path`) or an IO; returns `Job` (or `(Job, ProfilingResult)` with `enable_profiling=True`). A `str` is always content, never a file name, whatever it looks like (breaking change 2026-10-03: `parse_jcl("job.jcl")` parses the text `job.jcl`; use `parse_jcl(Path("job.jcl"))`). The same holds for `validate_jcl` and `detect_file_type` |
 | `parse(source, ...)` | Alias for `parse_jcl` |
-| `validate_jcl(source, level="basic")` | `parse_jcl(strict_mode=True)` + structural checks; returns a flat `list[ParseError]` (empty when valid). `level` is a plain `str`: `"basic"` / `"structure"` / `"semantic"` |
+| `validate_jcl(source, level="basic")` | Strict parse + `job.validate()` findings (ERRORs only at `"basic"`, all at `"structure"`/`"semantic"`); returns a flat `list[ParseError]` (empty when valid). `level` is a plain `str`: `"basic"` / `"structure"` / `"semantic"` |
 | `parse_statement(line, line_number=0)` | Parse a single JCL statement line in isolation; returns `Statement \| None` |
 
 ## Model Classes

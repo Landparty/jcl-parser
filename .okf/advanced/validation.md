@@ -36,8 +36,8 @@ errors = job.validate()
 
 | Member | `validate_jcl(level=...)` string | Description |
 |--------|----------------------------------|-------------|
-| `ValidationLevel.BASIC` | `"basic"` (default; `"syntax_only"` is an alias) | Parse-time syntax/structure errors only |
-| `ValidationLevel.STRUCTURE` | `"structure"` | Adds `job.validate()` structural rules. Each finding keeps its own severity and line number (fixed 2026-09-28; they used to be re-wrapped as ERROR at line 0, so e.g. a "Duplicate DD name" WARNING came back as an ERROR) |
+| `ValidationLevel.BASIC` | `"basic"` (default; `"syntax_only"` is an alias) | Parse-time syntax/structure errors, plus the ERROR-severity `job.validate()` findings — exactly what makes `parse_jcl(strict_mode=True)` fail (e.g. "Duplicate step name"). Until 2026-10-04 (#57) those were lost at every level: the strict parse raised `JCLValidationError`, which fell into the syntax-only fallback, so a job with a duplicate step came back `[]` and `--validate` printed `OK` |
+| `ValidationLevel.STRUCTURE` | `"structure"` | Every `job.validate()` finding, WARNING/INFO included. Each finding keeps its own severity and line number (fixed 2026-09-28; they used to be re-wrapped as ERROR at line 0, so e.g. a "Duplicate DD name" WARNING came back as an ERROR) |
 | `ValidationLevel.SEMANTIC` | `"semantic"` | Adds the `ValidationPlugin` checks **enabled by the `config=`** (`ParserConfig.enabled_plugins`, by class name, or `ALL_PLUGINS`; with no config none run — opt-in since 2026-10-04): `validate_job(job)`, then `validate_step(step)` for every step (IF branches included) and `validate_dd(dd)` for each of its DDs. Findings keep the plugin's `line_number` (0 when it gives none) and its `severity` (a plugin's WARNING/INFO stays one; ERROR when it sets none — fixed 2026-09-28, it was always ERROR) |
 
 `level` takes a `ValidationLevel` member or its string value (case-insensitive); an
