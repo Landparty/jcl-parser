@@ -249,12 +249,27 @@ def _merge_source_lines(
         orig_idx = non_inline_orig_indices[ni_line_num - 1]
         merged_start[orig_idx] = merged_line
 
+    # A comment (or blank) record met inside a continued statement is its own
+    # entry, but it must come *before* that merged statement: a DD that opens
+    # in-stream data (``DD *,`` / ``//* c`` / ``//  DLM=$$``) would otherwise
+    # read the comment as its first data record, or end its data at it
+    # (issue #58).  ``stmt_pos`` is the entry of the last statement still
+    # open to continuation records.
     merged_lines: list[tuple[str, int]] = []
+    stmt_pos: int | None = None
     for i, line in enumerate(lines):
         if i in inline_data_indices or i in control_data_indices:
             merged_lines.append((line, i + 1))
+            stmt_pos = None
         elif i in merged_start:
             merged_lines.append((merged_start[i], i + 1))
+            if line.strip() and not line.startswith("//*"):
+                stmt_pos = len(merged_lines) - 1
+        elif stmt_pos is not None and stmt_pos < len(merged_lines) - 1:
+            # A continuation record folded into the statement at stmt_pos,
+            # with comment records in between: move the statement after them.
+            merged_lines.append(merged_lines.pop(stmt_pos))
+            stmt_pos = len(merged_lines) - 1
 
     # Map the handler's suspect comment fields back to original line numbers.
     source_warnings.extend(
