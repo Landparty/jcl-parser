@@ -3,8 +3,10 @@
 These programs run TSO commands from the SYSTSIN DD.  They are very
 commonly used to invoke DB2's ``DSN`` command processor for binding
 packages or running SQL from a batch job.  The profile reuses
-:func:`~jclparser.sql_detector.detect_sql_in_text` to surface any embedded
-SQL from SYSTSIN or SYSIN, and recognises common DSN subcommands.
+:func:`~jclparser.sql_detector.detect_sql_in_step` to surface any embedded
+SQL (in SYSTSIN only DB2 subcommands such as ``BIND`` count -- a TSO
+``DELETE`` / ``ALTER`` is a dataset command), and recognises common DSN
+subcommands.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ class IKJEFT01Profile(ProgramProfile):
         # Application programs invoked from the control stream (RUN PROGRAM /
         # CALL) — the real targets hidden behind the IKJEFT01 wrapper — plus any
         # embedded SQL recovered from the same control text.
-        invoked, control_notes = invoked_and_sql_notes(combined)
+        invoked, control_notes = invoked_and_sql_notes(step, combined)
         notes.extend(control_notes)
 
         summary = (

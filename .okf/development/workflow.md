@@ -48,7 +48,7 @@ Layout: `tests/unit/` (95 `test_*.py` files), `tests/integration/` (15), `tests/
 ```bash
 ruff check .      # lint (line-length=88, target=py310)
 ruff format .     # format (do not use black)
-mypy jclparser/   # strict mode — not yet clean (87 known errors across ~25 modules, recorded in mypy-baseline.txt)
+mypy jclparser/   # strict mode — not yet clean (85 known errors across ~25 modules, recorded in mypy-baseline.txt)
 python scripts/mypy_ratchet.py           # what CI runs: fails only on errors missing from mypy-baseline.txt
 python scripts/mypy_ratchet.py --update  # after fixing errors, shrink the baseline (use mypy 2.4.0, as pinned in CI)
 ```

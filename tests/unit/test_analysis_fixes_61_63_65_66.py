@@ -11,7 +11,9 @@ from jclparser import parse_jcl
 from jclparser.cli import main
 from jclparser.condition_parser import parse_condition
 from jclparser.model import ConditionalBlock
+from jclparser.program_profiles import analyze_job
 from jclparser.rc_analysis import compute_feasible_paths
+from jclparser.sql_detector import detect_sql_in_job
 
 pytestmark = pytest.mark.unit
 
@@ -168,3 +170,55 @@ class TestRcSearchBound:
         out = capsys.readouterr().out
         assert "Unreachable steps:" in out
         assert out.index("Unreachable steps:") < out.index("Not analysed:")
+
+
+# ---------------------------------------------------------------------------
+# #66: TSO DELETE/ALTER commands in SYSTSIN are not embedded SQL
+# ---------------------------------------------------------------------------
+
+_TSO_DELETE_ALTER = (
+    "//J JOB (A)\n"
+    "//S EXEC PGM=IKJEFT01\n"
+    "//SYSTSPRT DD SYSOUT=*\n"
+    "//SYSTSIN DD *\n"
+    " DELETE 'PROD.OLD.FILE'\n"
+    " ALTER 'PROD.A' NEWNAME('PROD.B')\n"
+    " CALL 'PROD.LOAD(MYPGM)'\n"
+    "/*\n"
+)
+
+
+class TestProfileSqlMatchesSqlDetector:
+    def test_tso_delete_alter_not_embedded_sql(self):
+        job = parse_jcl(_TSO_DELETE_ALTER)
+        assert analyze_job(job)[0].notes == ["CALL(MYPGM)"]
+        # IKJEFT01 stays flagged as a possible DB2 driver (is_db2_program),
+        # but no SQL statement is found -- the two APIs agree.
+        (det,) = detect_sql_in_job(job)
+        assert det.sql_statements == []
+
+    def test_tso_bind_still_reported(self):
+        job = parse_jcl(
+            "//J JOB (A)\n//S EXEC PGM=IKJEFT1B\n//SYSTSIN DD *\n"
+            " DSN SYSTEM(DB2P)\n BIND PACKAGE(COLL) MEMBER(PGM)\n END\n/*\n"
+        )
+        notes = analyze_job(job)[0].notes
+        assert "embedded SQL: UTILITY" in notes
+
+    def test_sysin_sql_under_ikjeft01_reported(self):
+        job = parse_jcl(
+            "//J JOB (A)\n//S EXEC PGM=IKJEFT01\n//SYSTSIN DD *\n"
+            " DSN SYSTEM(DB2P)\n RUN PROGRAM(DSNTEP2) PLAN(P)\n END\n/*\n"
+            "//SYSIN DD *\n DELETE FROM T1 WHERE C = 1;\n/*\n"
+        )
+        notes = analyze_job(job)[0].notes
+        assert "embedded SQL: DML" in notes
+        (det,) = detect_sql_in_job(job)
+        assert {cat for _, cat, _ in det.sql_statements} == {"DML"}
+
+    def test_dsntep2_sysin_sql_still_reported(self):
+        job = parse_jcl(
+            "//J JOB (A)\n//S EXEC PGM=DSNTEP2\n//SYSIN DD *\n"
+            "  SELECT * FROM T1;\n  ALTER TABLE T1 ADD C INT;\n/*\n"
+        )
+        assert analyze_job(job)[0].notes == ["embedded SQL: DDL, DML"]
