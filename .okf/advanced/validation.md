@@ -48,8 +48,9 @@ to basic validation, and an unknown string did too.)
 
 ```python
 from jclparser.plugins import ParserConfig, ValidationLevel
+
 config = ParserConfig(validation_level=ValidationLevel.SEMANTIC)
-config.enable_plugin("SiteRule")          # plugins are opt-in
+config.enable_plugin("SiteRule")  # plugins are opt-in
 errors = validate_jcl(source, config=config)
 ```
 
