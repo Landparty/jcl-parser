@@ -13,9 +13,10 @@ This document describes exactly what `backend/src/parsers/jcl/parser.py` (the `J
 ```python
 from jclparser import parse_jcl
 
-job = parse_jcl(content: str)   # returns Job | None
+job = parse_jcl(content: str)   # returns Job; a str is always JCL text, never a path
 ```
-- Must return a `Job` object on success, or `None` on unrecoverable failure.
+- Always returns a `Job` object (never `None`); unrecoverable failures raise.
+- A `str` argument is always treated as JCL content, never as a file path (since `a0c30c9`); pass a `pathlib.Path` to read a file.
 - Must raise `JCLSyntaxError | JCLValidationError | JCLStructureError | JCLParseError` on parse failures.
 - Does not receive a filename (JCL parser does not use one).
 
