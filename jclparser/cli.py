@@ -61,7 +61,20 @@ from .utils import is_positional_key, split_source_lines
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point. Returns exit code."""
+    """CLI entry point. Returns exit code.
+
+    An operating-system error (``FILE`` is a directory, unreadable, ...) is
+    reported as ``Error: ...`` on stderr with exit code 1, not a traceback.
+    """
+    try:
+        return _main(argv)
+    except OSError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+def _main(argv: list[str] | None = None) -> int:
+    """:func:`main` without the OS-error guard."""
     # --lint-list doesn't require FILE — handle before argparse
     _argv = argv if argv is not None else sys.argv[1:]
     if "--lint-list" in _argv:

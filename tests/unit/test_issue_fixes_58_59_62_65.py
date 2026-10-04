@@ -99,13 +99,7 @@ class TestUnterminatedBlocksWarn:
         assert not any("PEND" in w for w in job.warnings)
 
     def test_unterminated_dd_data_swallowing_jcl_warns(self) -> None:
-        src = (
-            "//J JOB\n"
-            "//S1 EXEC PGM=X\n"
-            "//IN DD DATA,DLM=$$\n"
-            "REC1\n"
-            "//S2 EXEC PGM=Y\n"
-        )
+        src = "//J JOB\n//S1 EXEC PGM=X\n//IN DD DATA,DLM=$$\nREC1\n//S2 EXEC PGM=Y\n"
         job = parse_jcl(src)
         assert [s.name for s in job.steps] == ["S1"]
         assert job.steps[0].dd_statements[0].inline_data == "REC1\n//S2 EXEC PGM=Y"
@@ -189,3 +183,31 @@ class TestRecordsBreakOnlyOnNewlines:
         path = tmp_path / "u.jcl"
         path.write_bytes(b"//J JOB \x81\n")
         assert _read_file_with_fallback(path) == "//J JOB \x81\n"
+
+
+class TestCliOsErrors:
+    """Issue #65 item 4."""
+
+    @pytest.mark.parametrize(
+        "extra", [[], ["steps"], ["--validate"], ["detect"], ["--json"]]
+    )
+    def test_directory_argument_is_a_clean_error(self, tmp_path, capsys, extra):
+        from jclparser.cli import main
+
+        assert main([str(tmp_path), *extra]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith("Error: ")
+        assert "Traceback" not in err
+
+    def test_unreadable_file_is_a_clean_error(self, tmp_path, capsys, monkeypatch):
+        from jclparser import cli
+
+        path = tmp_path / "job.jcl"
+        path.write_text("//J JOB\n")
+
+        def _denied(*args, **kwargs):
+            raise PermissionError(13, "Permission denied", str(path))
+
+        monkeypatch.setattr(cli, "parse_jcl", _denied)
+        assert cli.main([str(path)]) == 1
+        assert "Permission denied" in capsys.readouterr().err

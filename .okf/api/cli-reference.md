@@ -35,7 +35,7 @@ jcl-parser FILE paths                    # RC feasibility path analysis
 
 ## Query Token (`steps` / `procs` / `detect` / `metrics` / `lint` / `datasets` / `sql` / `analyze` / `paths`)
 
-`FILE` is always read as a file (`pathlib.Path(FILE)`; a missing file prints `Error: file not found` and exits 1), so the 2026-10-03 "a `str` is always content" rule in `parse_jcl` does not affect the CLI. `--validate` is handled before any query token and before `detect`.
+`FILE` is always read as a file (`pathlib.Path(FILE)`; a missing file prints `Error: file not found` and exits 1; any other OS error, such as a directory or an unreadable file, prints `Error: <message>` to stderr and exits 1 instead of a traceback — issue #65, fixed 2026-10-04), so the 2026-10-03 "a `str` is always content" rule in `parse_jcl` does not affect the CLI. `--validate` is handled before any query token and before `detect`.
 
 These are not argparse subcommands — they are matched case-insensitively against the first positional `query` token inside `main()`. `detect` is checked before parsing the file (no parse needed); the rest run after `parse_jcl()` (and after `--explode`, if given).
 
