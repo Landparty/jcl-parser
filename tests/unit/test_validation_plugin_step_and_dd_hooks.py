@@ -6,6 +6,7 @@ import pytest
 
 from jclparser import ValidationPlugin, get_plugin_registry, validate_jcl
 from jclparser.errors import ErrorType, ValidationError
+from jclparser.plugins import ALL_PLUGINS, ParserConfig
 
 pytestmark = pytest.mark.unit
 
@@ -54,7 +55,12 @@ def site_rules():
 
 
 def test_step_and_dd_hooks_run_with_line_numbers(site_rules):
-    found = {(e.message, e.line_number) for e in validate_jcl(_SOURCE, "semantic")}
+    found = {
+        (e.message, e.line_number)
+        for e in validate_jcl(
+            _SOURCE, "semantic", config=ParserConfig(enabled_plugins=[ALL_PLUGINS])
+        )
+    }
     assert found == {
         ("job J", 0),
         ("step S1", 2),

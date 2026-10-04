@@ -36,13 +36,23 @@ errors = job.validate()
 
 | Member | `validate_jcl(level=...)` string | Description |
 |--------|----------------------------------|-------------|
-| `ValidationLevel.BASIC` | `"basic"` (default) | Parse-time syntax/structure errors only |
+| `ValidationLevel.BASIC` | `"basic"` (default; `"syntax_only"` is an alias) | Parse-time syntax/structure errors only |
 | `ValidationLevel.STRUCTURE` | `"structure"` | Adds `job.validate()` structural rules. Each finding keeps its own severity and line number (fixed 2026-09-28; they used to be re-wrapped as ERROR at line 0, so e.g. a "Duplicate DD name" WARNING came back as an ERROR) |
-| `ValidationLevel.SEMANTIC` | `"semantic"` | Adds registered `ValidationPlugin` checks: `validate_job(job)`, then `validate_step(step)` for every step (IF branches included) and `validate_dd(dd)` for each of its DDs. Findings keep the plugin's `line_number` (0 when it gives none) and its `severity` (a plugin's WARNING/INFO stays one; ERROR when it sets none — fixed 2026-09-28, it was always ERROR) |
+| `ValidationLevel.SEMANTIC` | `"semantic"` | Adds the `ValidationPlugin` checks **enabled by the `config=`** (`ParserConfig.enabled_plugins`, by class name, or `ALL_PLUGINS`; with no config none run — opt-in since 2026-10-04): `validate_job(job)`, then `validate_step(step)` for every step (IF branches included) and `validate_dd(dd)` for each of its DDs. Findings keep the plugin's `line_number` (0 when it gives none) and its `severity` (a plugin's WARNING/INFO stays one; ERROR when it sets none — fixed 2026-09-28, it was always ERROR) |
 
-`validate_jcl()` compares `level` against the **raw strings** above. `ValidationLevel` is a
-plain `Enum`, not a `StrEnum`, so passing `ValidationLevel.STRUCTURE` silently matches
-nothing and degrades to basic validation — pass the string.
+`level` takes a `ValidationLevel` member or its string value (case-insensitive); an
+unknown level raises `ValueError`. When `level` is omitted, `config.validation_level`
+is used, else `"basic"`; an explicit `level` wins over the config. (Before 2026-10-04
+`level` was compared to raw strings, so a `ValidationLevel` member silently degraded
+to basic validation, and an unknown string did too.)
+
+```python
+from jclparser.plugins import ParserConfig, ValidationLevel
+
+config = ParserConfig(validation_level=ValidationLevel.SEMANTIC)
+config.enable_plugin("SiteRule")  # plugins are opt-in
+errors = validate_jcl(source, config=config)
+```
 
 ## What It Checks
 

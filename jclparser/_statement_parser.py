@@ -18,7 +18,7 @@ from typing import Any
 
 from .errors import JCLSyntaxError
 from .model import Statement
-from .plugins import get_plugin_registry
+from .plugins import ParserConfig, get_plugin_registry
 from .utils import POSITIONAL_PARAM_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -282,13 +282,18 @@ def strip_comment_field(line: str, group_operation: str = "") -> str:
     return split_comment_field(line, group_operation)[0]
 
 
-def parse_statement(line: str, line_number: int = 0) -> Statement | None:
+def parse_statement(
+    line: str, line_number: int = 0, config: ParserConfig | None = None
+) -> Statement | None:
     """
     Parse individual JCL statement for syntax analysis.
 
     Args:
         line: Single line of JCL text
         line_number: Line number for error context
+        config: Parser configuration.  Only the registered statement plugins
+            it enables (``config.enabled_plugins``) are consulted; with no
+            config, none are.
 
     Returns:
         Parsed statement object or None if comment/empty
@@ -296,11 +301,12 @@ def parse_statement(line: str, line_number: int = 0) -> Statement | None:
     Raises:
         JCLSyntaxError: If line cannot be parsed
     """
-    # Check for plugin that can handle this line
-    registry = get_plugin_registry()
-    plugin = registry.get_parser_for_line(line)
-    if plugin:
-        return plugin.parse_statement(line, line_number)
+    # Check for an enabled plugin that can handle this line (plugins are
+    # opt-in: registered is not enough, the config must name it).
+    if config is not None and config.enabled_plugins:
+        for plugin in get_plugin_registry().get_statement_plugins():
+            if config.is_plugin_enabled(plugin) and plugin.can_parse(line):
+                return plugin.parse_statement(line, line_number)
 
     # Standard JCL parsing
     line = line.strip()

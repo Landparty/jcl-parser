@@ -20,12 +20,57 @@ class ValidationLevel(Enum):
     SEMANTIC = "semantic"
 
 
+#: Dialects :class:`ParserConfig` accepts.  ``standard`` recognises both JES2
+#: (``/*JOBPARM``) and JES3 (``//*MAIN``) control statements; ``jes2`` treats
+#: ``//*`` records as the plain comments they are under JES2; ``jes3`` does not
+#: interpret ``/*`` JES2 control statements (they are reported in
+#: ``job.warnings`` instead).
+SUPPORTED_DIALECTS: tuple[str, ...] = ("standard", "jes2", "jes3")
+
+#: Put this in :attr:`ParserConfig.enabled_plugins` to enable every registered
+#: plugin (the behaviour before plugins became opt-in).
+ALL_PLUGINS = "*"
+
+
+def normalize_validation_level(level: "ValidationLevel | str") -> ValidationLevel:
+    """Return *level* as a :class:`ValidationLevel`.
+
+    Accepts a member or its string value (case-insensitive).  ``"syntax_only"``
+    is an alias of ``"basic"``.
+
+    Raises:
+        ValueError: *level* names no validation level.
+    """
+    if isinstance(level, ValidationLevel):
+        return level
+    value = str(level).strip().lower()
+    if value == "syntax_only":
+        value = ValidationLevel.BASIC.value
+    try:
+        return ValidationLevel(value)
+    except ValueError:
+        allowed = ", ".join(repr(m.value) for m in ValidationLevel)
+        raise ValueError(
+            f"Unknown validation level {level!r}; expected one of {allowed}"
+        ) from None
+
+
 @dataclass
 class ParserConfig:
     """
     Configuration for JCL parser behavior.
 
     Controls parsing strictness, enabled plugins, and validation levels.
+
+    * ``strict_mode`` -- same as ``parse_jcl(strict_mode=True)``; either one
+      turns strict parsing on.
+    * ``dialect`` -- one of :data:`SUPPORTED_DIALECTS` (case-insensitive).
+    * ``enabled_plugins`` -- class names of the registered plugins that may
+      run.  Plugins are **opt-in**: a plugin in the global registry runs only
+      when its class name (or :data:`ALL_PLUGINS`) is listed here, and a parse
+      without a config runs none.
+    * ``validation_level`` -- the level ``validate_jcl`` uses when it is not
+      given ``level=``.  A string value (``"semantic"``) is accepted.
     """
 
     strict_mode: bool = False
@@ -36,6 +81,23 @@ class ParserConfig:
     #: after the parse completes and stashes the results on ``Job.sql_detections``
     #: keyed by step name.  Disabled by default to keep parse time predictable.
     detect_sql: bool = False
+
+    def __post_init__(self) -> None:
+        dialect = str(self.dialect).strip().lower()
+        if dialect not in SUPPORTED_DIALECTS:
+            raise ValueError(
+                f"Unknown JCL dialect {self.dialect!r}; expected one of "
+                + ", ".join(repr(d) for d in SUPPORTED_DIALECTS)
+            )
+        self.dialect = dialect
+        self.validation_level = normalize_validation_level(self.validation_level)
+
+    def is_plugin_enabled(
+        self, plugin: "str | StatementPlugin | ValidationPlugin"
+    ) -> bool:
+        """True when *plugin* (an instance or a class name) may run."""
+        name = plugin if isinstance(plugin, str) else plugin.__class__.__name__
+        return ALL_PLUGINS in self.enabled_plugins or name in self.enabled_plugins
 
     def enable_plugin(self, plugin_name: str) -> None:
         """Enable specific plugin"""
@@ -136,10 +198,13 @@ def get_plugin_registry() -> PluginRegistry:
 
 # Export public API
 __all__ = [
+    "ALL_PLUGINS",
+    "SUPPORTED_DIALECTS",
     "ParserConfig",
     "PluginRegistry",
     "StatementPlugin",
     "ValidationLevel",
     "ValidationPlugin",
     "get_plugin_registry",
+    "normalize_validation_level",
 ]

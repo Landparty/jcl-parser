@@ -62,6 +62,10 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+#: ``/*`` statements JES3 itself processes (RJP workstation sign-on/off); every
+#: other ``/*`` control statement is JES2-only.
+_JES3_SLASH_STAR = frozenset({"SIGNON", "SIGNOFF"})
+
 #: Explicit re-export list: mypy strict (``no_implicit_reexport``) would
 #: otherwise reject the historical ``from ._job_builder import ...`` imports
 #: in ``parser.py`` for the helpers that moved to the sibling modules.
@@ -93,7 +97,10 @@ class JobBuilder:
     the assembled :class:`Job`.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, dialect: str = "standard") -> None:
+        #: ``ParserConfig.dialect``: decides which JES control statements are
+        #: interpreted (see ``jclparser.plugins.SUPPORTED_DIALECTS``).
+        self.dialect = dialect
         self.job: Job | None = None
         #: tuples: (ConditionalBlock, active_branch)
         self.conditional_stack: list[tuple[ConditionalBlock, str]] = []
@@ -214,6 +221,9 @@ class JobBuilder:
         buffered and flushed by :meth:`finish`.
         """
         if not line.strip().startswith("//*"):
+            return
+        if self.dialect == "jes2":
+            # Under JES2 a ``//*`` record is only ever a comment.
             return
         from .jes_statements import parse_jes3_control
 
@@ -559,6 +569,14 @@ class JobBuilder:
         from .jes_statements import parse_jes_control
 
         typed = parse_jes_control(stmt.name, raw_params, stmt.line_number)
+        if self.dialect == "jes3" and stmt.name.upper() not in _JES3_SLASH_STAR:
+            # JES3 does not process JES2 control statements: keep the text,
+            # but do not interpret it, and say so.
+            typed = None
+            self._warnings_sink().append(
+                f"Line {stmt.line_number}: JES2 control statement /*{stmt.name} "
+                "is not processed under the jes3 dialect"
+            )
         if self.job is not None:
             self.job.jes_statements.append(jes_content)
             if typed is not None:
