@@ -366,6 +366,16 @@ class JobBuilder:
                 # qualified name for matching during explosion.
                 self.current_step.dd_overrides[stmt.name] = current_dd
                 self.concat_override_key = stmt.name
+                step = self.current_step
+                if step.program is not None and not step.is_procedure:
+                    # Only an EXEC of a procedure has steps for the
+                    # qualifier to name; explode_job never applies this
+                    # override, so say so here rather than drop it (#64).
+                    self._warnings_sink().append(
+                        f"DD override {stmt.name} names no step in PROC: "
+                        f"step {step.name} runs PGM={step.program}, "
+                        "not a procedure; override ignored"
+                    )
             else:
                 # Regular DD statement
                 self.current_step.add_dd(current_dd)

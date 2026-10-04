@@ -1061,6 +1061,8 @@ def apply_dd_overrides(
     dd_overrides: dict[str, DDStatement],
     step_name_prefix: str,
     concatenations: dict[str, list[DDStatement]] | None = None,
+    proc_name: str | None = None,
+    warnings: list[str] | None = None,
 ) -> None:
     """
     Apply DD overrides to expanded steps.
@@ -1073,8 +1075,21 @@ def apply_dd_overrides(
         concatenations: Qualified DD name -> the unnamed DDs coded after that
             override, overriding the later members of its concatenation
             (``Step.dd_override_concatenations``)
+        proc_name: Name of the procedure that was expanded, for warnings
+        warnings: Optional list to receive ``DD override X.D names no step
+            in PROC P`` when an override's qualifier matches no step of the
+            procedure (or has more than three parts); the override is
+            ignored, as before, but no longer silently (#64)
     """
     concatenations = concatenations or {}
+
+    def _no_step(override_key: str) -> None:
+        if warnings is not None:
+            warnings.append(
+                f"DD override {override_key} names no step in PROC "
+                f"{proc_name or step_name_prefix}"
+            )
+
     # A PROC step inside an IF/THEN/ELSE block is still a PROCSTEP an override
     # can name; walking only the top level crashed on the ConditionalBlock.
     steps = list(iter_execution_steps(list(expanded_steps)))
@@ -1118,6 +1133,8 @@ def apply_dd_overrides(
                         step.dd_statements.append(clone)
                         step.dd_statements.extend(deepcopy(members))
                     break
+            else:
+                _no_step(override_key)
 
         elif len(parts) == 3:
             # Three-part override: OUTERSTEP.INNERSTEP.DDNAME
@@ -1134,12 +1151,23 @@ def apply_dd_overrides(
 
             for step in steps:
                 if step.name == qualified_outer:
+                    if not step.is_procedure:
+                        # OUTERSTEP runs a program: there is no inner PROC
+                        # step for INNERSTEP to name.
+                        _no_step(override_key)
+                        break
                     step.dd_overrides[two_part_key] = deepcopy(override_dd)
                     if override_key in concatenations:
                         step.dd_override_concatenations[two_part_key] = deepcopy(
                             concatenations[override_key]
                         )
                     break
+            else:
+                _no_step(override_key)
+
+        else:
+            # Four or more parts: deeper than this model resolves.
+            _no_step(override_key)
 
 
 def apply_unqualified_dd_overrides(
@@ -1536,6 +1564,8 @@ def _explode_step(
             step.dd_overrides,
             step.name or "PROC",
             step.dd_override_concatenations,
+            proc_name=procedure.name or proc_name,
+            warnings=warnings,
         )
 
     # Merge unqualified DD overrides/additions (coded directly under EXEC PROC=,

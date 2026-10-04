@@ -109,3 +109,91 @@ class TestTempDatasetInIfBranches:
         assert [e.message for e in errors] == [
             "Temporary dataset &&T created in multiple steps: S2 and S3"
         ]
+
+
+@pytest.mark.unit
+class TestDdOverrideNamingNoProcstep:
+    """#64: a qualified DD override that matches no step is reported."""
+
+    def test_unknown_procstep_warns_once(self):
+        from jclparser import explode_job
+
+        src = (
+            "//J JOB\n//P PROC\n//S EXEC PGM=X\n// PEND\n"
+            "//R EXEC P\n//NOPE.D DD DSN=A,DISP=SHR\n"
+        )
+        job = parse_jcl(src)
+        exploded = explode_job(job)
+        new = [w for w in exploded.warnings if w not in job.warnings]
+        assert new == ["DD override NOPE.D names no step in PROC P"]
+        assert [(s.name, s.dd_statements) for s in exploded.steps] == [("R.S", [])]
+
+    def test_matching_procstep_does_not_warn(self):
+        from jclparser import explode_job
+
+        src = (
+            "//J JOB\n//P PROC\n//S EXEC PGM=X\n// PEND\n"
+            "//R EXEC P\n//S.D DD DSN=A,DISP=SHR\n"
+        )
+        exploded = explode_job(parse_jcl(src))
+        assert not [w for w in exploded.warnings if "DD override" in w]
+        assert [d.name for d in exploded.steps[0].dd_statements] == ["D"]
+
+    def test_three_part_unknown_outer_step_warns(self):
+        from jclparser import explode_job
+
+        src = (
+            "//J JOB\n//IN PROC\n//I EXEC PGM=Y\n// PEND\n"
+            "//P PROC\n//S EXEC IN\n// PEND\n"
+            "//R EXEC P\n//NOPE.I.D DD DSN=A,DISP=SHR\n"
+        )
+        exploded = explode_job(parse_jcl(src))
+        assert [w for w in exploded.warnings if "DD override" in w] == [
+            "DD override NOPE.I.D names no step in PROC P"
+        ]
+
+    def test_three_part_unknown_inner_step_warns(self):
+        from jclparser import explode_job
+
+        src = (
+            "//J JOB\n//IN PROC\n//I EXEC PGM=Y\n// PEND\n"
+            "//P PROC\n//S EXEC IN\n// PEND\n"
+            "//R EXEC P\n//S.NOPE.D DD DSN=A,DISP=SHR\n"
+        )
+        exploded = explode_job(parse_jcl(src))
+        assert [w for w in exploded.warnings if "DD override" in w] == [
+            "DD override NOPE.D names no step in PROC IN"
+        ]
+
+    def test_three_part_through_a_pgm_step_warns(self):
+        from jclparser import explode_job
+
+        src = (
+            "//J JOB\n//P PROC\n//S EXEC PGM=X\n// PEND\n"
+            "//R EXEC P\n//S.I.D DD DSN=A,DISP=SHR\n"
+        )
+        exploded = explode_job(parse_jcl(src))
+        assert [w for w in exploded.warnings if "DD override" in w] == [
+            "DD override S.I.D names no step in PROC P"
+        ]
+        assert exploded.steps[0].dd_overrides == {}
+
+    def test_four_part_name_warns(self):
+        from jclparser import explode_job
+
+        src = (
+            "//J JOB\n//P PROC\n//S EXEC PGM=X\n// PEND\n"
+            "//R EXEC P\n//A.B.C.D DD DSN=A,DISP=SHR\n"
+        )
+        exploded = explode_job(parse_jcl(src))
+        assert [w for w in exploded.warnings if "DD override" in w] == [
+            "DD override A.B.C.D names no step in PROC P"
+        ]
+
+    def test_qualified_dd_under_pgm_step_warns_at_parse_time(self):
+        src = "//J JOB\n//S EXEC PGM=X\n//A.B DD DSN=A,DISP=SHR\n"
+        job = parse_jcl(src)
+        assert job.warnings == [
+            "DD override A.B names no step in PROC: step S runs PGM=X, "
+            "not a procedure; override ignored"
+        ]
