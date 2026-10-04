@@ -197,3 +197,19 @@ class TestDdOverrideNamingNoProcstep:
             "DD override A.B names no step in PROC: step S runs PGM=X, "
             "not a procedure; override ignored"
         ]
+
+
+@pytest.mark.unit
+class TestSpaceZeroPrimary:
+    """#65 item 1: SPACE=(TRK,0) is the IEFBR14 delete idiom, not an error."""
+
+    def _space(self, value):
+        src = f"//J JOB\n//S EXEC PGM=IEFBR14\n//D DD DSN=A.B,DISP=(MOD,DELETE),SPACE={value}\n"
+        return parse_jcl(src).steps[0].dd_statements[0].space
+
+    def test_zero_primary_is_valid(self):
+        assert self._space("(TRK,0)").validate() == []
+
+    def test_negative_primary_still_rejected(self):
+        errors = self._space("(TRK,-1)").validate()
+        assert errors == ["Primary space cannot be negative: -1"]
