@@ -18,7 +18,7 @@ Will not be removed or signature-broken without a major version bump.
 
 | Export | Description |
 |--------|-------------|
-| `parse_jcl(source, ...)` | Main entry — parses JCL string/file/IO; returns `Job` |
+| `parse_jcl(source, ...)` | Main entry — parses JCL text (`str`), a file (`pathlib.Path`) or an IO; returns `Job`. A `str` is never treated as a file name (since 2026-10-03) |
 | `parse(source, ...)` | Alias for `parse_jcl` |
 | `validate_jcl(source, level="basic")` | `parse_jcl(strict_mode=True)` + structural checks; returns a flat `list[ParseError]` (empty when valid). `level` is a plain `str`: `"basic"` / `"structure"` / `"semantic"` |
 | `parse_statement(line, line_number=0)` | Parse a single JCL statement line in isolation; returns `Statement \| None` |

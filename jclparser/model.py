@@ -774,7 +774,7 @@ class Job:
     def explode(
         self,
         max_depth: int = 10,
-        max_steps: int = 0,
+        max_steps: int = 10_000,
         loader: Any | None = None,
         audit: bool = True,
         system_provider: Any | None = None,
@@ -788,7 +788,8 @@ class Job:
 
         Args:
             max_depth: Maximum procedure nesting depth (default 10)
-            max_steps: Maximum total expanded steps, 0 = unlimited (default 0).
+            max_steps: Maximum total expanded steps, 0 = unlimited (default
+                       10,000, ``explosion.DEFAULT_MAX_STEPS``; z/OS allows 255).
                        Raises JCLStructureError if the limit is exceeded.
             loader: Optional custom procedure loader
             audit: Whether to generate audit logs (default True)

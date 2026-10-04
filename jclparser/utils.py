@@ -8,6 +8,7 @@ main parse path: ``read_source``, ``normalize_jcl_line``, ``is_positional_key``.
 from __future__ import annotations
 
 import builtins
+import errno
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,36 @@ POSITIONAL_PARAM_PREFIX: str = "_pos_"
 def is_positional_key(key: str) -> bool:
     """Return ``True`` if *key* represents a positional (keyword-less) JCL parameter."""
     return key.startswith(POSITIONAL_PARAM_PREFIX)
+
+
+def instream_delimiter(parameters: dict[str, Any]) -> tuple[Any, bool] | None:
+    """Return ``(delimiter, ends_at_slash)`` if a DD's parameters open in-stream data.
+
+    The one rule both the source pre-scan and the JobBuilder use, so they can
+    never disagree about where data starts. In-stream data starts at ``DD *``
+    or ``DD DATA`` only; ``DLM=`` changes the delimiter of such a DD and is
+    ignored anywhere else. *parameters* are the DD's parsed parameters, so a
+    ``DLM=`` inside a quoted value (``PATH='/u/DLM=1'``) is never mistaken for
+    the keyword. ``DD *`` without ``DLM=`` also ends at the next ``//``
+    record; ``DD DATA`` does not, so ``//`` can be data. The delimiter is
+    returned as parsed (a list for a malformed ``DLM=(A,B)``), for the caller
+    to validate.
+    """
+    is_star = bool(parameters.get("*")) or any(
+        v == "*" for k, v in parameters.items() if is_positional_key(k)
+    )
+    if not (is_star or "DATA" in parameters):
+        return None
+    has_dlm = "DLM" in parameters
+    delimiter = parameters.get("DLM", "/*")
+    if (
+        isinstance(delimiter, str)
+        and len(delimiter) >= 2
+        and delimiter.startswith("'")
+        and delimiter.endswith("'")
+    ):
+        delimiter = delimiter[1:-1]
+    return delimiter, is_star and not has_dlm
 
 
 def jcl_value_text(value: Any) -> str:
@@ -80,22 +111,34 @@ def normalize_jcl_line(line: str) -> str:
     return line
 
 
-def _read_file_with_fallback(path: Path) -> str:
+#: Largest PROC / INCLUDE library member the loaders will read. Members are
+#: named by the JCL being parsed, so an oversized file is refused (read as
+#: missing, with a warning) rather than pulled into memory whole.
+MAX_LIBRARY_MEMBER_BYTES: int = 4 * 1024 * 1024
+
+
+def _read_file_with_fallback(path: Path, max_bytes: int | None = None) -> str:
     """
     Read a file trying utf-8, latin-1, cp1252, then binary fallback.
 
     Args:
         path: Existing file path (caller must verify existence).
+        max_bytes: When set, refuse a file larger than this many bytes with
+            :class:`OSError` (``EFBIG``) before reading any of it.
 
     Returns:
         File content as a string.
     """
-    # Via the `builtins` module rather than a bare `open(...)` call: this
-    # module is cythonized for the closed-source PyPI release build (see
-    # setup.py), and Cython caches a bare builtin name's target at first
-    # use, which is invisible to a `unittest.mock.patch("builtins.open")`
-    # made afterward. Routing through the module object keeps every call a
-    # live attribute lookup, matching plain-Python monkeypatch semantics.
+    if max_bytes is not None:
+        size = path.stat().st_size
+        if size > max_bytes:
+            raise OSError(
+                errno.EFBIG,
+                f"{path.name} is {size} bytes, over the {max_bytes}-byte limit",
+            )
+    # Via the `builtins` module rather than a bare `open(...)` call, so a
+    # `unittest.mock.patch("builtins.open")` is honoured even if this module
+    # is ever compiled (Cython caches a bare builtin name at first use).
     # utf-8-sig reads plain UTF-8 too, and drops a byte-order mark.
     for encoding in ("utf-8-sig", "latin-1", "cp1252"):
         try:
@@ -137,17 +180,21 @@ def read_source(source: str | Path | Any) -> str:
     Resolve a JCL source (string content, file path, or file-like object) into a
     string of JCL content.
 
+    A ``str`` is always treated as JCL content. To read a file, pass a
+    :class:`pathlib.Path` (or an open file object).
+
     Runtime-critical — used by the main parse path.
 
     Args:
-        source: JCL content as string, a :class:`pathlib.Path`, or any file-like
-                object with a ``read()`` method.
+        source: JCL content as a string, a :class:`pathlib.Path` naming a file,
+                or any file-like object with a ``read()`` method.
 
     Returns:
         String of JCL content.
 
     Raises:
-        FileNotFoundError: If *source* is a path to a file that does not exist.
+        FileNotFoundError: If *source* is a :class:`pathlib.Path` to a file that
+            does not exist.
     """
     content = _read_source_raw(source)
     # A byte-order mark is not JCL; left in place it hides the first "//".
@@ -161,29 +208,11 @@ def _read_source_raw(source: str | Path | Any) -> str:
     if isinstance(source, Path):
         return _require_file(source)
     if isinstance(source, str):
-        source = source.removeprefix(_BOM)
-        # Text spanning several lines is JCL content, never a file path.
-        if "\n" in source or "\r" in source:
-            return source
-        # JCL content starts with "//" (a statement) or "/*" (a JES2/JES3
-        # control card, e.g. "/*JOBPARM", which may legally precede the JOB
-        # statement) -- never treat either as a file path.
-        looks_like_jcl_start = source.strip().startswith(("//", "/*"))
-        # Treat as a file path when it looks like one by extension or separator.
-        if source.endswith(".jcl") or (
-            ("/" in source or "\\" in source) and not looks_like_jcl_start
-        ):
-            return _require_file(Path(source))
-        # For plain strings without path markers (no extension, no separators),
-        # check whether the string names an existing file.  JCL content always
-        # starts with "//" or "/*", or contains newlines, so this fallback is safe.
-        if "\n" not in source and "\r" not in source and not looks_like_jcl_start:
-            try:
-                path = Path(source)
-                if path.is_file():
-                    return _read_file_with_fallback(path)
-            except (OSError, ValueError):
-                pass
+        # A string is always JCL content, never a file name: pass a
+        # pathlib.Path to read a file. Guessing ("one line ending in .jcl",
+        # "contains a slash", "names an existing file") let a one-line upload
+        # such as "/etc/passwd" read an arbitrary server file and echo its
+        # first line back in the parse error.
         return source
     # File-like object
     if not hasattr(source, "read"):

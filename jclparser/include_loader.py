@@ -22,13 +22,18 @@ Usage::
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from .errors import JCLStructureError
-from .utils import _read_file_with_fallback, is_within_directory
+from .utils import (
+    MAX_LIBRARY_MEMBER_BYTES,
+    _read_file_with_fallback,
+    is_within_directory,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +106,10 @@ class JCLLIBMemberLoader(IncludeMemberLoader):
     path separators (e.g. ``SYS1.JCLLIB`` → ``SYS1/JCLLIB`` or ``SYS1.JCLLIB``
     as a subdirectory), and ``<MEMBER_NAME>`` is case-insensitive.
 
-    The base path defaults to the ``JCL_PROCLIB_PATH`` environment variable
-    (if set) or the current working directory.
+    The base path defaults to the ``JCL_PROCLIB_PATH`` environment variable.
+    With neither, no member is ever read: the process's working directory is
+    not searched implicitly, since the member and library names come from the
+    JCL being parsed.
 
     Args:
         base_path: Root directory to search for library subdirectories.
@@ -111,8 +118,8 @@ class JCLLIBMemberLoader(IncludeMemberLoader):
     def __init__(self, base_path: Path | str | None = None) -> None:
         if base_path is None:
             env_path = os.environ.get("JCL_PROCLIB_PATH")
-            base_path = Path(env_path) if env_path else Path.cwd()
-        self._base = Path(base_path)
+            base_path = Path(env_path) if env_path else None
+        self._base: Path | None = Path(base_path) if base_path is not None else None
 
     def load_member(
         self,
@@ -120,6 +127,8 @@ class JCLLIBMemberLoader(IncludeMemberLoader):
         libraries: list[str] | None = None,
     ) -> str | None:
         """Search libraries in order and return the first matching member."""
+        if self._base is None:
+            return None
         candidates = self._candidate_paths(member_name, libraries)
         for path in candidates:
             # Guard against path traversal outside the configured base directory.
@@ -128,8 +137,12 @@ class JCLLIBMemberLoader(IncludeMemberLoader):
             try:
                 resolved = path.resolve()
                 if resolved.is_file():
-                    return _read_file_with_fallback(resolved)
-            except (OSError, PermissionError):
+                    return _read_file_with_fallback(
+                        resolved, max_bytes=MAX_LIBRARY_MEMBER_BYTES
+                    )
+            except OSError as exc:
+                if exc.errno == errno.EFBIG:
+                    logger.warning("INCLUDE member %r not read: %s", member_name, exc)
                 continue
         return None
 
@@ -140,6 +153,8 @@ class JCLLIBMemberLoader(IncludeMemberLoader):
     ) -> list[Path]:
         """Build an ordered list of filesystem paths to try."""
         paths: list[Path] = []
+        if self._base is None:
+            return paths
         name_upper = member_name.upper()
         extensions = [".jcl", ".JCL", ""]
 

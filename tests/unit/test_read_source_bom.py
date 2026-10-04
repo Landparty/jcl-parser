@@ -29,7 +29,7 @@ class TestReadSourceBom:
         path = tmp_path / "j.jcl"
         path.write_bytes((BOM + JCL).encode("utf-8"))
         assert read_source(path) == JCL
-        assert parse_jcl(str(path)).name == "J"
+        assert parse_jcl(path).name == "J"
 
     def test_bom_file_like(self):
         assert read_source(io.StringIO(BOM + JCL)) == JCL
@@ -38,10 +38,11 @@ class TestReadSourceBom:
         with pytest.raises(JCLSyntaxError):
             parse_jcl("Header text/notes\n" + JCL)
 
-    def test_single_line_path_still_read(self, tmp_path):
+    def test_single_line_path_string_is_content(self, tmp_path):
         path = tmp_path / "j.jcl"
         path.write_text(JCL)
-        assert read_source(str(path)) == JCL
+        assert read_source(str(path)) == str(path)
+        assert read_source(path) == JCL
 
     def test_bom_proc_member(self, tmp_path):
         lib = tmp_path / "SYS1.PROCLIB"

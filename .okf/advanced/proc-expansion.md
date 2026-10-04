@@ -14,8 +14,10 @@ timestamp: 2026-09-16T00:00:00Z
 
 ```
 1. Inline PROCs (PROC…PEND in the same JCL)      ← always wins; no override possible
-2. JCLLIB filesystem  (JCL_PROCLIB_PATH env var or proc_base_path arg)
+2. JCLLIB filesystem  (JCL_PROCLIB_PATH env var or proc_base_path arg;
+   with neither, NO files are read -- the cwd is never searched implicitly)
    Layout: <base_path>/<DATASET.NAME>/<PROCNAME>.jcl
+   Members over utils.MAX_LIBRARY_MEMBER_BYTES (4 MiB) are refused (warning)
 3. DictProcedureLoader  (user-supplied in-memory dict)
 4. builtin_procs.py   BUILTIN_UTILITY_PROCS  ← last resort
    Covers: IMS (IMSBATCH, DLIBATCH…), DB2 (DSNUPROC, DSNHICOB), COBOL (IGYWCL…)
@@ -41,7 +43,7 @@ except ProcedureNotFoundError as e:
 
 # Explosion Options
 
-Signature: `explode_job(job, proc_loader=None, max_depth=10, max_steps=0, audit=True,
+Signature: `explode_job(job, proc_loader=None, max_depth=10, max_steps=DEFAULT_MAX_STEPS, audit=True,
 system_provider=None, strict_symbols=False)`. The `Job.explode()` method takes the same
 options but names the loader `loader=`, not `proc_loader=`.
 
@@ -49,7 +51,7 @@ options but names the loader `loader=`, not `proc_loader=`.
 |--------|---------|--------|
 | `proc_loader` | `None` | Loader chain; `None` builds the default chain below |
 | `max_depth` | `10` | Raises `ExplosionDepthError` if nesting exceeds it |
-| `max_steps` | `0` (unlimited) | Cap on total expanded steps; raises `JCLStructureError` if exceeded |
+| `max_steps` | `DEFAULT_MAX_STEPS` = `10_000` (`0` = unlimited) | Cap on total expanded steps; raises `JCLStructureError` if exceeded. Counted per plain step as it is produced (an `on_step` hook threaded through `_explode_step`), so a PROC fan-out stops at the limit instead of being built first. z/OS allows 255 steps per job |
 | `audit` | **`True`** | Populates `job.explosion_audit` and `job.explosion_map` |
 | `system_provider` | `None` | `SystemSymbolProvider` for `&SYSUID`-style system symbols |
 | `strict_symbols` | `False` | If True, raises `UndefinedSymbolError` for unknown `&SYMBOLS` |

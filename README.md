@@ -4,7 +4,7 @@ Python library for parsing IBM z/OS JCL (Job Control Language) into structured `
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Coverage](https://img.shields.io/badge/coverage-90%25%2B%20enforced-green.svg)](#commands)
-[![License: EULA](https://img.shields.io/badge/license-EULA-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
 ## Install
 
@@ -51,8 +51,8 @@ rm -rf ../backend/_vendor/jcl-parser/jclparser && cp -r jclparser/ ../backend/_v
 
 ## Documentation
 
-Full reference: [`index.md`](index.md)
+Full reference: [`.okf/index.md`](.okf/index.md)
 
 ## License
 
-Proprietary EULA — see [LICENSE](LICENSE).
+GNU Affero General Public License v3.0 or later — Copyright © 2026 Samuel Dion. See [LICENSE](LICENSE).
