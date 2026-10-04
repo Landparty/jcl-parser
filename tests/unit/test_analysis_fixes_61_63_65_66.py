@@ -6,6 +6,7 @@ import pytest
 
 from jclparser import parse_jcl
 from jclparser.condition_parser import parse_condition
+from jclparser.model import ConditionalBlock
 from jclparser.rc_analysis import compute_feasible_paths
 
 pytestmark = pytest.mark.unit
@@ -58,3 +59,40 @@ class TestRunConditionNineSteps:
         # ELSE is reachable, and THEN (every RC non-zero) is too.
         assert report.always_skipped == []
         assert report.unreachable_steps == []
+
+
+# ---------------------------------------------------------------------------
+# #63: the condition tokenizer must not skip unknown characters
+# ---------------------------------------------------------------------------
+
+
+class TestConditionTokenizerStrict:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "S1.RC = -1",
+            "S1.RC = 4 * 2",
+            "S1.RC = 4 ; S2.RC = 0",
+            "S1.RC = 4 AND S2.RC = 0 ?",
+            "RC",
+            "S1.RC",
+            "S1.RC AND S2.RUN",
+            "(RC)",
+        ],
+    )
+    def test_unparseable_condition_is_none(self, text):
+        assert parse_condition(text) is None
+
+    def test_valid_conditions_still_parse(self):
+        assert parse_condition("S1.RC = 1") is not None
+        assert parse_condition("RC LE 4") is not None
+        assert parse_condition("¬S1.ABEND & (S2.RC<4 | S3.RUN)") is not None
+
+    def test_conditional_block_ast_is_none(self):
+        job = parse_jcl(
+            "//J JOB 1\n//S1 EXEC PGM=A\n"
+            "// IF S1.RC=-1 THEN\n//S2 EXEC PGM=B\n// ENDIF\n"
+        )
+        (block,) = [b for b in job.steps if isinstance(b, ConditionalBlock)]
+        assert block.condition_ast is None
+        assert block.condition == "S1.RC=-1"

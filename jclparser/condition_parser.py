@@ -350,8 +350,10 @@ def _tokenize(text: str) -> list[str]:
             i = j
             continue
 
-        # Anything else — skip (handles stray characters gracefully)
-        i += 1
+        # Anything else (``-``, ``*``, ``;`` ...) is outside the grammar.
+        # Skipping it silently changed the condition -- ``RC = -1`` read as
+        # ``RC = 1`` -- so the whole condition is unparseable instead.
+        raise ValueError(f"Unexpected character in condition: {ch!r}")
 
     return tokens
 
@@ -460,13 +462,11 @@ class _Parser:
 
         if attr == "RC":
             op_tok = self._peek()
-            if op_tok is None:
-                return ReturnCodeCondition(step_name=step_name, operator="EQ", value=0)
-
-            op = _OP_MAP.get(op_tok.upper())
+            op = _OP_MAP.get(op_tok.upper()) if op_tok else None
             if op is None:
-                # No recognisable operator after RC — treat as RC EQ 0
-                return ReturnCodeCondition(step_name=step_name, operator="EQ", value=0)
+                # ``RC`` is not a Boolean: without a comparison it tests
+                # nothing, and reading it as ``RC EQ 0`` invents one.
+                raise ValueError(f"Expected an operator after RC, got {op_tok!r}")
 
             self._consume()  # consume operator
 

@@ -6,6 +6,8 @@ tokenizer edge cases (single-char ops, quoted strings, stray chars),
 parser edge cases (RC-no-op, RC-op-no-value, bare numerics, unrecognized atoms).
 """
 
+import pytest
+
 from jclparser.condition_parser import (
     AbendCondition,
     AndCondition,
@@ -170,13 +172,11 @@ class TestTokenizer:
         tokens = _tokenize("'DON''T'")
         assert "'DON''T'" in tokens
 
-    def test_stray_characters_skipped(self):
-        """Unrecognized characters are silently skipped (line 280)."""
-        tokens = _tokenize("RC ; 0")
-        # ';' should be skipped; RC and 0 should remain
-        assert "RC" in tokens
-        assert "0" in tokens
-        assert ";" not in tokens
+    def test_stray_characters_rejected(self):
+        """Unrecognized characters are an error, not silently skipped (#63)."""
+        with pytest.raises(ValueError, match="Unexpected character"):
+            _tokenize("RC ; 0")
+        assert parse_condition("RC ; 0") is None
 
     def test_not_equal_tilde(self):
         """'~=' (tilde-equals) is tokenized as NE operator."""
@@ -208,11 +208,8 @@ class TestParserEdgeCases:
     """Test _Parser edge cases in _parse_primary()."""
 
     def test_rc_with_no_operator_after(self):
-        """RC at end of expression defaults to EQ 0 (line 373)."""
-        node = parse_condition("STEP1.RC")
-        assert isinstance(node, ReturnCodeCondition)
-        assert node.operator == "EQ"
-        assert node.value == 0
+        """A bare RC is unparseable, not an invented RC EQ 0 (#63)."""
+        assert parse_condition("STEP1.RC") is None
 
     def test_rc_with_operator_but_no_value(self):
         """RC GT with no number is unparseable, not an invented RC GT 0."""
