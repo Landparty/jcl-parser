@@ -57,7 +57,7 @@ from .proc_loader import JCLLIBProcedureLoader
 from .program_profiles import analyze_job, analyze_step
 from .rc_analysis import compute_feasible_paths
 from .sql_detector import detect_sql_in_job
-from .utils import is_positional_key
+from .utils import is_positional_key, split_source_lines
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -857,7 +857,7 @@ def _print_dd_detail(dd: DDStatement) -> None:
             print(f"    SPACE=({','.join(parts)})")
     if dd.has_inline_data:
         print("    --- inline data ---")
-        for line in (dd.inline_data or "").splitlines():
+        for line in split_source_lines(dd.inline_data or ""):
             print(f"    {line}")
         print("    ---")
 

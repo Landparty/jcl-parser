@@ -90,6 +90,7 @@ from .utils import (
     is_positional_key,
     normalize_jcl_line,
     read_source,
+    split_source_lines,
 )
 
 if TYPE_CHECKING:
@@ -113,7 +114,7 @@ def _merge_source_lines(
     reports comment fields that were stripped off statements but still looked
     like operands (truncated or garbled records).
     """
-    raw_lines = content.splitlines()
+    raw_lines = split_source_lines(content)
     lines = [normalize_jcl_line(line) for line in raw_lines]
 
     # Single pass: separate inline data lines from regular lines.
@@ -694,7 +695,7 @@ def validate_jcl(
         return errors
 
     # Merge continuation lines so multi-line statements are validated as a unit
-    raw_lines = [normalize_jcl_line(line) for line in content.splitlines()]
+    raw_lines = [normalize_jcl_line(line) for line in split_source_lines(content)]
     handler = ContinuationLineHandler()
     merged_pairs = handler.merge_continuation_lines(raw_lines)
     has_job = False

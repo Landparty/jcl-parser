@@ -126,3 +126,66 @@ class TestUnterminatedBlocksWarn:
             w.startswith("In-stream data was never closed") and "S1" in w
             for w in job.warnings
         ), job.warnings
+
+
+class TestRecordsBreakOnlyOnNewlines:
+    """Issue #62."""
+
+    SRC = "//J JOB\n//S1 EXEC PGM=X\n//IN DD *\nREC1\x0cMORE\n/*\n//S2 EXEC PGM=Y\n"
+
+    def test_form_feed_inside_a_record_is_data(self) -> None:
+        job = parse_jcl(self.SRC)
+        assert job.steps[0].dd_statements[0].inline_data == "REC1\x0cMORE"
+        assert [s.line_number for s in job.steps] == [2, 6]
+
+    @pytest.mark.parametrize("char", ["\x0b", "\x1c", "\x1d", "\x1e", "\x85", " "])
+    def test_other_unicode_line_breaks_are_data(self, char: str) -> None:
+        job = parse_jcl(self.SRC.replace("\x0c", char))
+        assert job.steps[0].dd_statements[0].inline_data == f"REC1{char}MORE"
+        assert [s.line_number for s in job.steps] == [2, 6]
+
+    @pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"])
+    def test_real_line_ends_still_split(self, newline: str) -> None:
+        job = parse_jcl(self.SRC.replace("\n", newline))
+        assert job.steps[0].dd_statements[0].inline_data == "REC1\x0cMORE"
+        assert [s.line_number for s in job.steps] == [2, 6]
+
+    def test_split_source_lines_helper(self) -> None:
+        from jclparser.utils import split_source_lines
+
+        assert split_source_lines("") == []
+        assert split_source_lines("a\x0cb\r\nc\rd\ne\n") == ["a\x0cb", "c", "d", "e"]
+        assert split_source_lines("a\n\n") == ["a", ""]
+        assert split_source_lines("a b") == ["a b"]
+        assert split_source_lines("a\r\nb\rc", keepends=True) == ["a\r\n", "b\r", "c"]
+        assert split_source_lines("a\n", keepends=True) == ["a\n"]
+
+    def test_include_expansion_keeps_form_feed_records(self) -> None:
+        from jclparser.include_loader import resolve_includes
+
+        class _Loader:
+            def load_member(self, member, libraries=None):
+                return "//INC DD DSN=INC.DS,DISP=SHR\n" if member == "M" else None
+
+        src = "//J JOB\n//S1 EXEC PGM=X\n//IN DD *\nA\x0cB\n/*\n// INCLUDE MEMBER=M\n"
+        out = resolve_includes(src, loader=_Loader())
+        assert "A\x0cB\n" in out
+        assert "//INC DD DSN=INC.DS" in out
+
+    def test_strict_dd_scan_and_jcllib_prescan_use_records(self) -> None:
+        from jclparser._statement_parser import _extract_jcllib_order
+
+        assert _extract_jcllib_order("//J JOB\x0c\n//L JCLLIB ORDER=A.B\n") == ["A.B"]
+
+    def test_cp1252_file_decodes_before_latin1(self, tmp_path) -> None:
+        path = tmp_path / "w.jcl"
+        path.write_bytes(b"//J JOB\n//S1 EXEC PGM=X,PARM='WAIT\x85DONE'\n")
+        job = parse_jcl(path)
+        assert "WAIT…DONE" in job.steps[0].parameters["PARM"]
+
+    def test_undefined_cp1252_bytes_fall_back_to_latin1(self, tmp_path) -> None:
+        from jclparser.utils import _read_file_with_fallback
+
+        path = tmp_path / "u.jcl"
+        path.write_bytes(b"//J JOB \x81\n")
+        assert _read_file_with_fallback(path) == "//J JOB \x81\n"
