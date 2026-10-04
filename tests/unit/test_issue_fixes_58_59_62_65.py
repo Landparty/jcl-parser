@@ -211,3 +211,66 @@ class TestCliOsErrors:
         monkeypatch.setattr(cli, "parse_jcl", _denied)
         assert cli.main([str(path)]) == 1
         assert "Permission denied" in capsys.readouterr().err
+
+
+def _card(content: str, indicator: str = "X", seq: str = "00000010") -> str:
+    """An 80-column card image: columns 1-71, column 72, columns 73-80."""
+    assert len(content) <= 71
+    return content.ljust(71) + indicator + seq
+
+
+class TestQuotedContinuationKeepsBlanks:
+    """Issue #65 item 5: a quoted string is coded through column 71 and
+    resumes in column 16 of the next record."""
+
+    PREFIX = "//S1 EXEC PGM=X,PARM='"
+
+    def _parm(self, *records: str) -> str:
+        job = parse_jcl("//J JOB\n" + "\n".join(records) + "\n")
+        return job.steps[0].parameters["PARM"]
+
+    def test_blank_in_column_71_inside_quotes_is_kept(self) -> None:
+        a_run = "A" * (70 - len(self.PREFIX))
+        first = _card(self.PREFIX + a_run + " ")
+        assert first[70] == " " and first[71] == "X"
+        assert self._parm(first, "//" + " " * 13 + "BCD'") == a_run + " BCD"
+
+    def test_several_trailing_blanks_through_column_71_are_kept(self) -> None:
+        first = _card(self.PREFIX + "AB")  # columns 25-71 blank
+        expected = "AB" + " " * (71 - len(self.PREFIX) - 2) + "CD"
+        assert self._parm(first, "//" + " " * 13 + "CD'") == expected
+
+    def test_text_resumes_in_column_16_with_its_leading_blanks(self) -> None:
+        a_run = "A" * (71 - len(self.PREFIX))
+        first = _card(self.PREFIX + a_run)
+        # Column 16 blank, text from column 17: the blank is part of the value.
+        assert self._parm(first, "//" + " " * 14 + "X'") == a_run + " X"
+
+    def test_three_records(self) -> None:
+        first = _card(self.PREFIX + "ONE")
+        middle = _card("//" + " " * 13 + "TWO", seq="00000020")
+        value = self._parm(first, middle, "//" + " " * 13 + "THREE'")
+        gap1 = " " * (71 - len(self.PREFIX) - 3)
+        gap2 = " " * (71 - 15 - 3)
+        assert value == "ONE" + gap1 + "TWO" + gap2 + "THREE"
+
+    def test_72_column_record_with_indicator_counts_as_a_card(self) -> None:
+        a_run = "A" * (70 - len(self.PREFIX))
+        first = (self.PREFIX + a_run + " ").ljust(71) + "X"  # sequence trimmed
+        assert len(first) == 72
+        assert self._parm(first, "//" + " " * 13 + "BCD'") == a_run + " BCD"
+
+    def test_short_editor_lines_keep_current_behaviour(self) -> None:
+        value = self._parm(self.PREFIX + "AAA ", "//             BCD'")
+        assert value == "AAABCD"
+
+    def test_continuation_starting_before_column_16_is_lstripped(self) -> None:
+        a_run = "A" * (71 - len(self.PREFIX))
+        first = _card(self.PREFIX + a_run)
+        assert self._parm(first, "//   BCD'") == a_run + "BCD"
+
+    def test_unquoted_card_continuation_is_unchanged(self) -> None:
+        first = _card("//S1 EXEC PGM=X,")
+        job = parse_jcl("//J JOB\n" + first + "\n//             REGION=4M\n")
+        assert job.steps[0].parameters["REGION"] == "4M"
+        assert job.steps[0].program == "X"

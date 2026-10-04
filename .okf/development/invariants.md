@@ -3,7 +3,7 @@ type: Invariants
 title: Key Invariants
 description: 19 non-obvious behaviors in jcl-parser that cause contributor bugs; read before touching any parsing code.
 tags: [invariants, gotchas, development]
-timestamp: 2026-09-16T00:00:00Z
+timestamp: 2026-10-04T00:00:00Z
 ---
 
 # Overview
@@ -12,7 +12,7 @@ timestamp: 2026-09-16T00:00:00Z
 
 # Invariants
 
-1. **Column 71 is the continuation boundary; 72 is the indicator and 73-80 the sequence field.** `utils.normalize_jcl_line()` strips columns 72-80 from an 80-column record (and the trailing indicator from a 72-character record whose sequence field was already trimmed) *before* `ContinuationLineHandler` merges what is left. Never pass pre-stripped lines to `parse_jcl()` — keeping column 72 as content renames the next record's first operand (`SPACE=` became `XSPACE=`; fixed 2026-09-02).
+1. **Column 71 is the continuation boundary; 72 is the indicator and 73-80 the sequence field.** `utils.normalize_jcl_line()` strips columns 72-80 from an 80-column record (and the trailing indicator from a 72-character record whose sequence field was already trimmed) *before* `ContinuationLineHandler` merges what is left. Never pass pre-stripped lines to `parse_jcl()` — keeping column 72 as content renames the next record's first operand (`SPACE=` became `XSPACE=`; fixed 2026-09-02). A quoted string continued from a *card image* (a record with a non-blank column 72, `utils.is_continued_card_image()`) runs through column 71 and resumes in column 16 of the next record, so its blanks on both sides of the break are value text: `_merge_source_lines` / `validate_jcl` pass those record indices to `merge_continuation_lines(card_images=)`, which pads the previous record to 71 columns and takes the continuation from column 16 as written (issue #65, fixed 2026-10-04). Short editor-style lines with no column-72 indicator keep the old blank-dropping join, and a continuation whose text starts before column 16 is still left-stripped.
 
 2. **`ConditionalBlock.condition` (raw string) is authoritative.** `condition_ast` may be `None` if `parse_condition()` failed. Always read `condition` for display; use `condition_ast` only when traversing the AST.
 

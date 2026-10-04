@@ -94,6 +94,20 @@ def jcl_value_text(value: Any) -> str:
     return str(value)
 
 
+def is_continued_card_image(line: str) -> bool:
+    """Return ``True`` if raw record *line* is a card image continued in column 72.
+
+    Exactly the records :func:`normalize_jcl_line` takes a non-blank column-72
+    continuation indicator off. For such a record the statement text fills
+    columns 1-71, so blanks up to column 71 are known to be coded -- which
+    matters when a quoted string is continued: it runs through column 71
+    and its trailing blanks are part of the value (issue #65).
+    """
+    if len(line) >= 80 or (len(line) == 72 and line[70] == " "):
+        return not line[71].isspace()
+    return False
+
+
 def normalize_jcl_line(line: str) -> str:
     """
     Normalize JCL line by removing extra whitespace and handling continuations.

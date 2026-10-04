@@ -6,6 +6,7 @@ Handles complex multi-line statements with proper context awareness.
 
 import logging
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -199,12 +200,19 @@ class ContinuationLineHandler:
         if "=" in comment:
             self.suspect_comments.append((line_num, comment))
 
-    def merge_continuation_lines(self, lines: list[str]) -> list[tuple[str, int]]:
+    def merge_continuation_lines(
+        self, lines: list[str], card_images: Collection[int] = ()
+    ) -> list[tuple[str, int]]:
         """
         Merge continuation lines into complete statements.
 
         Args:
             lines: List of raw JCL lines
+            card_images: 0-based indices of *lines* that were card images
+                continued in column 72 (see
+                :func:`~jclparser.utils.is_continued_card_image`). A quoted
+                string continued from such a record keeps its blanks through
+                column 71 and resumes in column 16 of the next record.
 
         Returns:
             List of (merged_line, original_line_number) tuples
@@ -240,6 +248,8 @@ class ContinuationLineHandler:
             # Compute initial context for this statement line once.
             cached_ctx = self._analyze_line_context(merged_line)
             j = i + 1
+            # The record whose text currently ends merged_line.
+            last_record = i
             # Comments encountered mid-continuation are buffered and emitted
             # right after the statement they interrupted (see below) instead
             # of immediately, so the statement itself keeps its place in the
@@ -304,7 +314,18 @@ class ContinuationLineHandler:
 
                     # Merge with proper separator
                     stripped = merged_line.rstrip()
-                    if stripped.endswith(","):
+                    if (
+                        cached_ctx.in_quotes
+                        and last_record in card_images
+                        and not next_line[2:15].strip()
+                    ):
+                        # IBM: a quoted string is coded through column 71
+                        # and continues in column 16 of the next record, so
+                        # blanks on either side of the break are part of it.
+                        pad = 71 - len(lines[last_record].rstrip())
+                        cont_content = next_line[15:]
+                        merged_line = merged_line + " " * max(pad, 0) + cont_content
+                    elif stripped.endswith(","):
                         merged_line = stripped + cont_content
                     elif had_leading_comma:
                         merged_line = stripped + "," + cont_content
@@ -319,6 +340,7 @@ class ContinuationLineHandler:
                     cached_ctx = self._analyze_line_context(
                         cont_content, starting_ctx=cached_ctx
                     )
+                    last_record = j
                     j += 1
                 else:
                     # Not a continuation, stop merging

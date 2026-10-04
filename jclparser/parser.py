@@ -87,6 +87,7 @@ from .profiling import ProfilerContext, ProfilingResult
 from .utils import (
     POSITIONAL_PARAM_PREFIX,  # noqa: F401
     instream_delimiter,
+    is_continued_card_image,
     is_positional_key,
     normalize_jcl_line,
     read_source,
@@ -240,7 +241,14 @@ def _merge_source_lines(
 
     # Merge continuation lines on the non-inline subset only.
     handler = ContinuationLineHandler()
-    merged_non_inline = handler.merge_continuation_lines(non_inline_lines)
+    merged_non_inline = handler.merge_continuation_lines(
+        non_inline_lines,
+        card_images={
+            n
+            for n, orig in enumerate(non_inline_orig_indices)
+            if is_continued_card_image(raw_lines[orig])
+        },
+    )
 
     # Recombine: build lookup of orig_idx -> merged_line for group-start lines only.
     # Continuation lines that were folded into a group are simply absent from this map
@@ -695,9 +703,15 @@ def validate_jcl(
         return errors
 
     # Merge continuation lines so multi-line statements are validated as a unit
-    raw_lines = [normalize_jcl_line(line) for line in split_source_lines(content)]
+    source_lines = split_source_lines(content)
+    raw_lines = [normalize_jcl_line(line) for line in source_lines]
     handler = ContinuationLineHandler()
-    merged_pairs = handler.merge_continuation_lines(raw_lines)
+    merged_pairs = handler.merge_continuation_lines(
+        raw_lines,
+        card_images={
+            n for n, line in enumerate(source_lines) if is_continued_card_image(line)
+        },
+    )
     has_job = False
     in_proc = False
     has_exec = False
