@@ -32,7 +32,10 @@ and ``ABEND`` is true if any of them abended (IBM semantics).
 A step known *not* to have run is mapped to :data:`NOT_RUN`; a relational
 expression naming it (``STEP.RC op n``, ``STEP.ABEND``, ``STEP.RUN``) is then
 false, as IBM specifies.  A step absent from the mapping is *unknown*, so its
-``RC`` / ``ABEND`` tests evaluate to ``None``.
+``RC`` / ``ABEND`` / ``RUN`` tests evaluate to ``None``; ``NOT`` / ``AND`` /
+``OR`` combine ``None`` with Kleene three-valued logic (``None AND False`` is
+``False``, ``None OR True`` is ``True``, anything else with ``None`` is
+``None``).
 
 Unparseable conditions — including any trailing text the grammar does not
 cover, such as ``ABENDCC`` tests — return ``None`` from :func:`parse_condition` so the raw
@@ -157,7 +160,9 @@ class RunCondition(ConditionNode):
     def evaluate(self, step_results: dict[str, StepResult]) -> bool | None:
         if self.step_name:
             result = step_results.get(self.step_name.upper())
-            return result is not None and not isinstance(result, _NotRun)
+            if result is None:
+                return None  # unknown step: whether it ran is unknown too
+            return not isinstance(result, _NotRun)
         return bool(_ran_results(step_results))
 
 

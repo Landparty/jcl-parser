@@ -314,19 +314,21 @@ def compute_feasible_paths(
                     )
                     continue
 
-                ever_true, ever_false, _ever_unknown = _evaluate_over_domain(
+                ever_true, ever_false, ever_unknown = _evaluate_over_domain(
                     ast,
                     predecessors=running_preds,
                     rc_domain=rc_domain,
                     abend_values=abend_values,
                     optional_steps=optional_steps,
                 )
-                # Only mark THEN as unreachable / ELSE as dead code when we
-                # have at least one concrete evaluation and *none* of them
-                # produced the relevant outcome.  When every evaluation was
-                # unknown (None), the condition depends on runtime state we
-                # can't model — conservatively say nothing.
-                has_concrete = ever_true or ever_false
+                # Only mark THEN as unreachable / ELSE as dead code when
+                # every evaluation was concrete and *none* of them produced
+                # the relevant outcome.  An unknown (None) evaluation could
+                # be either outcome -- typically a named step left out of
+                # the bounded search -- so any unknown means "say nothing";
+                # treating it as false reported reachable branches as dead
+                # (issue #61).
+                has_concrete = (ever_true or ever_false) and not ever_unknown
                 if has_concrete and not ever_true:
                     for step in iter_execution_steps(item.then_steps):
                         if step.name:
