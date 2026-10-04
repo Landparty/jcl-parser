@@ -193,9 +193,13 @@ class TestSPACEParsing:
         assert any("unit" in err.lower() for err in errors)
 
     def test_space_validation_invalid_primary(self):
-        """Test SPACE validation with invalid primary."""
+        """Test SPACE validation with invalid (negative) primary.
+
+        A zero primary is valid (the IEFBR14 SPACE=(TRK,0) idiom, #65).
+        """
         parser = ParameterParser()
-        space = parser.parse_space("CYL,(0,5)")
+        assert parser.parse_space("CYL,(0,5)").validate() == []
+        space = parser.parse_space("CYL,(-1,5)")
 
         errors = space.validate()
         assert len(errors) > 0

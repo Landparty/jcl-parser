@@ -140,15 +140,24 @@ class TestSPACEValidation:
         errors = space.validate()
         assert any("negative" in e.lower() or "Directory" in e for e in errors)
 
-    def test_zero_primary_flagged(self):
-        """Zero primary produces validation error."""
+    def test_zero_primary_not_flagged(self):
+        """Zero primary is valid: the IEFBR14 SPACE=(TRK,0) idiom (#65)."""
         space = SPACEParameter(
             key="SPACE",
             raw_value="CYL,(0,5)",
             subparameters={"_unit": "CYL", "_primary": "0", "_secondary": "5"},
         )
+        assert space.validate() == []
+
+    def test_negative_primary_flagged(self):
+        """Negative primary produces validation error."""
+        space = SPACEParameter(
+            key="SPACE",
+            raw_value="CYL,(-1,5)",
+            subparameters={"_unit": "CYL", "_primary": "-1", "_secondary": "5"},
+        )
         errors = space.validate()
-        assert any("Primary" in e or "> 0" in e for e in errors)
+        assert any("Primary" in e for e in errors)
 
     def test_invalid_unit_flagged(self):
         """Invalid SPACE unit produces validation error."""

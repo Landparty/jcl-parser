@@ -183,8 +183,9 @@ class TestConditionEvaluate:
         assert node.evaluate({"STEP1": (0, False)}) is True
 
     def test_run_absent(self):
+        # A step absent from the results is unknown, not "did not run" (#61).
         node = parse_condition("STEP1.RUN")
-        assert node.evaluate({}) is False
+        assert node.evaluate({}) is None
 
     def test_not_true(self):
         node = parse_condition("NOT STEP1.ABEND")

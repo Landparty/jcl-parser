@@ -15,7 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import IO
 
-from .utils import read_source
+from .utils import read_source, split_source_lines
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +182,7 @@ def _find_first_statement_type(content: str) -> str | None:
     Returns:
         Statement type (e.g., "JOB", "PROC", "EXEC", "DD") or None if no valid statement
     """
-    lines = content.split("\n")
+    lines = split_source_lines(content)
 
     for line in lines:
         # Remove carriage return if present

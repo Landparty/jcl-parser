@@ -207,7 +207,7 @@ class TestSPACEIntegration:
 //MYJOB JOB (12345),'TEST'
 //STEP1 EXEC PGM=IEFBR14
 //DD1   DD DSN=MY.DATA,
-//         SPACE=(CYL,(0,5))
+//         SPACE=(CYL,(-1,5))
 """
         job = parse_jcl(jcl)
 

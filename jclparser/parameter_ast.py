@@ -214,9 +214,10 @@ class SPACEParameter(NestedParameter):
             if self.unit not in valid_units and not self.unit.isdigit():
                 errors.append(f"Invalid SPACE unit: {self.unit}")
 
-        # Validate primary > 0
-        if self.primary is not None and self.primary < 1:
-            errors.append(f"Primary space must be > 0: {self.primary}")
+        # Validate primary >= 0.  SPACE=(TRK,0) is legal: it is the IEFBR14
+        # "delete if it exists" idiom, DISP=(MOD,DELETE),SPACE=(TRK,0) (#65).
+        if self.primary is not None and self.primary < 0:
+            errors.append(f"Primary space cannot be negative: {self.primary}")
 
         # Validate secondary >= 0
         if self.secondary is not None and self.secondary < 0:

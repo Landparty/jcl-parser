@@ -20,7 +20,7 @@ class DB2BatchProfile(ProgramProfile):
 
     def analyze(self, step) -> ProgramAnalysis:
         combined = collect_control_text(step)
-        invoked, notes = invoked_and_sql_notes(combined)
+        invoked, notes = invoked_and_sql_notes(step, combined)
 
         summary = (
             f"{step.program}: {len(notes)} DB2 batch operations"

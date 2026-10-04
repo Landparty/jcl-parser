@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from .utils import split_source_lines
+
 if TYPE_CHECKING:
     from .model import DDStatement, Job, Step
 
@@ -165,7 +167,7 @@ def detect_sql_in_text(text: str) -> list[tuple[str, str]]:
     (lines starting with ``--``) are skipped.
     """
     results: list[tuple[str, str]] = []
-    for raw_line in text.splitlines():
+    for raw_line in split_source_lines(text):
         line = raw_line.strip()
         if not line or line.startswith("--"):
             continue

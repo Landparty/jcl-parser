@@ -35,11 +35,13 @@ jcl-parser FILE paths                    # RC feasibility path analysis
 
 ## Query Token (`steps` / `procs` / `detect` / `metrics` / `lint` / `datasets` / `sql` / `analyze` / `paths`)
 
-`FILE` is always read as a file (`pathlib.Path(FILE)`; a missing file prints `Error: file not found` and exits 1), so the 2026-10-03 "a `str` is always content" rule in `parse_jcl` does not affect the CLI. `--validate` is handled before any query token and before `detect`.
+`FILE` is always read as a file (`pathlib.Path(FILE)`; a missing file prints `Error: file not found` and exits 1; any other OS error, such as a directory or an unreadable file, prints `Error: <message>` to stderr and exits 1 instead of a traceback — issue #65, fixed 2026-10-04), so the 2026-10-03 "a `str` is always content" rule in `parse_jcl` does not affect the CLI. `--validate` is handled before any query token and before `detect`.
 
 These are not argparse subcommands — they are matched case-insensitively against the first positional `query` token inside `main()`. `detect` is checked before parsing the file (no parse needed); the rest run after `parse_jcl()` (and after `--explode`, if given).
 
 A bare step name (`jcl-parser FILE PAYSTEP`) or `STEP.DDNAME` falls through to step/DD lookup: the whole token is tried as a step name first (so exploded names like `CALL.PS` work with `--explode`), then — if it contains a dot — split on the **last** dot into step and DD (`CALL.PS.SYSIN`), else searched as a DD name across all steps. (Fixed 2026-09-27: it split on the first dot, so no exploded step or its DDs could be queried.)
+
+`paths` prints `compute_feasible_paths` findings (unreachable / always skipped / contradictory / duplicate IF branches), then a `Not analysed:` section listing any IF whose search exceeded `rc_analysis.MAX_COMBINATIONS` (also printed after `(no feasibility issues found)`, since an unanalysed condition is not a finding). `--json` adds an `unanalysed_conditions` list of `[condition, reason]` pairs (since 2026-10-04, issue #65).
 
 Flags may appear anywhere, including between `FILE` and the query (`jcl-parser FILE --json steps`); `main()` uses `parse_intermixed_args` (fixed 2026-09-27: that ordering used to exit 2 with `unrecognized arguments`).
 
@@ -48,7 +50,7 @@ Flags may appear anywhere, including between `FILE` and the query (`jcl-parser F
 | Flag | Description |
 |------|-------------|
 | `--json` | Output as JSON instead of text |
-| `--validate` | `validate_jcl(path, level="structure")`; exits 1 if it reports anything (warnings included), else prints `OK - no errors found.` |
+| `--validate` | `validate_jcl(path, level="structure")`; exits 1 if it reports anything (warnings included; `job.validate()` ERRORs such as a duplicate step name are reported since #57, they used to print `OK`), else prints `OK - no errors found.` |
 | `--explode` | Expand procedure calls (`job.explode()`) before displaying |
 | `--proc-path PATH` | Base path for external PROC libraries (enables `enable_external_procs`) |
 | `--list-available` | With `procs`: list PROCs found under `--proc-path` (requires `--proc-path`) |

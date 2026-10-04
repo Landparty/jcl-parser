@@ -19,7 +19,7 @@ from typing import Any
 from .errors import JCLSyntaxError
 from .model import Statement
 from .plugins import ParserConfig, get_plugin_registry
-from .utils import POSITIONAL_PARAM_PREFIX
+from .utils import POSITIONAL_PARAM_PREFIX, split_source_lines
 
 logger = logging.getLogger(__name__)
 
@@ -654,7 +654,7 @@ def _extract_jcllib_order(content: str) -> list[str]:
     parse begins.
     """
     libraries: list[str] = []
-    lines = content.splitlines()
+    lines = split_source_lines(content)
     for index, line in enumerate(lines):
         line = line.lstrip()
         if not line.startswith("//") or line.startswith("//*"):

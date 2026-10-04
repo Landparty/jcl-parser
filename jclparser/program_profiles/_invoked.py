@@ -15,8 +15,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from ..sql_detector import detect_sql_in_text
+from ..sql_detector import detect_sql_in_step
+
+if TYPE_CHECKING:
+    from ..model import Step
 
 # DSN subcommand: RUN PROGRAM(PROGA) PLAN(PLANA) ...  TSO accepts the keyword
 # abbreviated (``PROG``), the name quoted (``PROGRAM('PROGA')``), and the
@@ -127,7 +131,7 @@ def extract_invoked_programs(text: str | None) -> list[InvokedProgram]:
     return found
 
 
-def collect_control_text(step) -> str:
+def collect_control_text(step: Step) -> str:
     """Join the control text of a TSO/DB2 driver *step*.
 
     That is the in-stream data of its SYSTSIN/SYSIN DD -- and its ``PARM``,
@@ -153,7 +157,7 @@ def collect_control_text(step) -> str:
     return "\n".join(texts)
 
 
-def _parm_text(step) -> str:
+def _parm_text(step: Step) -> str:
     """The step's ``PARM`` as one string, whatever shape the parser left it in.
 
     ``PARM=(sub,parm)`` arrives as a list and ``PARM='text'`` as a plain
@@ -166,18 +170,25 @@ def _parm_text(step) -> str:
     return str(raw) if raw else ""
 
 
-def invoked_and_sql_notes(combined: str) -> tuple[list[InvokedProgram], list[str]]:
-    """Recover invoked programs and embedded SQL from *combined* control text.
+def invoked_and_sql_notes(
+    step: Step, combined: str
+) -> tuple[list[InvokedProgram], list[str]]:
+    """Recover invoked programs from *combined* and embedded SQL from *step*.
 
     Returns ``(invoked_programs, notes)`` where *notes* lists each invoked
     program (``VIA(NAME)``) followed by a single embedded-SQL summary line when
     SQL is present.
+
+    The SQL comes from :func:`~jclparser.sql_detector.detect_sql_in_step`, not
+    from a scan of *combined*: SYSTSIN holds TSO commands, where ``DELETE`` /
+    ``ALTER`` are dataset commands rather than SQL, and that function keeps
+    only DB2 subcommands such as ``BIND`` there.  Sharing it means a profile
+    note and ``detect_sql_in_step`` can never disagree (issue #66).
     """
     invoked = extract_invoked_programs(combined)
     notes = [f"{prog.via}({prog.name})" for prog in invoked]
-    sql_hits = detect_sql_in_text(combined) if combined else []
-    if sql_hits:
-        categories = sorted({cat for _, cat in sql_hits})
+    categories = sorted({cat for _, cat, _ in detect_sql_in_step(step).sql_statements})
+    if categories:
         notes.append(f"embedded SQL: {', '.join(categories)}")
     return invoked, notes
 

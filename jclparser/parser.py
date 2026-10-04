@@ -87,9 +87,11 @@ from .profiling import ProfilerContext, ProfilingResult
 from .utils import (
     POSITIONAL_PARAM_PREFIX,  # noqa: F401
     instream_delimiter,
+    is_continued_card_image,
     is_positional_key,
     normalize_jcl_line,
     read_source,
+    split_source_lines,
 )
 
 if TYPE_CHECKING:
@@ -113,7 +115,7 @@ def _merge_source_lines(
     reports comment fields that were stripped off statements but still looked
     like operands (truncated or garbled records).
     """
-    raw_lines = content.splitlines()
+    raw_lines = split_source_lines(content)
     lines = [normalize_jcl_line(line) for line in raw_lines]
 
     # Single pass: separate inline data lines from regular lines.
@@ -239,7 +241,14 @@ def _merge_source_lines(
 
     # Merge continuation lines on the non-inline subset only.
     handler = ContinuationLineHandler()
-    merged_non_inline = handler.merge_continuation_lines(non_inline_lines)
+    merged_non_inline = handler.merge_continuation_lines(
+        non_inline_lines,
+        card_images={
+            n
+            for n, orig in enumerate(non_inline_orig_indices)
+            if is_continued_card_image(raw_lines[orig])
+        },
+    )
 
     # Recombine: build lookup of orig_idx -> merged_line for group-start lines only.
     # Continuation lines that were folded into a group are simply absent from this map
@@ -249,12 +258,27 @@ def _merge_source_lines(
         orig_idx = non_inline_orig_indices[ni_line_num - 1]
         merged_start[orig_idx] = merged_line
 
+    # A comment (or blank) record met inside a continued statement is its own
+    # entry, but it must come *before* that merged statement: a DD that opens
+    # in-stream data (``DD *,`` / ``//* c`` / ``//  DLM=$$``) would otherwise
+    # read the comment as its first data record, or end its data at it
+    # (issue #58).  ``stmt_pos`` is the entry of the last statement still
+    # open to continuation records.
     merged_lines: list[tuple[str, int]] = []
+    stmt_pos: int | None = None
     for i, line in enumerate(lines):
         if i in inline_data_indices or i in control_data_indices:
             merged_lines.append((line, i + 1))
+            stmt_pos = None
         elif i in merged_start:
             merged_lines.append((merged_start[i], i + 1))
+            if line.strip() and not line.startswith("//*"):
+                stmt_pos = len(merged_lines) - 1
+        elif stmt_pos is not None and stmt_pos < len(merged_lines) - 1:
+            # A continuation record folded into the statement at stmt_pos,
+            # with comment records in between: move the statement after them.
+            merged_lines.append(merged_lines.pop(stmt_pos))
+            stmt_pos = len(merged_lines) - 1
 
     # Map the handler's suspect comment fields back to original line numbers.
     source_warnings.extend(
@@ -325,8 +349,15 @@ def _parse_jcl_core(
     proc_base_path: str | Path | None = None,
     enable_external_procs: bool = True,
     include_loader: IncludeMemberLoader | None = None,
+    *,
+    validate_job: bool = True,
 ) -> Job:
-    """Core parsing implementation. See parse_jcl() for full documentation."""
+    """Core parsing implementation. See parse_jcl() for full documentation.
+
+    *validate_job* = False skips the strict-mode ``job.validate()`` pass, for
+    :func:`validate_jcl`, which reports those findings itself rather than
+    losing them to a :class:`JCLValidationError` (#57).
+    """
     # The keyword and the config are two ways to ask for strict parsing;
     # either one turns it on.
     strict_mode = strict_mode or (config is not None and config.strict_mode)
@@ -445,7 +476,7 @@ def _parse_jcl_core(
     # Validate the parsed job if in strict mode.  Only ERROR-severity findings
     # are fatal — WARNING/INFO findings (e.g. unresolved OUTPUT back-references,
     # forward dataset references) are advisory and must not break strict parsing.
-    if strict_mode:
+    if strict_mode and validate_job:
         logger.debug("running strict-mode validation for job %s", job.name)
         validation_errors = job.validate()
         fatal = [
@@ -614,20 +645,31 @@ def validate_jcl(
 
     # First try normal parsing to catch basic structure issues
     try:
-        job = parse_jcl(source, strict_mode=True, config=config)
+        # Strict parse for the parse-time structure errors (unresolvable
+        # PROC, orphaned DD), but without the job.validate() pass: strict
+        # mode turns its ERROR findings into one JCLValidationError, which
+        # used to land in the syntax-only fallback below and vanish (#57).
+        job = _parse_jcl_core(
+            source, strict_mode=True, config=config, validate_job=False
+        )
 
-        # Additional validation based on level
-        if effective_level in (ValidationLevel.STRUCTURE, ValidationLevel.SEMANTIC):
-            validation_errors = job.validate()
-            for err in validation_errors:
-                errors.append(
-                    ParseError(
-                        error_type=err.error_type,
-                        message=err.message,
-                        line_number=err.line_number or 0,
-                        severity=err.severity,
-                    )
+        # job.validate() findings.  The basic level reports the ERROR ones --
+        # exactly what makes a strict parse fail; structure and semantic
+        # report every finding, warnings included.
+        for err in job.validate():
+            if (
+                effective_level == ValidationLevel.BASIC
+                and err.severity != ErrorSeverity.ERROR
+            ):
+                continue
+            errors.append(
+                ParseError(
+                    error_type=err.error_type,
+                    message=err.message,
+                    line_number=err.line_number or 0,
+                    severity=err.severity,
                 )
+            )
 
         # Plugin-based validation (opt-in: only the plugins the config enables)
         if effective_level == ValidationLevel.SEMANTIC and config is not None:
@@ -679,9 +721,15 @@ def validate_jcl(
         return errors
 
     # Merge continuation lines so multi-line statements are validated as a unit
-    raw_lines = [normalize_jcl_line(line) for line in content.splitlines()]
+    source_lines = split_source_lines(content)
+    raw_lines = [normalize_jcl_line(line) for line in source_lines]
     handler = ContinuationLineHandler()
-    merged_pairs = handler.merge_continuation_lines(raw_lines)
+    merged_pairs = handler.merge_continuation_lines(
+        raw_lines,
+        card_images={
+            n for n, line in enumerate(source_lines) if is_continued_card_image(line)
+        },
+    )
     has_job = False
     in_proc = False
     has_exec = False

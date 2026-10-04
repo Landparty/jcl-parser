@@ -9,11 +9,39 @@ from __future__ import annotations
 
 import builtins
 import errno
+import re
 from pathlib import Path
 from typing import Any
 
 #: Prefix used to store positional (keyword-less) JCL parameters in dicts.
 POSITIONAL_PARAM_PREFIX: str = "_pos_"
+
+_LINE_BREAK = re.compile(r"\r\n|\r|\n")
+
+
+def split_source_lines(text: str, keepends: bool = False) -> list[str]:
+    """Split source *text* into records on ``\\n``, ``\\r\\n`` and ``\\r`` only.
+
+    The one record splitter for JCL source and in-stream data. ``str.splitlines``
+    also breaks on form feed, vertical tab, ``\\x1c``-``\\x1e``, NEL (``\\x85``)
+    and U+2028/U+2029, which split a data record in two and shifted every later
+    line number (issue #62). Like ``splitlines``, a single trailing line end
+    does not yield a final empty record; with *keepends* each record keeps
+    its line end.
+    """
+    if keepends:
+        records: list[str] = []
+        start = 0
+        for match in _LINE_BREAK.finditer(text):
+            records.append(text[start : match.end()])
+            start = match.end()
+        if start < len(text):
+            records.append(text[start:])
+        return records
+    records = _LINE_BREAK.split(text)
+    if records[-1] == "":
+        records.pop()
+    return records
 
 
 def is_positional_key(key: str) -> bool:
@@ -64,6 +92,20 @@ def jcl_value_text(value: Any) -> str:
     if value is True or value is None:
         return ""
     return str(value)
+
+
+def is_continued_card_image(line: str) -> bool:
+    """Return ``True`` if raw record *line* is a card image continued in column 72.
+
+    Exactly the records :func:`normalize_jcl_line` takes a non-blank column-72
+    continuation indicator off. For such a record the statement text fills
+    columns 1-71, so blanks up to column 71 are known to be coded -- which
+    matters when a quoted string is continued: it runs through column 71
+    and its trailing blanks are part of the value (issue #65).
+    """
+    if len(line) >= 80 or (len(line) == 72 and line[70] == " "):
+        return not line[71].isspace()
+    return False
 
 
 def normalize_jcl_line(line: str) -> str:
@@ -119,7 +161,12 @@ MAX_LIBRARY_MEMBER_BYTES: int = 4 * 1024 * 1024
 
 def _read_file_with_fallback(path: Path, max_bytes: int | None = None) -> str:
     """
-    Read a file trying utf-8, latin-1, cp1252, then binary fallback.
+    Read a file trying utf-8, cp1252, then latin-1 (then a binary fallback).
+
+    cp1252 comes before latin-1: latin-1 decodes every byte, so anything
+    after it was unreachable, and a Windows-1252 ``\\x85`` (ellipsis) decoded
+    as NEL. cp1252 leaves five bytes undefined; a file holding one of them
+    falls through to latin-1.
 
     Args:
         path: Existing file path (caller must verify existence).
@@ -140,13 +187,13 @@ def _read_file_with_fallback(path: Path, max_bytes: int | None = None) -> str:
     # `unittest.mock.patch("builtins.open")` is honoured even if this module
     # is ever compiled (Cython caches a bare builtin name at first use).
     # utf-8-sig reads plain UTF-8 too, and drops a byte-order mark.
-    for encoding in ("utf-8-sig", "latin-1", "cp1252"):
+    for encoding in ("utf-8-sig", "cp1252", "latin-1"):
         try:
             with builtins.open(path, "r", encoding=encoding) as fh:
                 return fh.read()
         except (UnicodeDecodeError, UnicodeError):
             continue
-    # Last resort: binary decode with replacement
+    # Defensive only: latin-1 maps every byte, so it does not fail.
     with builtins.open(path, "rb") as fh:
         return fh.read().decode("utf-8", errors="ignore")
 

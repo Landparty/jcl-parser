@@ -3,7 +3,7 @@ type: Invariants
 title: Key Invariants
 description: 19 non-obvious behaviors in jcl-parser that cause contributor bugs; read before touching any parsing code.
 tags: [invariants, gotchas, development]
-timestamp: 2026-09-16T00:00:00Z
+timestamp: 2026-10-04T00:00:00Z
 ---
 
 # Overview
@@ -12,7 +12,7 @@ timestamp: 2026-09-16T00:00:00Z
 
 # Invariants
 
-1. **Column 71 is the continuation boundary; 72 is the indicator and 73-80 the sequence field.** `utils.normalize_jcl_line()` strips columns 72-80 from an 80-column record (and the trailing indicator from a 72-character record whose sequence field was already trimmed) *before* `ContinuationLineHandler` merges what is left. Never pass pre-stripped lines to `parse_jcl()` — keeping column 72 as content renames the next record's first operand (`SPACE=` became `XSPACE=`; fixed 2026-09-02).
+1. **Column 71 is the continuation boundary; 72 is the indicator and 73-80 the sequence field.** `utils.normalize_jcl_line()` strips columns 72-80 from an 80-column record (and the trailing indicator from a 72-character record whose sequence field was already trimmed) *before* `ContinuationLineHandler` merges what is left. Never pass pre-stripped lines to `parse_jcl()` — keeping column 72 as content renames the next record's first operand (`SPACE=` became `XSPACE=`; fixed 2026-09-02). A quoted string continued from a *card image* (a record with a non-blank column 72, `utils.is_continued_card_image()`) runs through column 71 and resumes in column 16 of the next record, so its blanks on both sides of the break are value text: `_merge_source_lines` / `validate_jcl` pass those record indices to `merge_continuation_lines(card_images=)`, which pads the previous record to 71 columns and takes the continuation from column 16 as written (issue #65, fixed 2026-10-04). Short editor-style lines with no column-72 indicator keep the old blank-dropping join, and a continuation whose text starts before column 16 is still left-stripped.
 
 2. **`ConditionalBlock.condition` (raw string) is authoritative.** `condition_ast` may be `None` if `parse_condition()` failed. Always read `condition` for display; use `condition_ast` only when traversing the AST.
 
@@ -24,7 +24,7 @@ timestamp: 2026-09-16T00:00:00Z
 
 6. **`parse_jcl()` does not expand PROCs.** A PROC invocation stays as a `Step` with `step.procedure` set and `step.is_procedure` true — there is no `exec_type` and no `is_proc_invocation` attribute on the model. Call `explode_job()` separately.
 
-7. **`validate_jcl()` returns a flat `list[ParseError]`** — not a boolean, and **not** a `(Job, errors)` tuple. `errors = validate_jcl(source, level="structure")`; the list is empty when valid. It parses internally with `strict_mode=True` and throws the `Job` away, so call `parse_jcl()` separately if you need the model. `level` is a `ValidationLevel` or its string (`"basic"` / `"structure"` / `"semantic"`), defaulting to `config.validation_level`; an unknown level raises `ValueError`.
+7. **`validate_jcl()` returns a flat `list[ParseError]`** — not a boolean, and **not** a `(Job, errors)` tuple. `errors = validate_jcl(source, level="structure")`; the list is empty when valid. It parses internally with `strict_mode=True` minus the strict `job.validate()` raise (`_parse_jcl_core(validate_job=False)`; it reports those findings itself — #57) and throws the `Job` away, so call `parse_jcl()` separately if you need the model. `level` is a `ValidationLevel` or its string (`"basic"` / `"structure"` / `"semantic"`), defaulting to `config.validation_level`; an unknown level raises `ValueError`.
 
 8. **`//` comment lines are dropped, not preserved.** There is no `job.statements` field and no `Statement(type="COMMENT")` anywhere in the model — `Job.comments`/`Step.comments`/`DDStatement.comments` all exist but are never populated. The one exception: a `//*ROUTE XEQ` JES3 control card is recognized and recorded in `job.jes_typed_statements` before the comment is dropped (`_job_builder.handle_comment_line`). Deliberate, not a gap — comments are documentation, not parsed content.
 

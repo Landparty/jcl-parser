@@ -12,7 +12,7 @@ timestamp: 2026-10-04T00:00:00Z
 
 ```
 Input (string / file / IO)
-  → [1] read_source()                     utils.py          — a str is always content, a Path is read, a file-like is read(); file reads try utf-8 (BOM dropped) → latin-1 → cp1252
+  → [1] read_source()                     utils.py          — a str is always content, a Path is read, a file-like is read(); file reads try utf-8 (BOM dropped) → cp1252 → latin-1
   → [2] ContinuationLineHandler.process() continuation_handler.py — merges col-71 continuations
   → [3] resolve_includes()                include_loader.py [optional] — expands // INCLUDE
   → [4] parse_jcl() core loop             parser.py         — orchestrates; statement-line parsing lives in _statement_parser.py, model assembly in _job_builder.py (JobBuilder) + _model_factories.py, post-parse passes in _post_parse.py
@@ -27,6 +27,9 @@ Input (string / file / IO)
 - `parse_jcl()` **never** expands PROCs — call `explode_job()` separately.
 - **A `str` source is always JCL text, never a file name** (breaking change 2026-10-03, `utils._read_source_raw`). `parse_jcl("job.jcl")` parses the five characters `job.jcl`; to read a file pass `pathlib.Path("job.jcl")` (a missing `Path` raises `FileNotFoundError`) or an open file object. The old guess (one line ending in `.jcl`, containing a slash, or naming an existing file) let uploaded text such as `/etc/passwd` read a server file. Applies to everything that calls `read_source`: `parse_jcl`, `validate_jcl`, `detect_file_type`. A leading UTF-8 BOM is stripped from the content.
 - In-stream data opens only on `DD *` / `DD DATA`: `utils.instream_delimiter(parameters)` is the one rule both the source pre-scan (`_merge_source_lines`) and `JobBuilder` use, so a `DLM=` on any other DD (or inside a quoted `PATH=`) no longer swallows the rest of the job (fixed 2026-10-03).
+- A `//*` comment (or blank) record between the records of a continued statement is handed to the parse loop *before* that merged statement (`_merge_source_lines`), so a continued `DD *,` / `DD DATA,` … `DLM=` never reads it as its first data record or ends its data at it (issue #58, fixed 2026-10-04).
+- **Records break on `\n`, `\r\n` and `\r` only** — `utils.split_source_lines()` is the one splitter for source text and in-stream data (parser pre-scan, `validate_jcl`, JCLLIB/strict-DD pre-scans, `resolve_includes` via `keepends=True`, file-type detection, SQL-in-SYSIN scan, CLI data dump). Never use `str.splitlines()` on source: it also breaks on form feed, VT, `\x1c`-`\x1e`, NEL and U+2028/9, which split a data record and shifted every later line number (issue #62, fixed 2026-10-04). File decoding tries cp1252 before latin-1 because latin-1 never fails (a Windows-1252 `\x85` ellipsis was read as NEL).
+- Unterminated blocks are reported, not silent (issue #59, fixed 2026-10-04): an in-stream `PROC` with no `PEND` in a job that has a JOB card adds `Line N: PROC <name> has no PEND; the statements after it were read as part of the procedure` to `job.warnings` (a JOB-less cataloged PROC member needs no PEND and stays silent). End of input still closes in-stream data, silently — unless the unclosed block's records include a `//name EXEC` record, which gets a "was never closed by its delimiter … swallowed JCL statements such as …" warning (`JobBuilder._unclosed_data_warning`).
 - External PROC and INCLUDE libraries are read only from `proc_base_path` or `JCL_PROCLIB_PATH`; with neither, the JCLLIB loaders read nothing (the cwd is never searched), and a member over `utils.MAX_LIBRARY_MEMBER_BYTES` (4 MiB) is refused with a warning (since 2026-10-03).
 - Comment lines (`//*`) are **dropped** — there is no `job.statements` field and no
   `Statement(type="COMMENT")` in the model. The one exception is a JES3 `//*ROUTE XEQ`
@@ -41,7 +44,7 @@ Input (string / file / IO)
 - SET symbols resolve left-to-right; a SET cannot reference a later SET.
 - The post-parse SET pass resolves `DD DSN=`/`DISP=`, EXEC parameters (`PARM=`), and `Step.program` / `Step.procedure` (`EXEC PGM=&NAME`, `EXEC &PROC`), including steps nested in `IF`/`ELSE`; a symbol it cannot resolve is left as written in `program`/`procedure`.
 - `resolve_includes()` never expands an `// INCLUDE` record that sits inside in-stream data (`DD DATA` / `DLM=`) or a CNTL block — it locates those records with the parser's own `_merge_source_lines` scan. The JCLLIB pre-scan (`_extract_jcllib_order`) drops quotes around a library name (`ORDER=('MY.PROCLIB')`), as the main parse does.
-- Column 71 is the continuation column. Never pass pre-stripped lines.
+- Column 71 is the continuation column. Never pass pre-stripped lines. A quoted string continued from an 80-column card image (non-blank column 72) keeps its blanks through column 71 and resumes in column 16 (see [development/invariants](../development/invariants.md) #1).
 - Stage 4 is split across five modules (behavior unchanged, layout only): `parser.py` holds the public API (`parse_jcl`, `validate_jcl`, `parse_statement` re-export) and the core loop; `_statement_parser.py` holds single-line statement/parameter parsing; `_job_builder.py` holds `JobBuilder` (the per-statement-type dispatch state machine); `_model_factories.py` holds the `Statement -> Job/Step/DDStatement` factories and SET-value helpers; `_post_parse.py` holds the post-parse passes (external PROC loading, `OUTPUT=*.name` refs, SET substitution, strict DD structure). All historical `jclparser.parser` and `jclparser._job_builder` imports still work via re-exports.
 
 # Quick Start

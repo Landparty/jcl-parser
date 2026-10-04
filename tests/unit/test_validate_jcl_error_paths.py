@@ -107,7 +107,7 @@ class TestValidateJCLFileNotFound:
             raise FileNotFoundError("No such file: /nonexistent/test.jcl")
 
         with (
-            patch("jclparser.parser.parse_jcl", side_effect=mock_parse),
+            patch("jclparser.parser._parse_jcl_core", side_effect=mock_parse),
             patch("jclparser.parser.read_source", side_effect=mock_read),
         ):
             errors = validate_jcl("some_input", level="basic")

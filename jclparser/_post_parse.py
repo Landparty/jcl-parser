@@ -25,6 +25,7 @@ from typing import Any
 from ._model_factories import _has_unresolved_symbol_ref
 from .errors import JCLStructureError, JCLSyntaxError
 from .model import Job, Step, iter_execution_steps
+from .utils import split_source_lines
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +171,7 @@ def enforce_strict_dd_structure(content: str) -> None:
     *content* for any DD statement and raises :class:`JCLStructureError` when
     one is found.
     """
-    for line in content.splitlines():
+    for line in split_source_lines(content):
         stripped = line.strip()
         if stripped.startswith("//") and not stripped.startswith("//*"):
             parts = stripped.split()

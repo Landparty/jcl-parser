@@ -15,7 +15,9 @@ run (it sits inside an ``IF`` branch or carries ``COND=``) is also explored as
 guards themselves are not analysed.
 
 The analysis is conservative: it reports a step as *unreachable* only when
-the guard evaluates to ``False`` for every combination in the domain.  It
+the guard evaluates to ``False`` for every combination in the domain.  A
+condition whose search would exceed :data:`MAX_COMBINATIONS` is not analysed
+and is listed in :attr:`FeasibilityReport.unanalysed_conditions` instead.  It
 does not attempt to prove the guard satisfiable under runtime-only state
 like dynamic ABENDs or external system conditions.
 
@@ -30,6 +32,7 @@ Usage::
 from __future__ import annotations
 
 import itertools
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -55,6 +58,14 @@ _MAX_RC = 4095
 #: name, so it cannot collide with one).
 _ANONYMOUS_PREDECESSOR = "*OTHER*"
 
+#: Upper bound on the outcome combinations explored for one condition.  The
+#: product grows with the states of *every* named step (RC classes x ABEND x
+#: not-run), so capping the step count alone still let a condition with a
+#: few constants per step take hours (issue #65).  At a few microseconds per
+#: evaluation this keeps one condition to about a second; a larger search is
+#: skipped and recorded in :attr:`FeasibilityReport.unanalysed_conditions`.
+MAX_COMBINATIONS = 250_000
+
 
 @dataclass
 class FeasibilityReport:
@@ -64,6 +75,10 @@ class FeasibilityReport:
     always_skipped: list[str] = field(default_factory=list)
     contradictory_conditions: list[tuple[str, str]] = field(default_factory=list)
     duplicate_if_branches: list[tuple[int, str]] = field(default_factory=list)
+    #: ``(condition, reason)`` for each IF whose search was too large to run.
+    #: Nothing is claimed about those branches; they are not findings, so
+    #: :meth:`is_empty` ignores them.
+    unanalysed_conditions: list[tuple[str, str]] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         return not (
@@ -176,24 +191,28 @@ def _evaluate_over_domain(
     rc_domain: tuple[int, ...],
     abend_values: tuple[bool, ...] = (False,),
     optional_steps: frozenset[str] = frozenset(),
-) -> tuple[bool, bool, bool]:
+    max_combinations: int = MAX_COMBINATIONS,
+) -> tuple[bool, bool, bool] | int:
     """Evaluate *ast* over the product of every predecessor's possible outcomes.
 
     Returns ``(ever_true, ever_false, ever_unknown)`` — a triple of booleans
     indicating whether the condition evaluated to True, False, or ``None``
     (unknown) at least once across the explored combinations.  Callers use
     the ``ever_unknown`` flag to avoid flagging a branch as unreachable when
-    every evaluation was indeterminate (typically because a referenced step
-    was outside the bounded predecessor window).
+    every evaluation was indeterminate.
+
+    When the product of the per-step outcome counts exceeds
+    *max_combinations*, nothing is evaluated and that product (an ``int``)
+    is returned instead, so the caller can report the condition as not
+    analysed rather than guess.
     """
     ever_true = False
     ever_false = False
     ever_unknown = False
 
-    # Always include the steps explicitly named by the condition — otherwise
-    # a deep-enough job could push a referenced predecessor outside the
-    # 8-step cap and produce all-None results that would be misread as
-    # "never true".
+    # Always include the steps explicitly named by the condition (even one
+    # that is not a predecessor): a named step missing from the results
+    # makes its tests unknown.
     referenced = _collect_referenced_steps(ast)
 
     if not predecessors and not referenced:
@@ -214,11 +233,6 @@ def _evaluate_over_domain(
         names.append(_ANONYMOUS_PREDECESSOR)
         if all(name in optional_steps for name in anonymous):
             optional_steps = optional_steps | {_ANONYMOUS_PREDECESSOR}
-    # Bound the search to keep the cost predictable: a step tested on one RC
-    # constant and its ABEND flag has 3 RCs × 2 abend values, so 8 such
-    # steps are 6**8 (~1.7 million) evaluations.
-    capped = names[-8:]
-
     # Each step's RC only meets the constants it is compared against (and,
     # through the unqualified ``RC`` = highest RC, the unqualified ones), so
     # its domain is one representative per class of those constants rather
@@ -244,9 +258,15 @@ def _evaluate_over_domain(
             states.append(NOT_RUN)
         return states
 
-    per_step = [_states(name) for name in capped]
+    # Bound the search by its size, not by the number of steps: dropping a
+    # named step made its tests unknown (issue #61), and a step count cap
+    # still allowed (2k + 1) * 2 * ... states per step (issue #65).
+    per_step = [_states(name) for name in names]
+    combinations = math.prod(len(states) for states in per_step)
+    if combinations > max_combinations:
+        return combinations
     for states in itertools.product(*per_step):
-        results = dict(zip(capped, states))
+        results = dict(zip(names, states))
         r = ast.evaluate(results)
         if r is True:
             ever_true = True
@@ -314,19 +334,35 @@ def compute_feasible_paths(
                     )
                     continue
 
-                ever_true, ever_false, _ever_unknown = _evaluate_over_domain(
+                outcome = _evaluate_over_domain(
                     ast,
                     predecessors=running_preds,
                     rc_domain=rc_domain,
                     abend_values=abend_values,
                     optional_steps=optional_steps,
                 )
-                # Only mark THEN as unreachable / ELSE as dead code when we
-                # have at least one concrete evaluation and *none* of them
-                # produced the relevant outcome.  When every evaluation was
-                # unknown (None), the condition depends on runtime state we
-                # can't model — conservatively say nothing.
-                has_concrete = ever_true or ever_false
+                if isinstance(outcome, int):
+                    # Too many combinations to search: claim nothing.
+                    report.unanalysed_conditions.append(
+                        (
+                            item.condition,
+                            (
+                                f"not analysed: {outcome} outcome combinations "
+                                f"exceed the limit of {MAX_COMBINATIONS}"
+                            ),
+                        )
+                    )
+                    ever_true, ever_false, ever_unknown = False, False, True
+                else:
+                    ever_true, ever_false, ever_unknown = outcome
+                # Only mark THEN as unreachable / ELSE as dead code when
+                # every evaluation was concrete and *none* of them produced
+                # the relevant outcome.  An unknown (None) evaluation could
+                # be either outcome -- typically a named step left out of
+                # the bounded search -- so any unknown means "say nothing";
+                # treating it as false reported reachable branches as dead
+                # (issue #61).
+                has_concrete = (ever_true or ever_false) and not ever_unknown
                 if has_concrete and not ever_true:
                     for step in iter_execution_steps(item.then_steps):
                         if step.name:
@@ -371,6 +407,7 @@ def compute_feasible_paths(
 
 __all__ = [
     "DEFAULT_RC_DOMAIN",
+    "MAX_COMBINATIONS",
     "FeasibilityReport",
     "compute_feasible_paths",
 ]

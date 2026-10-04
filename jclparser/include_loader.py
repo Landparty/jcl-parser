@@ -33,6 +33,7 @@ from .utils import (
     MAX_LIBRARY_MEMBER_BYTES,
     _read_file_with_fallback,
     is_within_directory,
+    split_source_lines,
 )
 
 logger = logging.getLogger(__name__)
@@ -237,7 +238,7 @@ def resolve_includes(
     data_indices = inline_data | control_data
 
     result: list[str] = []
-    for index, line in enumerate(content.splitlines(keepends=True)):
+    for index, line in enumerate(split_source_lines(content, keepends=True)):
         if index in data_indices:
             result.append(line)
             continue

@@ -55,13 +55,26 @@ from .model import (
 from .parser import parse_jcl, validate_jcl
 from .proc_loader import JCLLIBProcedureLoader
 from .program_profiles import analyze_job, analyze_step
-from .rc_analysis import compute_feasible_paths
+from .rc_analysis import FeasibilityReport, compute_feasible_paths
 from .sql_detector import detect_sql_in_job
-from .utils import is_positional_key
+from .utils import is_positional_key, split_source_lines
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point. Returns exit code."""
+    """CLI entry point. Returns exit code.
+
+    An operating-system error (``FILE`` is a directory, unreadable, ...) is
+    reported as ``Error: ...`` on stderr with exit code 1, not a traceback.
+    """
+    try:
+        return _main(argv)
+    except OSError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+def _main(argv: list[str] | None = None) -> int:
+    """:func:`main` without the OS-error guard."""
     # --lint-list doesn't require FILE — handle before argparse
     _argv = argv if argv is not None else sys.argv[1:]
     if "--lint-list" in _argv:
@@ -564,6 +577,9 @@ def _cmd_paths(job: Job, json_output: bool = False) -> int:
                         {"line": line, "condition": cond}
                         for line, cond in report.duplicate_if_branches
                     ],
+                    "unanalysed_conditions": [
+                        list(pair) for pair in report.unanalysed_conditions
+                    ],
                 },
                 indent=2,
             )
@@ -573,9 +589,10 @@ def _cmd_paths(job: Job, json_output: bool = False) -> int:
     return 0
 
 
-def _print_paths(report) -> None:
+def _print_paths(report: FeasibilityReport) -> None:
     if report.is_empty():
         print("(no feasibility issues found)")
+        _print_unanalysed(report)
         return
     if report.unreachable_steps:
         print("Unreachable steps:")
@@ -593,6 +610,14 @@ def _print_paths(report) -> None:
         print("Duplicate IF branches:")
         for line, cond in report.duplicate_if_branches:
             print(f"  line {line}: {cond}")
+    _print_unanalysed(report)
+
+
+def _print_unanalysed(report: FeasibilityReport) -> None:
+    if report.unanalysed_conditions:
+        print("Not analysed:")
+        for cond, reason in report.unanalysed_conditions:
+            print(f"  {cond}  ({reason})")
 
 
 def _print_summary(job: Job) -> None:
@@ -857,7 +882,7 @@ def _print_dd_detail(dd: DDStatement) -> None:
             print(f"    SPACE=({','.join(parts)})")
     if dd.has_inline_data:
         print("    --- inline data ---")
-        for line in (dd.inline_data or "").splitlines():
+        for line in split_source_lines(dd.inline_data or ""):
             print(f"    {line}")
         print("    ---")
 
