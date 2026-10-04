@@ -346,8 +346,10 @@ def compute_feasible_paths(
                     report.unanalysed_conditions.append(
                         (
                             item.condition,
-                            f"not analysed: {outcome} outcome combinations "
-                            f"exceed the limit of {MAX_COMBINATIONS}",
+                            (
+                                f"not analysed: {outcome} outcome combinations "
+                                f"exceed the limit of {MAX_COMBINATIONS}"
+                            ),
                         )
                     )
                     ever_true, ever_false, ever_unknown = False, False, True

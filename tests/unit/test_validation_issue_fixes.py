@@ -194,8 +194,10 @@ class TestDdOverrideNamingNoProcstep:
         src = "//J JOB\n//S EXEC PGM=X\n//A.B DD DSN=A,DISP=SHR\n"
         job = parse_jcl(src)
         assert job.warnings == [
-            "DD override A.B names no step in PROC: step S runs PGM=X, "
-            "not a procedure; override ignored"
+            (
+                "DD override A.B names no step in PROC: step S runs PGM=X, "
+                "not a procedure; override ignored"
+            )
         ]
 
 
@@ -241,8 +243,10 @@ class TestLifecycleDispositionAtStepEnd:
             "//D4 DD DSN=PROD.B,DISP=SHR\n"
         )
         assert _lifecycle_messages(src) == [
-            "Dataset 'PROD.B' opened in step 'S4' (DD D4) after being "
-            "uncataloged in step 'S3'"
+            (
+                "Dataset 'PROD.B' opened in step 'S4' (DD D4) after being "
+                "uncataloged in step 'S3'"
+            )
         ]
 
     def test_delete_and_recatalog_in_one_step_leaves_it_cataloged(self):
