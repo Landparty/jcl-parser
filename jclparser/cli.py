@@ -55,7 +55,7 @@ from .model import (
 from .parser import parse_jcl, validate_jcl
 from .proc_loader import JCLLIBProcedureLoader
 from .program_profiles import analyze_job, analyze_step
-from .rc_analysis import compute_feasible_paths
+from .rc_analysis import FeasibilityReport, compute_feasible_paths
 from .sql_detector import detect_sql_in_job
 from .utils import is_positional_key, split_source_lines
 
@@ -577,6 +577,9 @@ def _cmd_paths(job: Job, json_output: bool = False) -> int:
                         {"line": line, "condition": cond}
                         for line, cond in report.duplicate_if_branches
                     ],
+                    "unanalysed_conditions": [
+                        list(pair) for pair in report.unanalysed_conditions
+                    ],
                 },
                 indent=2,
             )
@@ -586,9 +589,10 @@ def _cmd_paths(job: Job, json_output: bool = False) -> int:
     return 0
 
 
-def _print_paths(report) -> None:
+def _print_paths(report: FeasibilityReport) -> None:
     if report.is_empty():
         print("(no feasibility issues found)")
+        _print_unanalysed(report)
         return
     if report.unreachable_steps:
         print("Unreachable steps:")
@@ -606,6 +610,14 @@ def _print_paths(report) -> None:
         print("Duplicate IF branches:")
         for line, cond in report.duplicate_if_branches:
             print(f"  line {line}: {cond}")
+    _print_unanalysed(report)
+
+
+def _print_unanalysed(report: FeasibilityReport) -> None:
+    if report.unanalysed_conditions:
+        print("Not analysed:")
+        for cond, reason in report.unanalysed_conditions:
+            print(f"  {cond}  ({reason})")
 
 
 def _print_summary(job: Job) -> None:

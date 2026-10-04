@@ -6,7 +6,6 @@ jclparser/_statement_parser.py: error: Missing type arguments for generic type "
 jclparser/_statement_parser.py: error: Missing type arguments for generic type "frozenset"  [type-arg]
 jclparser/_statement_parser.py: error: Missing type arguments for generic type "list"  [type-arg]
 jclparser/cli.py: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
-jclparser/cli.py: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
 jclparser/cli.py: error: Missing type arguments for generic type "dict"  [type-arg]
 jclparser/cli.py: error: Missing type arguments for generic type "list"  [type-arg]
 jclparser/cli.py: error: Missing type arguments for generic type "list"  [type-arg]

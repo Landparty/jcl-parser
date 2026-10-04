@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import time
+
 import pytest
 
 from jclparser import parse_jcl
+from jclparser.cli import main
 from jclparser.condition_parser import parse_condition
 from jclparser.model import ConditionalBlock
 from jclparser.rc_analysis import compute_feasible_paths
@@ -96,3 +100,71 @@ class TestConditionTokenizerStrict:
         (block,) = [b for b in job.steps if isinstance(b, ConditionalBlock)]
         assert block.condition_ast is None
         assert block.condition == "S1.RC=-1"
+
+
+# ---------------------------------------------------------------------------
+# #65 item 3: RC analysis must bound the search, not just the step count
+# ---------------------------------------------------------------------------
+
+
+def _wide_or_job(k: int) -> str:
+    src = "//J JOB 1\n" + "".join(f"//S{i} EXEC PGM=A\n" for i in range(1, k + 1))
+    groups = [f"(S{i}.RC>4|S{i}.RC<8|S{i}.RC=6)" for i in range(1, k + 1)]
+    src += "// IF " + " &\n//    ".join(groups) + " |\n//    ABEND THEN\n"
+    return src + "//T EXEC PGM=B\n// ENDIF\n"
+
+
+class TestRcSearchBound:
+    def test_huge_search_is_not_analysed_and_fast(self):
+        job = parse_jcl(_wide_or_job(8))
+        start = time.perf_counter()
+        report = compute_feasible_paths(job)
+        # Generous bound: the unbounded search took hours at k=8.
+        assert time.perf_counter() - start < 10
+        assert report.unreachable_steps == []
+        assert report.always_skipped == []
+        assert report.contradictory_conditions == []
+        assert len(report.unanalysed_conditions) == 1
+        condition, reason = report.unanalysed_conditions[0]
+        assert condition == job.steps[-1].condition
+        assert "combinations" in reason
+
+    def test_small_search_still_analysed(self):
+        report = compute_feasible_paths(parse_jcl(_wide_or_job(2)))
+        assert report.unanalysed_conditions == []
+        assert report.unreachable_steps == []
+
+    def test_more_than_eight_named_steps_still_exact(self):
+        # The old 8-step cap dropped ASTEP; with the search bounded by its
+        # size instead, a contradiction over nine named steps is still found.
+        src = "//J JOB (A)\n" + "".join(f"//{c}STEP EXEC PGM=X\n" for c in _NINE)
+        cond = " &\n//    ".join(f"{c}STEP.RC=0" for c in _NINE)
+        src += f"// IF {cond} &\n//    ASTEP.RC=4 THEN\n//T EXEC PGM=Y\n// ENDIF\n"
+        report = compute_feasible_paths(parse_jcl(src))
+        assert report.unreachable_steps == ["T"]
+        assert report.unanalysed_conditions == []
+
+    def test_unanalysed_does_not_make_report_non_empty(self):
+        report = compute_feasible_paths(parse_jcl(_wide_or_job(8)))
+        assert report.is_empty()
+
+    def test_cli_paths_reports_unanalysed(self, tmp_path, capsys):
+        path = tmp_path / "wide.jcl"
+        path.write_text(_wide_or_job(8))
+        assert main([str(path), "paths"]) == 0
+        out = capsys.readouterr().out
+        assert "(no feasibility issues found)" in out
+        assert "Not analysed:" in out
+        assert main([str(path), "paths", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+        assert len(data["unanalysed_conditions"]) == 1
+        assert data["unreachable_steps"] == []
+
+    def test_cli_paths_unanalysed_after_findings(self, tmp_path, capsys):
+        src = _wide_or_job(8) + "// IF S1.RC GT 4095 THEN\n//X EXEC PGM=B\n// ENDIF\n"
+        path = tmp_path / "wide.jcl"
+        path.write_text(src)
+        assert main([str(path), "paths"]) == 0
+        out = capsys.readouterr().out
+        assert "Unreachable steps:" in out
+        assert out.index("Unreachable steps:") < out.index("Not analysed:")
