@@ -65,3 +65,64 @@ class TestCommentInsideContinuedInstreamDd:
         merged = _merge_source_lines(src)[0]
         assert merged[2] == ("//* c", 4)
         assert merged[3][1] == 3
+
+
+class TestUnterminatedBlocksWarn:
+    """Issue #59."""
+
+    def test_instream_proc_without_pend_warns(self) -> None:
+        src = (
+            "//J JOB\n"
+            "//P PROC\n"
+            "//S EXEC PGM=X\n"
+            "//D DD DSN=A,DISP=SHR\n"
+            "//R EXEC P\n"
+            "//R2 EXEC PGM=IEFBR14\n"
+        )
+        job = parse_jcl(src)
+        assert job.steps == []
+        assert (
+            "Line 2: PROC P has no PEND; the statements after it were read as "
+            "part of the procedure"
+        ) in job.warnings
+
+    def test_cataloged_proc_member_without_pend_is_silent(self) -> None:
+        src = "//P PROC\n//S EXEC PGM=X\n//D DD DSN=A,DISP=SHR\n"
+        job = parse_jcl(src)
+        assert job.name == ""
+        assert [p.name for p in job.procedures] == ["P"]
+        assert job.warnings == []
+
+    def test_proc_with_pend_is_silent(self) -> None:
+        src = "//J JOB\n//P PROC\n//S EXEC PGM=X\n// PEND\n//R EXEC P\n"
+        job = parse_jcl(src)
+        assert not any("PEND" in w for w in job.warnings)
+
+    def test_unterminated_dd_data_swallowing_jcl_warns(self) -> None:
+        src = (
+            "//J JOB\n"
+            "//S1 EXEC PGM=X\n"
+            "//IN DD DATA,DLM=$$\n"
+            "REC1\n"
+            "//S2 EXEC PGM=Y\n"
+        )
+        job = parse_jcl(src)
+        assert [s.name for s in job.steps] == ["S1"]
+        assert job.steps[0].dd_statements[0].inline_data == "REC1\n//S2 EXEC PGM=Y"
+        assert any(
+            "Line 3:" in w and "never closed" in w and "S2" in w for w in job.warnings
+        ), job.warnings
+
+    def test_unterminated_ordinary_data_is_silent(self) -> None:
+        src = "//J JOB\n//S1 EXEC PGM=X\n//IN DD DATA\nREC1\nREC2\n"
+        job = parse_jcl(src)
+        assert job.steps[0].dd_statements[0].inline_data == "REC1\nREC2"
+        assert job.warnings == []
+
+    def test_unterminated_job_level_xmit_swallowing_jcl_warns(self) -> None:
+        job = parse_jcl("//J JOB\n//X XMIT DEST=A\nDATA\n//S1 EXEC PGM=X\n")
+        assert job.steps == []
+        assert any(
+            w.startswith("In-stream data was never closed") and "S1" in w
+            for w in job.warnings
+        ), job.warnings

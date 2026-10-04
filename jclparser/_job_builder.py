@@ -21,6 +21,7 @@ via the re-export block below. Nothing here is public API — import
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 # Backward-compatible re-exports: these helpers historically lived in this
@@ -61,6 +62,9 @@ from .utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: A record that looks like a JCL ``EXEC`` statement (``//name EXEC ...``).
+_RE_EXEC_RECORD = re.compile(r"^//\S+\s+EXEC(\s|$)")
 
 #: ``/*`` statements JES3 itself processes (RJP workstation sign-on/off); every
 #: other ``/*`` control statement is JES2-only.
@@ -651,6 +655,36 @@ class JobBuilder:
     # Finalisation
     # ------------------------------------------------------------------ #
 
+    def _unclosed_data_warning(self) -> str | None:
+        """Warn when an unterminated in-stream block swallowed JCL statements.
+
+        End of input closes in-stream data by design, so ordinary
+        unterminated data stays silent; but a ``DD DATA`` / ``DLM=`` block
+        whose delimiter never came and whose records include an ``EXEC``
+        statement has almost certainly eaten the rest of the job.
+        """
+        if not self.in_inline_data:
+            return None
+        swallowed = next(
+            (line for line in self.inline_data_lines if _RE_EXEC_RECORD.match(line)),
+            None,
+        )
+        if swallowed is None:
+            return None
+        dd = self.current_dd
+        if dd is None:
+            # Job-level XMIT: its records are discarded, no DD holds them.
+            where = "In-stream data"
+        else:
+            where = (
+                f"Line {dd.line_number}: in-stream data of DD {dd.name or '(unnamed)'}"
+            )
+        return (
+            f"{where} was never closed by its delimiter "
+            f"{self.current_delimiter!r}; it ran to the end of input and "
+            f"swallowed JCL statements such as {swallowed.strip()!r}"
+        )
+
     def finish(self) -> Job:
         """Flush pending state and return the assembled :class:`Job`.
 
@@ -662,6 +696,7 @@ class JobBuilder:
         # collected rather than silently discarding it.
         if self.in_inline_data and self.current_dd and self.inline_data_lines:
             self.current_dd.inline_data = "\n".join(self.inline_data_lines)
+        unclosed_data_warning = self._unclosed_data_warning()
 
         job = self.job
         if job is None:
@@ -679,6 +714,18 @@ class JobBuilder:
 
         if self.pending_warnings:
             job.warnings.extend(self.pending_warnings)
+
+        # An in-stream PROC with no PEND reads every later statement into the
+        # procedure, so the job silently loses its steps.  A JOB-less member
+        # (a cataloged PROC) needs no PEND, so only a real job is warned.
+        if self.job is not None and self.current_procedure is not None:
+            job.warnings.append(
+                f"Line {self.current_procedure.line_number}: PROC "
+                f"{self.current_procedure.name} has no PEND; the statements "
+                "after it were read as part of the procedure"
+            )
+        if unclosed_data_warning is not None:
+            job.warnings.append(unclosed_data_warning)
 
         if self.pending_jes_statements:
             job.jes_statements.extend(self.pending_jes_statements)
