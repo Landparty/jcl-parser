@@ -9,7 +9,7 @@ import logging
 import re
 
 from .errors import ErrorSeverity, ErrorType, ValidationError
-from .model import DDStatement, Job, Step, iter_execution_steps
+from .model import ConditionalBlock, DDStatement, Job, Step, iter_execution_steps
 from .parameter_validators import DatasetNameValidator, DISPValidator
 
 logger = logging.getLogger(__name__)
@@ -368,20 +368,21 @@ def validate_data_dependencies(job: Job) -> list[ValidationError]:
     Returns:
         List of validation errors
     """
-    errors = []
+    errors: list[ValidationError] = []
 
     # Track temporary datasets created and used
     temp_datasets_created: dict[str, str] = {}  # dataset -> step_name
     temp_datasets_used: dict[str, list[str]] = {}  # dataset -> [step_names]
-    # Temporary datasets that still exist: created and not yet deleted by an
-    # explicit DISP=(...,DELETE).  DISP=MOD on one of them extends it (the
-    # classic way to collect several compiles' object decks in &&LOADSET)
-    # rather than creating it a second time.
-    temp_datasets_active: dict[str, str] = {}  # dataset -> creating step_name
 
-    flat_steps = list(iter_execution_steps(job.steps))
+    def _check_step(step: Step, active: dict[str, str]) -> None:
+        """Check one step's temporary DDs against *active*, updating it.
 
-    for step in flat_steps:
+        *active* maps each temporary dataset that still exists (created and
+        not yet deleted by an explicit or defaulted DELETE) to the step that
+        created it.  DISP=MOD on one of them extends it (the classic way to
+        collect several compiles' object decks in &&LOADSET) rather than
+        creating it a second time.
+        """
         step_name = step.name or f"Step{len(temp_datasets_created) + 1}"
 
         for dd in step.dd_statements:
@@ -390,23 +391,21 @@ def validate_data_dependencies(job: Job) -> list[ValidationError]:
                 temp_ds = dd.dataset_name.split("(", 1)[0]
                 tokens = dd._disp_tokens() if dd.disposition else []
                 extends_existing = (
-                    bool(tokens)
-                    and tokens[0] == "MOD"
-                    and temp_ds in temp_datasets_active
+                    bool(tokens) and tokens[0] == "MOD" and temp_ds in active
                 )
 
                 # Check if this is creating or using the dataset
                 if dd.is_output() and not extends_existing:
-                    if temp_ds in temp_datasets_active:
+                    if temp_ds in active:
                         errors.append(
                             ValidationError(
                                 f"Temporary dataset {temp_ds} created in multiple steps: "
-                                f"{temp_datasets_active[temp_ds]} and {step_name}",
+                                f"{active[temp_ds]} and {step_name}",
                                 ErrorType.VALIDATION_ERROR,
                             )
                         )
                     temp_datasets_created[temp_ds] = step_name
-                    temp_datasets_active[temp_ds] = step_name
+                    active[temp_ds] = step_name
 
                 elif dd.is_input() or extends_existing:
                     if temp_ds not in temp_datasets_used:
@@ -420,7 +419,28 @@ def validate_data_dependencies(job: Job) -> list[ValidationError]:
                     # Deleted at the end of this step (an omitted normal
                     # disposition on a NEW dataset defaults to DELETE): a
                     # later step may create one of the same name again.
-                    temp_datasets_active.pop(temp_ds, None)
+                    active.pop(temp_ds, None)
+
+    def _walk(
+        items: list[Step | ConditionalBlock], active: dict[str, str]
+    ) -> dict[str, str]:
+        """Walk *items* in execution order; return the temporaries left.
+
+        The THEN and ELSE branches of an IF are mutually exclusive, so each
+        starts from the state before the IF (#60: the same ``&&T`` created
+        in both is not a duplicate), and after ENDIF a temporary exists when
+        either branch left it.
+        """
+        for item in items:
+            if isinstance(item, Step):
+                _check_step(item, active)
+            elif isinstance(item, ConditionalBlock):
+                then_active = _walk(item.then_steps, dict(active))
+                else_active = _walk(item.else_steps, dict(active))
+                active = {**else_active, **then_active}
+        return active
+
+    _walk(job.steps, {})
 
     # Check that temporary datasets are created before use.
     # Reported as WARNING rather than ERROR because the validator is flow-blind:
