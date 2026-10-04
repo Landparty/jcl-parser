@@ -2,7 +2,7 @@
 type: concept
 title: CLI Reference
 description: jcl-parser CLI usage — a single FILE + positional-query interface (not subcommands), implemented in jclparser/cli.py:main().
-timestamp: 2026-06-30T00:00:00Z
+timestamp: 2026-10-04T00:00:00Z
 tags: [cli, api, jcl-parser]
 ---
 
@@ -35,6 +35,8 @@ jcl-parser FILE paths                    # RC feasibility path analysis
 
 ## Query Token (`steps` / `procs` / `detect` / `metrics` / `lint` / `datasets` / `sql` / `analyze` / `paths`)
 
+`FILE` is always read as a file (`pathlib.Path(FILE)`; a missing file prints `Error: file not found` and exits 1), so the 2026-10-03 "a `str` is always content" rule in `parse_jcl` does not affect the CLI. `--validate` is handled before any query token and before `detect`.
+
 These are not argparse subcommands — they are matched case-insensitively against the first positional `query` token inside `main()`. `detect` is checked before parsing the file (no parse needed); the rest run after `parse_jcl()` (and after `--explode`, if given).
 
 A bare step name (`jcl-parser FILE PAYSTEP`) or `STEP.DDNAME` falls through to step/DD lookup: the whole token is tried as a step name first (so exploded names like `CALL.PS` work with `--explode`), then — if it contains a dot — split on the **last** dot into step and DD (`CALL.PS.SYSIN`), else searched as a DD name across all steps. (Fixed 2026-09-27: it split on the first dot, so no exploded step or its DDs could be queried.)
@@ -46,7 +48,7 @@ Flags may appear anywhere, including between `FILE` and the query (`jcl-parser F
 | Flag | Description |
 |------|-------------|
 | `--json` | Output as JSON instead of text |
-| `--validate` | Validate the JCL and report errors (structural level); exits 1 if errors found |
+| `--validate` | `validate_jcl(path, level="structure")`; exits 1 if it reports anything (warnings included), else prints `OK - no errors found.` |
 | `--explode` | Expand procedure calls (`job.explode()`) before displaying |
 | `--proc-path PATH` | Base path for external PROC libraries (enables `enable_external_procs`) |
 | `--list-available` | With `procs`: list PROCs found under `--proc-path` (requires `--proc-path`) |
