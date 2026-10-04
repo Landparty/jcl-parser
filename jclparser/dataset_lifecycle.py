@@ -133,9 +133,23 @@ class _Branch:
     else_nodes: list[_Node]
 
 
-#: ``(dataset key, position in that dataset's event list, event)``, or the
-#: two branches of an ``IF``.
-_Node = tuple[str, int, DatasetEvent] | _Branch
+#: ``(dataset key, position in that dataset's event list, event)``.
+_Event = tuple[str, int, DatasetEvent]
+
+
+@dataclass
+class _StepEvents:
+    """The events of one step, in DD order.
+
+    Kept together because dispositions take effect at the *end* of the
+    step: every DD of the step sees the catalog state from before it (#65).
+    """
+
+    events: list[_Event]
+
+
+#: One step's events, or the two branches of an ``IF``.
+_Node = _StepEvents | _Branch
 
 
 def _collect_events(
@@ -164,6 +178,7 @@ def _collect_events(
         if not isinstance(item, Step):
             continue
         step_name = item.name or ""
+        step_events: list[_Event] = []
         for dd in item.dd_statements:
             if not dd.dataset_name:
                 continue
@@ -188,8 +203,10 @@ def _collect_events(
                 line_number=dd.line_number,
             )
             events = lifecycle.setdefault(dsn_key, [])
-            nodes.append((dsn_key, len(events), event))
+            step_events.append((dsn_key, len(events), event))
             events.append(event)
+        if step_events:
+            nodes.append(_StepEvents(step_events))
     return nodes
 
 
@@ -364,9 +381,19 @@ def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:
                     evt,
                 )
 
+        # A cataloging allocation counts at once, so a second NEW,CATLG of
+        # the dataset later in the same step is still a duplicate; the full
+        # disposition is applied at step end by _dispose.
+        if catalogs_for_later_steps and cataloged_by is None:
+            cataloged_by, uncataloged_by = evt, None
+        return (cataloged_by, uncataloged_by)
+
+    def _dispose(evt: DatasetEvent, state: _CatalogState) -> _CatalogState:
+        """Apply *evt*'s normal disposition: the catalog state after the step."""
+        cataloged_by, uncataloged_by = state
         # Any disposition that catalogs -- DISP=(NEW,CATLG), but also
         # DISP=(MOD,CATLG) creating the dataset afresh -- leaves it cataloged.
-        if catalogs_for_later_steps and cataloged_by is None:
+        if evt.disp_normal in _CATLG_VALUES and cataloged_by is None:
             cataloged_by, uncataloged_by = evt, None
 
         # Track uncatalog dispositions.  Only the normal disposition counts:
@@ -390,11 +417,16 @@ def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:
                     _run(node.else_nodes, dict(state)),
                 )
                 continue
-            dsn, pos, evt = node
             # Skip temporary datasets — handled by validate_data_dependencies
-            if dsn.startswith("&&"):
-                continue
-            state[dsn] = _check(dsn, pos, evt, state.get(dsn, (None, None)))
+            events = [e for e in node.events if not e[0].startswith("&&")]
+            # Dispositions take effect when the step ends, so a DD that
+            # follows DISP=(OLD,DELETE) of the same dataset in the same step
+            # still finds it there: check every DD first ...
+            for dsn, pos, evt in events:
+                state[dsn] = _check(dsn, pos, evt, state.get(dsn, (None, None)))
+            # ... then apply the dispositions, in DD order.
+            for dsn, _pos, evt in events:
+                state[dsn] = _dispose(evt, state[dsn])
         return state
 
     _run(nodes, {})

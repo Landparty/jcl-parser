@@ -213,3 +213,51 @@ class TestSpaceZeroPrimary:
     def test_negative_primary_still_rejected(self):
         errors = self._space("(TRK,-1)").validate()
         assert errors == ["Primary space cannot be negative: -1"]
+
+
+def _lifecycle_messages(src):
+    from jclparser import validate_dataset_lifecycle
+
+    return [e.message for e in validate_dataset_lifecycle(parse_jcl(src))]
+
+
+@pytest.mark.unit
+class TestLifecycleDispositionAtStepEnd:
+    """#65 item 2: dispositions take effect at step end, not per DD."""
+
+    def test_delete_then_use_in_same_step_is_clean(self):
+        src = (
+            "//J JOB\n//S3 EXEC PGM=X\n"
+            "//D3 DD DSN=PROD.B,DISP=(OLD,DELETE)\n"
+            "//D4 DD DSN=PROD.B,DISP=SHR\n"
+        )
+        assert _lifecycle_messages(src) == []
+
+    def test_delete_then_use_in_next_step_still_warns(self):
+        src = (
+            "//J JOB\n//S3 EXEC PGM=X\n"
+            "//D3 DD DSN=PROD.B,DISP=(OLD,DELETE)\n"
+            "//S4 EXEC PGM=Y\n"
+            "//D4 DD DSN=PROD.B,DISP=SHR\n"
+        )
+        assert _lifecycle_messages(src) == [
+            "Dataset 'PROD.B' opened in step 'S4' (DD D4) after being "
+            "uncataloged in step 'S3'"
+        ]
+
+    def test_delete_and_recatalog_in_one_step_leaves_it_cataloged(self):
+        # D1 deletes, D2 re-catalogs: at step end the dataset is cataloged,
+        # so S2 reading it is clean and a later NEW,CATLG is a duplicate.
+        src = (
+            "//J JOB\n//S1 EXEC PGM=X\n"
+            "//D1 DD DSN=PROD.B,DISP=(OLD,DELETE)\n"
+            "//D2 DD DSN=PROD.B,DISP=(MOD,CATLG)\n"
+            "//S2 EXEC PGM=Y\n//D DD DSN=PROD.B,DISP=SHR\n"
+            "//S3 EXEC PGM=Z\n//D DD DSN=PROD.B,DISP=(NEW,CATLG)\n"
+        )
+        messages = _lifecycle_messages(src)
+        assert not [m for m in messages if "after being uncataloged" in m]
+        dup = [m for m in messages if "already cataloged" in m]
+        assert len(dup) == 1
+        assert "in step 'S3'" in dup[0]
+        assert "already cataloged in step 'S1'" in dup[0]
