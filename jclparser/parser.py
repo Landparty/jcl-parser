@@ -77,7 +77,12 @@ from .model import (  # noqa: F401
     Step,
     iter_execution_steps,
 )
-from .plugins import ParserConfig, get_plugin_registry
+from .plugins import (
+    ParserConfig,
+    ValidationLevel,
+    get_plugin_registry,
+    normalize_validation_level,
+)
 from .profiling import ProfilerContext, ProfilingResult
 from .utils import (
     POSITIONAL_PARAM_PREFIX,  # noqa: F401
@@ -322,6 +327,9 @@ def _parse_jcl_core(
     include_loader: IncludeMemberLoader | None = None,
 ) -> Job:
     """Core parsing implementation. See parse_jcl() for full documentation."""
+    # The keyword and the config are two ways to ask for strict parsing;
+    # either one turns it on.
+    strict_mode = strict_mode or (config is not None and config.strict_mode)
     # Handle different input source types (FileNotFoundError propagates)
     content = read_source(source)
 
@@ -361,7 +369,7 @@ def _parse_jcl_core(
 
     # Now parse the merged lines; the builder holds all loop state and has
     # one handler per statement type (see jclparser/_job_builder.py).
-    builder = JobBuilder()
+    builder = JobBuilder(dialect=config.dialect if config is not None else "standard")
     for line, line_num in merged_lines:
         # Handle inline data continuation
         if builder.consume_inline_data(line):
@@ -387,7 +395,7 @@ def _parse_jcl_core(
             continue
 
         # Parse the statement
-        stmt = parse_statement(line, line_num)
+        stmt = parse_statement(line, line_num, config)
         if not stmt:
             continue
 
@@ -522,8 +530,11 @@ def parse_jcl(
     Args:
         source: JCL text as a ``str``, a :class:`pathlib.Path` naming a file,
             or a file-like object. A ``str`` is always content, never a path.
-        strict_mode: Enable strict parsing mode
-        config: Optional parser configuration
+        strict_mode: Enable strict parsing mode.  ``config.strict_mode`` also
+            enables it; either one is enough.
+        config: Optional parser configuration: its ``dialect``, the statement
+            plugins it enables (plugins are opt-in; with no config none run),
+            ``strict_mode`` and ``detect_sql`` all apply.
         proc_base_path: Base directory for external PROC libraries
                        (defaults to the JCL_PROCLIB_PATH env var; with neither,
                        no external PROC or INCLUDE member is read)
@@ -572,25 +583,41 @@ def parse_jcl(
     return job, ctx.result
 
 
-def validate_jcl(source: str | Path | IO, level: str = "basic") -> list[ParseError]:
+def validate_jcl(
+    source: str | Path | IO,
+    level: ValidationLevel | str | None = None,
+    config: ParserConfig | None = None,
+) -> list[ParseError]:
     """
     Validate JCL syntax and structure without full parsing.
 
     Args:
         source: JCL script to validate
-        level: Validation level (syntax_only, structure, semantic)
+        level: Validation level, a :class:`~jclparser.plugins.ValidationLevel`
+            or its string value (``"basic"``, ``"structure"``, ``"semantic"``;
+            ``"syntax_only"`` is an alias of ``"basic"``).  When omitted,
+            ``config.validation_level`` is used, else ``"basic"``.
+        config: Optional parser configuration.  Its ``dialect`` and enabled
+            plugins apply to the parse; at the semantic level only the
+            validation plugins it enables run (with no config, none do).
 
     Returns:
         List of ParseError objects (empty if valid)
+
+    Raises:
+        ValueError: *level* names no validation level.
     """
+    if level is None:
+        level = config.validation_level if config is not None else "basic"
+    effective_level = normalize_validation_level(level)
     errors = []
 
     # First try normal parsing to catch basic structure issues
     try:
-        job = parse_jcl(source, strict_mode=True)
+        job = parse_jcl(source, strict_mode=True, config=config)
 
         # Additional validation based on level
-        if level in ("structure", "semantic"):
+        if effective_level in (ValidationLevel.STRUCTURE, ValidationLevel.SEMANTIC):
             validation_errors = job.validate()
             for err in validation_errors:
                 errors.append(
@@ -602,11 +629,14 @@ def validate_jcl(source: str | Path | IO, level: str = "basic") -> list[ParseErr
                     )
                 )
 
-        # Plugin-based validation
-        if level == "semantic":
+        # Plugin-based validation (opt-in: only the plugins the config enables)
+        if effective_level == ValidationLevel.SEMANTIC and config is not None:
             registry = get_plugin_registry()
             flat_steps = list(iter_execution_steps(job.steps))
-            for validator in registry.get_validators():
+            validators = [
+                v for v in registry.get_validators() if config.is_plugin_enabled(v)
+            ]
+            for validator in validators:
                 # A ValidationPlugin has three hooks; run each of them, so a
                 # rule written against validate_step / validate_dd is not
                 # silently skipped.
@@ -667,7 +697,7 @@ def validate_jcl(source: str | Path | IO, level: str = "basic") -> list[ParseErr
 
         # Validate each statement individually
         try:
-            stmt = parse_statement(line, line_num)
+            stmt = parse_statement(line, line_num, config)
             if stmt:
                 # Basic structure validation
                 if stmt.type == "JOB":

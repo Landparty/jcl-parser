@@ -10,8 +10,11 @@ import pytest
 from jclparser.errors import ValidationError
 from jclparser.model import DDStatement, Job, Statement, Step
 from jclparser.parser import parse_statement, validate_jcl
-from jclparser.plugins import get_plugin_registry
+from jclparser.plugins import ALL_PLUGINS, ParserConfig, get_plugin_registry
 from jclparser.plugins.base import StatementPlugin, ValidationPlugin
+
+#: Plugins are opt-in: these tests enable every registered one.
+_ALL = ParserConfig(enabled_plugins=[ALL_PLUGINS])
 
 # ---------------------------------------------------------------------------
 # Concrete plugin implementations for testing
@@ -120,7 +123,9 @@ class TestStatementPluginEndToEnd:
         registry = get_plugin_registry()
         registry.register_statement_plugin(plugin)
 
-        result = parse_statement("//CUSTOM MYSTMT PARAM=VALUE", line_number=5)
+        result = parse_statement(
+            "//CUSTOM MYSTMT PARAM=VALUE", line_number=5, config=_ALL
+        )
 
         assert plugin.invoked is True
         assert result is not None
@@ -134,7 +139,7 @@ class TestStatementPluginEndToEnd:
         registry = get_plugin_registry()
         registry.register_statement_plugin(plugin)
 
-        result = parse_statement("//STEP1 EXEC PGM=IEFBR14", line_number=1)
+        result = parse_statement("//STEP1 EXEC PGM=IEFBR14", line_number=1, config=_ALL)
 
         assert plugin.invoked is False
         assert result is not None
@@ -147,7 +152,7 @@ class TestStatementPluginEndToEnd:
         registry.register_statement_plugin(plugin)
 
         # First parse — plugin handles it
-        result1 = parse_statement("//CUSTOM LINE1", line_number=1)
+        result1 = parse_statement("//CUSTOM LINE1", line_number=1, config=_ALL)
         assert result1.type == "CUSTOM"
 
         # Unregister
@@ -155,7 +160,7 @@ class TestStatementPluginEndToEnd:
         plugin.invoked = False
 
         # Second parse — standard parsing (unknown type)
-        result2 = parse_statement("//CUSTOM LINE2", line_number=2)
+        result2 = parse_statement("//CUSTOM LINE2", line_number=2, config=_ALL)
         assert plugin.invoked is False
         # Without the plugin, "CUSTOM" is an unknown statement type
         assert result2.type == "UNKNOWN"
@@ -180,7 +185,7 @@ class TestValidationPluginEndToEnd:
 //BADJOB  JOB CLASS=A
 //STEP1   EXEC PGM=IEFBR14
 """
-        errors = validate_jcl(jcl, level="semantic")
+        errors = validate_jcl(jcl, level="semantic", config=_ALL)
 
         assert plugin.validate_job_called is True
         # The plugin should report an error: name doesn't start with 'T'
@@ -197,7 +202,7 @@ class TestValidationPluginEndToEnd:
 //BADJOB  JOB CLASS=A
 //STEP1   EXEC PGM=IEFBR14
 """
-        validate_jcl(jcl, level="basic")
+        validate_jcl(jcl, level="basic", config=_ALL)
 
         assert plugin.validate_job_called is False
 
@@ -211,7 +216,7 @@ class TestValidationPluginEndToEnd:
 //TESTJOB JOB CLASS=A
 //STEP1   EXEC PGM=IEFBR14
 """
-        errors = validate_jcl(jcl, level="semantic")
+        errors = validate_jcl(jcl, level="semantic", config=_ALL)
 
         assert plugin.validate_job_called is True
         # Name starts with 'T' — plugin should produce no errors
@@ -228,7 +233,7 @@ class TestValidationPluginEndToEnd:
 //BADJOB  JOB CLASS=A
 //STEP1   EXEC PGM=IEFBR14
 """
-        validate_jcl(jcl, level="structure")
+        validate_jcl(jcl, level="structure", config=_ALL)
 
         # Plugins only run at semantic level
         assert plugin.validate_job_called is False
@@ -260,7 +265,7 @@ class TestValidationPluginEndToEnd:
 //TESTJOB JOB CLASS=A
 //STEP1   EXEC PGM=IEFBR14
 """
-        errors = validate_jcl(jcl, level="semantic")
+        errors = validate_jcl(jcl, level="semantic", config=_ALL)
 
         assert plugin1.validate_job_called is True
         assert plugin2.called is True

@@ -9,7 +9,7 @@ from jclparser import explode_job, parse_jcl, validate_jcl
 from jclparser.errors import ErrorSeverity
 from jclparser.model import DDStatement
 from jclparser.parameter_ast import DCBParameter
-from jclparser.plugins import PluginRegistry, ValidationPlugin
+from jclparser.plugins import ParserConfig, PluginRegistry, ValidationPlugin
 
 pytestmark = pytest.mark.unit
 
@@ -161,7 +161,11 @@ class TestValidateJclSeverity:
         monkeypatch.setattr(parser_mod, "get_plugin_registry", lambda: registry)
         jcl = _JOB + "//S1 EXEC PGM=IEFBR14\n//D1 DD DSN=A.B,DISP=SHR\n"
         errors = [
-            e for e in validate_jcl(jcl, level="semantic") if e.message == "site rule"
+            e
+            for e in validate_jcl(
+                jcl, level="semantic", config=ParserConfig(enabled_plugins=["Warn"])
+            )
+            if e.message == "site rule"
         ]
         assert errors[0].severity == ErrorSeverity.WARNING
         assert errors[0].line_number == 2

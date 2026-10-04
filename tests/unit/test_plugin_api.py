@@ -269,11 +269,11 @@ class TestParserConfig:
     def test_parser_config_with_parameters(self):
         """GIVEN ParserConfig parameters WHEN instantiated THEN values set correctly"""
         config = ParserConfig(
-            strict_mode=True, dialect="custom", enabled_plugins=["plugin1", "plugin2"]
+            strict_mode=True, dialect="jes3", enabled_plugins=["plugin1", "plugin2"]
         )
 
         assert config.strict_mode
-        assert config.dialect == "custom"
+        assert config.dialect == "jes3"
         assert config.enabled_plugins == ["plugin1", "plugin2"]
 
     def test_enable_plugin(self):
