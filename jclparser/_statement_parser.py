@@ -282,7 +282,7 @@ def strip_comment_field(line: str, group_operation: str = "") -> str:
     return split_comment_field(line, group_operation)[0]
 
 
-def parse_statement(
+def parse_statement(  # noqa: C901 -- complexity baseline, split when touched
     line: str, line_number: int = 0, config: ParserConfig | None = None
 ) -> Statement | None:
     """
@@ -641,7 +641,7 @@ _RE_HAS_INCLUDE = re.compile(
 )
 
 
-def _extract_jcllib_order(content: str) -> list[str]:
+def _extract_jcllib_order(content: str) -> list[str]:  # noqa: C901 -- complexity baseline, split when touched
     """Quick pre-scan that extracts JCLLIB ORDER library names from raw JCL.
 
     Returns an ordered list of library names found in any ``JCLLIB ORDER=``

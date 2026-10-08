@@ -1056,7 +1056,7 @@ def _override_concatenation_members(
         position += 1
 
 
-def apply_dd_overrides(
+def apply_dd_overrides(  # noqa: C901 -- complexity baseline, split when touched
     expanded_steps: Sequence[Step | ConditionalBlock],
     dd_overrides: dict[str, DDStatement],
     step_name_prefix: str,
@@ -1226,7 +1226,7 @@ def apply_unqualified_dd_overrides(
             dd_statements.extend(deepcopy(members))
 
 
-def explode_job(
+def explode_job(  # noqa: C901 -- complexity baseline, split when touched
     job: Job,
     proc_loader: ProcedureLoader | None = None,
     max_depth: int = 10,
@@ -1455,7 +1455,7 @@ def explode_job(
     return exploded_job
 
 
-def _explode_step(
+def _explode_step(  # noqa: C901 -- complexity baseline, split when touched
     step: Step,
     proc_loader: ProcedureLoader,
     base_scope: SymbolScope,

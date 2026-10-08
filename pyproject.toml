@@ -124,6 +124,15 @@ directory = "htmlcov"
 line-length = 88
 target-version = "py310"
 
+[tool.ruff.lint]
+# Complexity gate: no function may exceed a McCabe complexity of 12. Functions
+# that predate the gate carry ``# noqa: C901 -- complexity baseline``; split
+# one when you touch it and drop its marker. Never add a new marker.
+extend-select = ["C901"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
 [tool.ruff.lint.per-file-ignores]
 # The suite deliberately asserts "this input must not crash the parser" with
 # bare `try: ... except Exception: pass` blocks (BLE001, S110), and exercises

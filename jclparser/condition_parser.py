@@ -280,7 +280,7 @@ _RE_DIGITS = re.compile(r"\d+$")
 # ---------------------------------------------------------------------------
 
 
-def _tokenize(text: str) -> list[str]:
+def _tokenize(text: str) -> list[str]:  # noqa: C901 -- complexity baseline, split when touched
     """Split a condition string into tokens."""
     tokens: list[str] = []
     i = 0
@@ -419,7 +419,7 @@ class _Parser:
             return NotCondition(self._parse_not())
         return self._parse_primary()
 
-    def _parse_primary(self) -> ConditionNode:
+    def _parse_primary(self) -> ConditionNode:  # noqa: C901 -- complexity baseline, split when touched
         tok = self._peek()
         if tok is None:
             raise ValueError("Unexpected end of condition expression")

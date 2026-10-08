@@ -182,7 +182,7 @@ def enforce_strict_dd_structure(content: str) -> None:
                 )
 
 
-def resolve_set_symbols(job: Job) -> None:
+def resolve_set_symbols(job: Job) -> None:  # noqa: C901 -- complexity baseline, split when touched
     """Substitute fully-resolved SET symbols into DD and EXEC-step parameters.
 
     SET statements may appear before or after the DD statements that reference

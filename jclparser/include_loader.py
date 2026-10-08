@@ -174,7 +174,7 @@ class JCLLIBMemberLoader(IncludeMemberLoader):
         return paths
 
 
-def resolve_includes(
+def resolve_includes(  # noqa: C901 -- complexity baseline, split when touched
     content: str,
     loader: IncludeMemberLoader,
     libraries: list[str] | None = None,

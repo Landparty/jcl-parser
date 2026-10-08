@@ -75,3 +75,6 @@ jclparser/**/*.c
 .playwright-mcp/page-2026-06-12T15-59-01-911Z.yml
 .playwright-mcp/page-2026-06-12T16-01-41-283Z.yml
 .playwright-mcp/page-2026-06-12T17-31-07-038Z.yml
+
+# Agent worktrees (Claude Code)
+.claude/worktrees/

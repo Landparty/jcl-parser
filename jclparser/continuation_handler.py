@@ -200,7 +200,7 @@ class ContinuationLineHandler:
         if "=" in comment:
             self.suspect_comments.append((line_num, comment))
 
-    def merge_continuation_lines(
+    def merge_continuation_lines(  # noqa: C901 -- complexity baseline, split when touched
         self, lines: list[str], card_images: Collection[int] = ()
     ) -> list[tuple[str, int]]:
         """

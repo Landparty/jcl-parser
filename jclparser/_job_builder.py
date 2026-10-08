@@ -246,7 +246,7 @@ class JobBuilder:
     # Statement dispatch
     # ------------------------------------------------------------------ #
 
-    def handle_statement(self, stmt: Statement, line_num: int) -> None:
+    def handle_statement(self, stmt: Statement, line_num: int) -> None:  # noqa: C901 -- complexity baseline, split when touched
         """Record statement warnings, then dispatch to the type handler."""
         if stmt.warnings:
             self._warnings_sink().extend(stmt.warnings)
@@ -516,7 +516,7 @@ class JobBuilder:
                 "from the job"
             )
 
-    def _on_conditional(self, stmt: Statement, line_num: int) -> None:
+    def _on_conditional(self, stmt: Statement, line_num: int) -> None:  # noqa: C901 -- complexity baseline, split when touched
         # Conditional logic - track conditionals properly
         if stmt.type == "IF":
             # stmt.name is the IF statement's label (``//CHK1 IF ...``), never
@@ -695,7 +695,7 @@ class JobBuilder:
             f"swallowed JCL statements such as {swallowed.strip()!r}"
         )
 
-    def finish(self) -> Job:
+    def finish(self) -> Job:  # noqa: C901 -- complexity baseline, split when touched
         """Flush pending state and return the assembled :class:`Job`.
 
         Raises :class:`JCLSyntaxError` when no JOB statement (and no

@@ -279,7 +279,7 @@ def _evaluate_over_domain(
     return (ever_true, ever_false, ever_unknown)
 
 
-def compute_feasible_paths(
+def compute_feasible_paths(  # noqa: C901 -- complexity baseline, split when touched
     job: Job,
     rc_domain: tuple[int, ...] = DEFAULT_RC_DOMAIN,
     include_abends: bool = True,
@@ -311,7 +311,7 @@ def compute_feasible_paths(
     else:
         abend_values = (False,)
 
-    def _walk(
+    def _walk(  # noqa: C901 -- complexity baseline, split when touched
         steps: list[Step | ConditionalBlock],
         enclosing_condition_signatures: list[str],
         preds_before: list[str],
