@@ -20,12 +20,16 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ._model_factories import _has_unresolved_symbol_ref
 from .errors import JCLStructureError, JCLSyntaxError
 from .model import Job, Step, iter_execution_steps
 from .utils import split_source_lines
+
+if TYPE_CHECKING:
+    from .explosion import SymbolScope
+    from .model import DDStatement
 
 logger = logging.getLogger(__name__)
 
@@ -211,60 +215,8 @@ def resolve_set_symbols(job: Job) -> None:
     DD dataset names/dispositions, so a job-level SET symbol resolves the same
     way regardless of which kind of statement references it.
     """
-    from .explosion import (
-        SymbolScope,
-        substitute_dd_statement,
-        substitute_parameters_dict,
-        substitute_symbols,
-    )
+    from .explosion import substitute_dd_statement
     from .system_symbols import is_system_symbol_name
-
-    def _scope_for_table(table: dict[str, str]) -> SymbolScope:
-        # Pre-resolve the symbol table so every value is fully expanded before
-        # we apply it to DD dataset names.  On each pass we substitute symbols
-        # within each SET value using the *other* symbols in the table
-        # (excluding the symbol itself prevents direct self-reference loops).
-        # We repeat until no value changes or we reach the pass limit.
-        _raw: dict[str, str] = dict(table)
-        for _pass in range(10):
-            _changed = False
-            for _name, _val in list(_raw.items()):
-                if "&" not in _val:
-                    continue
-                # Build a temporary scope that excludes this symbol's own name
-                # so "&A." inside SET A's value does not expand to itself.
-                _scope_for_val = SymbolScope(
-                    set_symbols={k: v for k, v in _raw.items() if k != _name}
-                )
-                _new_val = substitute_symbols(
-                    _val,
-                    _scope_for_val,
-                    allow_undefined=True,
-                    collapse_double_amp=False,
-                )
-                if _new_val != _val:
-                    _raw[_name] = _new_val
-                    _changed = True
-            if not _changed:
-                break  # table has stabilised – no need for more passes
-
-        # Symbols whose values still contain a genuinely unresolved
-        # &-reference after all passes are excluded from the final scope.
-        # Propagating a raw "&B." value into a DD dataset_name would leave a
-        # literal token in the output; instead, strict=False below will
-        # silently elide those unresolvable references (they become empty
-        # string) and warn. System symbols (&SYSUID, &LYYMMDD, ...) are the
-        # exception: no SET defines them, but explode_job() resolves them from
-        # its SystemSymbolProvider, so blanking them here would destroy
-        # ``DSN=&SYSUID..WORK`` before that pass runs (keep_undefined below). A value that legitimately contains "&&" (e.g.
-        # SET MYTEMP=&&WORK) is NOT excluded -- it has nothing left to
-        # resolve, it just happens to contain an escaped literal ampersand.
-        _resolved_symbols = {
-            k: v
-            for k, v in _raw.items()
-            if not _has_unresolved_symbol_ref(v, ignore=is_system_symbol_name)
-        }
-        return SymbolScope(set_symbols=_resolved_symbols)
 
     _set_scope = _scope_for_table(job.set_statements)
     # A step read before a SET redefined a symbol sees the value in effect at
@@ -272,34 +224,13 @@ def resolve_set_symbols(job: Job) -> None:
     # references) still fall back to the job's final table.
     _step_scopes: dict[int, SymbolScope] = {}
 
-    def _scope_for_step(step: Step) -> SymbolScope:
-        if step.set_symbols is None:
-            return _set_scope
-        if id(step) not in _step_scopes:
-            _step_scopes[id(step)] = _scope_for_table(
-                {**job.set_statements, **step.set_symbols}
-            )
-        return _step_scopes[id(step)]
-
     from .model import iter_execution_steps
 
-    # PROCSTEP.DDNAME overrides (and their concatenation members) are job-level
-    # JCL too; they live outside ``dd_statements``, so get_dd_statements()
-    # alone left ``&HLQ`` unresolved in them even after explosion.
     _flat_steps = list(iter_execution_steps(job.steps))
-    _override_dds = [
-        (_step, _dd)
-        for _step in _flat_steps
-        for _dd in [
-            *_step.dd_overrides.values(),
-            *(m for ms in _step.dd_override_concatenations.values() for m in ms),
-        ]
-    ]
-    _step_dds = [(_step, _dd) for _step in _flat_steps for _dd in _step.dd_statements]
-    for _owner, _dd in [*_step_dds, *_override_dds]:
+    for _owner, _dd in _dds_with_owners(_flat_steps):
         substitute_dd_statement(
             _dd,
-            _scope_for_step(_owner),
+            _scope_for_step(_owner, job, _set_scope, _step_scopes),
             strict=False,
             warnings=job.warnings,
             collapse_double_amp=False,
@@ -307,31 +238,149 @@ def resolve_set_symbols(job: Job) -> None:
         )
 
     for _step in _flat_steps:
-        _step_warnings: list[str] = []
-        _step.parameters = substitute_parameters_dict(
-            _step.parameters,
-            _scope_for_step(_step),
-            strict=False,
-            warnings=_step_warnings,
-            collapse_double_amp=False,
-            keep_undefined=is_system_symbol_name,
-        )
-        for _msg in _step_warnings:
-            job.warnings.append(
-                f"Line {_step.line_number}: Step {_step.name or '(unnamed)'}: {_msg}"
+        _step_scope = _scope_for_step(_step, job, _set_scope, _step_scopes)
+        _substitute_step_parameters(_step, _step_scope, job.warnings)
+        _substitute_step_names(_step, _step_scope)
+
+
+def _preresolve_set_table(table: dict[str, str]) -> dict[str, str]:
+    """Return a copy of SET *table* with symbol references between values expanded."""
+    from .explosion import SymbolScope, substitute_symbols
+
+    # Pre-resolve the symbol table so every value is fully expanded before
+    # we apply it to DD dataset names.  On each pass we substitute symbols
+    # within each SET value using the *other* symbols in the table
+    # (excluding the symbol itself prevents direct self-reference loops).
+    # We repeat until no value changes or we reach the pass limit.
+    _raw: dict[str, str] = dict(table)
+    for _pass in range(10):
+        _changed = False
+        for _name, _val in list(_raw.items()):
+            if "&" not in _val:
+                continue
+            # Build a temporary scope that excludes this symbol's own name
+            # so "&A." inside SET A's value does not expand to itself.
+            _scope_for_val = SymbolScope(
+                set_symbols={k: v for k, v in _raw.items() if k != _name}
             )
-        # PGM= and the PROC name are lifted out of ``parameters`` into their
-        # own attributes, so the pass above never reached them: ``SET
-        # PGMNAME=X`` + ``EXEC PGM=&PGMNAME`` left the program as the literal
-        # "&PGMNAME". A symbol that stays unresolved is left as written.
-        for _attr in ("program", "procedure"):
-            _name_val = getattr(_step, _attr, None)
-            if isinstance(_name_val, str) and "&" in _name_val:
-                _substituted = substitute_symbols(
-                    _name_val,
-                    _scope_for_step(_step),
-                    allow_undefined=True,
-                    collapse_double_amp=False,
-                )
-                if not _has_unresolved_symbol_ref(_substituted):
-                    setattr(_step, _attr, _substituted)
+            _new_val = substitute_symbols(
+                _val,
+                _scope_for_val,
+                allow_undefined=True,
+                collapse_double_amp=False,
+            )
+            if _new_val != _val:
+                _raw[_name] = _new_val
+                _changed = True
+        if not _changed:
+            break  # table has stabilised – no need for more passes
+    return _raw
+
+
+def _scope_for_table(table: dict[str, str]) -> SymbolScope:
+    """Build the substitution scope for SET symbol *table* (see resolve_set_symbols)."""
+    from .explosion import SymbolScope
+    from .system_symbols import is_system_symbol_name
+
+    _raw = _preresolve_set_table(table)
+
+    # Symbols whose values still contain a genuinely unresolved
+    # &-reference after all passes are excluded from the final scope.
+    # Propagating a raw "&B." value into a DD dataset_name would leave a
+    # literal token in the output; instead, strict=False below will
+    # silently elide those unresolvable references (they become empty
+    # string) and warn. System symbols (&SYSUID, &LYYMMDD, ...) are the
+    # exception: no SET defines them, but explode_job() resolves them from
+    # its SystemSymbolProvider, so blanking them here would destroy
+    # ``DSN=&SYSUID..WORK`` before that pass runs (keep_undefined below). A value that legitimately contains "&&" (e.g.
+    # SET MYTEMP=&&WORK) is NOT excluded -- it has nothing left to
+    # resolve, it just happens to contain an escaped literal ampersand.
+    _resolved_symbols = {
+        k: v
+        for k, v in _raw.items()
+        if not _has_unresolved_symbol_ref(v, ignore=is_system_symbol_name)
+    }
+    return SymbolScope(set_symbols=_resolved_symbols)
+
+
+def _scope_for_step(
+    step: Step,
+    job: Job,
+    set_scope: SymbolScope,
+    step_scopes: dict[int, SymbolScope],
+) -> SymbolScope:
+    """Return the SET scope in effect for *step*, memoised in *step_scopes*.
+
+    *set_scope* is the scope of the job's final SET table, used for steps
+    with no ``set_symbols`` snapshot.
+    """
+    if step.set_symbols is None:
+        return set_scope
+    if id(step) not in step_scopes:
+        step_scopes[id(step)] = _scope_for_table(
+            {**job.set_statements, **step.set_symbols}
+        )
+    return step_scopes[id(step)]
+
+
+def _dds_with_owners(steps: list[Step]) -> list[tuple[Step, DDStatement]]:
+    """Return every ``(step, dd)`` pair SET substitution must visit.
+
+    Step DD statements come first, then PROCSTEP.DDNAME overrides.
+    """
+    # PROCSTEP.DDNAME overrides (and their concatenation members) are job-level
+    # JCL too; they live outside ``dd_statements``, so get_dd_statements()
+    # alone left ``&HLQ`` unresolved in them even after explosion.
+    _override_dds = [
+        (_step, _dd)
+        for _step in steps
+        for _dd in [
+            *_step.dd_overrides.values(),
+            *(m for ms in _step.dd_override_concatenations.values() for m in ms),
+        ]
+    ]
+    _step_dds = [(_step, _dd) for _step in steps for _dd in _step.dd_statements]
+    return [*_step_dds, *_override_dds]
+
+
+def _substitute_step_parameters(
+    step: Step, scope: SymbolScope, job_warnings: list[str]
+) -> None:
+    """Substitute SET symbols into *step*'s EXEC parameters, warning on *job_warnings*."""
+    from .explosion import substitute_parameters_dict
+    from .system_symbols import is_system_symbol_name
+
+    _step_warnings: list[str] = []
+    step.parameters = substitute_parameters_dict(
+        step.parameters,
+        scope,
+        strict=False,
+        warnings=_step_warnings,
+        collapse_double_amp=False,
+        keep_undefined=is_system_symbol_name,
+    )
+    for _msg in _step_warnings:
+        job_warnings.append(
+            f"Line {step.line_number}: Step {step.name or '(unnamed)'}: {_msg}"
+        )
+
+
+def _substitute_step_names(step: Step, scope: SymbolScope) -> None:
+    """Substitute SET symbols into *step*'s program and PROC names."""
+    from .explosion import substitute_symbols
+
+    # PGM= and the PROC name are lifted out of ``parameters`` into their
+    # own attributes, so the parameter pass never reached them: ``SET
+    # PGMNAME=X`` + ``EXEC PGM=&PGMNAME`` left the program as the literal
+    # "&PGMNAME". A symbol that stays unresolved is left as written.
+    for _attr in ("program", "procedure"):
+        _name_val = getattr(step, _attr, None)
+        if isinstance(_name_val, str) and "&" in _name_val:
+            _substituted = substitute_symbols(
+                _name_val,
+                scope,
+                allow_undefined=True,
+                collapse_double_amp=False,
+            )
+            if not _has_unresolved_symbol_ref(_substituted):
+                setattr(step, _attr, _substituted)

@@ -46,9 +46,9 @@ Layout: `tests/unit/` (95 `test_*.py` files), `tests/integration/` (15), `tests/
 # Lint / Format / Type-check
 
 ```bash
-ruff check .      # lint (line-length=88, target=py310)
+ruff check .      # lint (line-length=88, target=py310, McCabe complexity <= 12 via C901)
 ruff format .     # format (do not use black)
-mypy jclparser/   # strict mode — not yet clean (85 known errors across ~25 modules, recorded in mypy-baseline.txt)
+mypy jclparser/   # strict mode — not yet clean (82 known errors across ~25 modules, recorded in mypy-baseline.txt)
 python scripts/mypy_ratchet.py           # what CI runs: fails only on errors missing from mypy-baseline.txt
 python scripts/mypy_ratchet.py --update  # after fixing errors, shrink the baseline (use mypy 2.4.0, as pinned in CI)
 ```
@@ -89,23 +89,24 @@ CLI `--version` reads from `__init__.py`, not package metadata.
 
 # Module Inventory
 
-Line counts as of 2026-10-04 (`wc -l`).
+Line counts as of 2026-10-08 (`wc -l`).
 
 | Module | Lines | Role |
 |--------|------:|------|
 | `__init__.py` | 279 | Public API re-exports, `parse()` alias, `__version__` |
 | `__main__.py` | 5 | `python -m jclparser` |
-| `parser.py` | 764 | `parse_jcl()`, `validate_jcl()`, core loop, `_merge_source_lines` |
-| `_statement_parser.py` | 717 | Single-statement parsing, `_STATEMENT_TYPES`, `split_comment_field()`, INCLUDE/JCLLIB pre-scans |
-| `_job_builder.py` | 713 | `JobBuilder` per-statement-type dispatch |
+| `parser.py` | 633 | `parse_jcl()`, `validate_jcl()`, parse loop and its phases (`_expand_includes`, `_build_job`, `_resolve_references`, …), line-by-line validation fallback |
+| `_source_scanner.py` | 367 | `_merge_source_lines()` (`_RecordClassifier` marks in-stream data / CNTL records, then continuation merge), `_instream_delimiter`, `_expects_continuation` |
+| `_statement_parser.py` | 817 | Single-statement parsing, `_STATEMENT_TYPES`, `split_comment_field()`, INCLUDE/JCLLIB pre-scans |
+| `_job_builder.py` | 824 | `JobBuilder` per-statement-type dispatch (`JobBuilder._HANDLERS` table) |
 | `_model_factories.py` | 176 | `Statement` → `Job`/`Step`/`DDStatement` factories, SET-value helpers |
-| `_post_parse.py` | 336 | External PROC loading, `OUTPUT=*.name` refs, SET substitution, strict DD structure |
+| `_post_parse.py` | 386 | External PROC loading, `OUTPUT=*.name` refs, SET substitution, strict DD structure |
 | `model.py` | 985 | `Job`, `Step`, `DDStatement`, `ConditionalBlock`, `Procedure`, `Statement`, `OutputStatement`, `Parameter` |
 | `explosion.py` | 1604 | `explode_job()`, `SymbolScope`, DD/EXEC overrides, `DEFAULT_MAX_STEPS` |
 | `proc_loader.py` | 427 | Loader chain, `create_default_loader()` |
 | `builtin_procs.py` | 246 | `BUILTIN_UTILITY_PROCS` last-resort templates |
-| `include_loader.py` | 400 | `resolve_includes()`, member loaders |
-| `continuation_handler.py` | 420 | `ContinuationLineHandler` |
+| `include_loader.py` | 437 | `resolve_includes()`, member loaders |
+| `continuation_handler.py` | 478 | `ContinuationLineHandler` |
 | `parameter_ast.py` | 397 | Typed parameter AST (`DCBParameter`, `SPACEParameter`, …) |
 | `parameter_validators.py` | 262 | Parameter value validators |
 | `validators.py` | 439 | Structural validation |
@@ -129,7 +130,8 @@ Line counts as of 2026-10-04 (`wc -l`).
 
 | Task | Files |
 |------|-------|
-| New JCL statement type | `_statement_parser.py` (keyword in `_STATEMENT_TYPES`), `_job_builder.py` (`JobBuilder._on_<type>` handler), `model.py`, `__init__.py` |
+| New JCL statement type | `_statement_parser.py` (keyword in `_STATEMENT_TYPES`), `_job_builder.py` (`JobBuilder._on_<type>(stmt, line_num)` handler + its `JobBuilder._HANDLERS` entry — a test fails if a type is missing), `model.py`, `__init__.py` |
+| In-stream data / CNTL / continuation pre-scan bug | `_source_scanner.py` (`_RecordClassifier`, `_weave_lines`) |
 | Statement/parameter tokenization bug | `_statement_parser.py` (`parse_statement`, `_parse_parameters`) |
 | Parse-loop / model-assembly bug | `_job_builder.py` (`JobBuilder` dispatch), `_model_factories.py` (`Statement`→model factories), `parser.py` (core loop) |
 | Post-parse pass bug (external PROCs, OUTPUT refs, SET substitution) | `_post_parse.py` |

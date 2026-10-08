@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .errors import JCLSyntaxError
 from .model import Statement
-from .plugins import ParserConfig, get_plugin_registry
+from .plugins import ParserConfig, StatementPlugin, get_plugin_registry
 from .utils import POSITIONAL_PARAM_PREFIX, split_source_lines
+
+if TYPE_CHECKING:
+    from .parameter_ast import ParameterParser
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +53,7 @@ _STATEMENT_TYPES: frozenset = frozenset(
 )
 
 #: Lazily-initialised ParameterParser instance shared across calls (same pattern as utils.py).
-_PARAMETER_PARSER = None
+_PARAMETER_PARSER: ParameterParser | None = None
 
 #: Characters that can precede '=' to form a relational operator (¬=, ^=, ~=, !=, <=, >=).
 #: Defined at module level so the frozenset is built exactly once.
@@ -282,68 +285,43 @@ def strip_comment_field(line: str, group_operation: str = "") -> str:
     return split_comment_field(line, group_operation)[0]
 
 
-def parse_statement(
-    line: str, line_number: int = 0, config: ParserConfig | None = None
-) -> Statement | None:
+def _find_statement_plugin(line: str, config: ParserConfig) -> StatementPlugin | None:
+    """Return the first plugin *config* enables that can parse *line*, if any."""
+    for plugin in get_plugin_registry().get_statement_plugins():
+        if config.is_plugin_enabled(plugin) and plugin.can_parse(line):
+            return plugin
+    return None
+
+
+def _parse_jes_statement(line: str, line_number: int) -> Statement | None:
+    """Parse a stripped ``/*`` record into a ``JES`` statement.
+
+    Returns None for a bare ``/*`` (or ``/* ...``) EOF delimiter.
     """
-    Parse individual JCL statement for syntax analysis.
-
-    Args:
-        line: Single line of JCL text
-        line_number: Line number for error context
-        config: Parser configuration.  Only the registered statement plugins
-            it enables (``config.enabled_plugins``) are consulted; with no
-            config, none are.
-
-    Returns:
-        Parsed statement object or None if comment/empty
-
-    Raises:
-        JCLSyntaxError: If line cannot be parsed
-    """
-    # Check for an enabled plugin that can handle this line (plugins are
-    # opt-in: registered is not enough, the config must name it).
-    if config is not None and config.enabled_plugins:
-        for plugin in get_plugin_registry().get_statement_plugins():
-            if config.is_plugin_enabled(plugin) and plugin.can_parse(line):
-                return plugin.parse_statement(line, line_number)
-
-    # Standard JCL parsing
-    line = line.strip()
-
-    # Skip comments and empty lines
-    if not line or line.startswith("//*"):
+    if len(line) <= 2 or not line[2].strip():
+        # Just '/*' or '/* ' is an EOF delimiter, ignore if treating as stmt
         return None
 
-    # JCL statements must start with //
-    if line.startswith("/*"):
-        if len(line) <= 2 or not line[2].strip():
-            # Just '/*' or '/* ' is an EOF delimiter, ignore if treating as stmt
-            return None
+    # Parse JES statement
+    # Format: /*COMMAND options
+    parts = line[2:].split(None, 1)
+    command = parts[0]
+    params = parts[1] if len(parts) > 1 else ""
 
-        # Parse JES statement
-        # Format: /*COMMAND options
-        parts = line[2:].split(None, 1)
-        command = parts[0]
-        params = parts[1] if len(parts) > 1 else ""
+    return Statement(
+        type="JES",
+        name=command,
+        parameters={"_raw": params},
+        line_number=line_number,
+    )
 
-        return Statement(
-            type="JES",
-            name=command,
-            parameters={"_raw": params},
-            line_number=line_number,
-        )
 
-    if not line.startswith("//"):
-        raise JCLSyntaxError(
-            f"Invalid JCL statement (must start with //): {line}", line_number
-        )
+def _is_continuation_record(content: str) -> bool:
+    """Return True when *content* (the text after ``//``) is a continuation line.
 
-    # Remove // prefix
-    content = line[2:]
-
-    # Handle continuation lines - these start with spaces after // BUT check if it's actually a statement without name
-    name_field_present = bool(content) and not content[0].isspace()
+    Continuation lines start with spaces after ``//`` — but so does a statement
+    without a name field (``// SET``, ``// IF``, ``// EXEC``, ``// DD``, ...).
+    """
     if content.startswith(" ") and content.strip():
         # Check if this might be a statement without a name field (like // SET, // IF, // EXEC, // DD, etc.)
         content_stripped = content.strip()
@@ -353,23 +331,19 @@ def parse_statement(
         if first_token not in _STATEMENT_TYPES and not _is_named_statement(
             _cs_parts, False
         ):
-            # This is a true continuation line - return None
-            return None
+            # This is a true continuation line
+            return True
+    return False
 
-    content = content.strip()
 
-    # Handle empty lines after // (NULL statement)
-    if not content:
-        # This is a NULL statement (//)
-        return Statement(type="NULL", name="", parameters={}, line_number=line_number)
+def _split_statement_fields(
+    content_stripped: str, name_field_present: bool
+) -> tuple[str, str, str]:
+    """Split statement text (after ``//``) into ``(name, TYPE, parameters)``.
 
-    # Parse statement name and type
-    # Handle cases like "//         IF ..." where there's no name
-    content_stripped = content.lstrip()
-
-    if not content_stripped:
-        return None
-
+    The statement type is uppercased but not checked against
+    ``_STATEMENT_TYPES``; that is left to the caller.
+    """
     # Check if first token is a statement type (no name field)
     _cs_parts2 = content_stripped.split()
     first_token = _cs_parts2[0] if _cs_parts2 else ""
@@ -401,6 +375,77 @@ def parse_statement(
         else:
             statement_type, parameters_part = rest.split(" ", 1)
             statement_type = statement_type.upper()
+    return name_part, statement_type, parameters_part
+
+
+def parse_statement(
+    line: str, line_number: int = 0, config: ParserConfig | None = None
+) -> Statement | None:
+    """
+    Parse individual JCL statement for syntax analysis.
+
+    Args:
+        line: Single line of JCL text
+        line_number: Line number for error context
+        config: Parser configuration.  Only the registered statement plugins
+            it enables (``config.enabled_plugins``) are consulted; with no
+            config, none are.
+
+    Returns:
+        Parsed statement object or None if comment/empty
+
+    Raises:
+        JCLSyntaxError: If line cannot be parsed
+    """
+    # Check for an enabled plugin that can handle this line (plugins are
+    # opt-in: registered is not enough, the config must name it).
+    if config is not None and config.enabled_plugins:
+        plugin = _find_statement_plugin(line, config)
+        if plugin is not None:
+            return plugin.parse_statement(line, line_number)
+
+    # Standard JCL parsing
+    line = line.strip()
+
+    # Skip comments and empty lines
+    if not line or line.startswith("//*"):
+        return None
+
+    # JCL statements must start with //
+    if line.startswith("/*"):
+        return _parse_jes_statement(line, line_number)
+
+    if not line.startswith("//"):
+        raise JCLSyntaxError(
+            f"Invalid JCL statement (must start with //): {line}", line_number
+        )
+
+    # Remove // prefix
+    content = line[2:]
+
+    # Handle continuation lines - these start with spaces after // BUT check if it's actually a statement without name
+    name_field_present = bool(content) and not content[0].isspace()
+    if content.startswith(" ") and _is_continuation_record(content):
+        # This is a true continuation line - return None
+        return None
+
+    content = content.strip()
+
+    # Handle empty lines after // (NULL statement)
+    if not content:
+        # This is a NULL statement (//)
+        return Statement(type="NULL", name="", parameters={}, line_number=line_number)
+
+    # Parse statement name and type
+    # Handle cases like "//         IF ..." where there's no name
+    content_stripped = content.lstrip()
+
+    if not content_stripped:
+        return None
+
+    name_part, statement_type, parameters_part = _split_statement_fields(
+        content_stripped, name_field_present
+    )
 
     # Validate statement type
     if statement_type not in _STATEMENT_TYPES:
@@ -502,6 +547,40 @@ def _check_param_balance(param_string: str, line_number: int) -> None:
         )
 
 
+def _take_inline_data_operand(
+    param_string: str, param_upper: str, parameters: dict[str, Any]
+) -> str | None:
+    """Record a leading ``*`` / ``DATA`` in-stream operand into *parameters*.
+
+    *param_upper* is ``param_string.strip().upper()``.  Returns the parameter
+    text still to be parsed, or None when nothing is left (the operand stood
+    alone).
+    """
+    # Handle special cases like DD * or DD DATA (only if standalone)
+    if param_upper == "*":
+        parameters["*"] = True
+        return None
+    elif param_upper == "DATA" or param_upper.startswith("DATA,"):
+        parameters["DATA"] = True
+        # Continue parsing if there are additional parameters after DATA,
+        if "," in param_string:
+            # Parse remaining parameters
+            # Continue to normal parameter parsing
+            return param_string[param_string.index(",") + 1 :]
+        return None
+    return param_string
+
+
+def _get_parameter_parser() -> ParameterParser:
+    """Return the shared, lazily-created ``ParameterParser`` instance."""
+    global _PARAMETER_PARSER
+    if _PARAMETER_PARSER is None:
+        from .parameter_ast import ParameterParser
+
+        _PARAMETER_PARSER = ParameterParser()
+    return _PARAMETER_PARSER
+
+
 def _parse_parameters(
     param_string: str, line_number: int = 0, warnings: list[str] | None = None
 ) -> dict[str, Any]:
@@ -515,33 +594,24 @@ def _parse_parameters(
     """
     parameters: dict[str, Any] = {}
 
-    if not param_string.strip():
+    param_upper = param_string.strip().upper()
+    if not param_upper:
         return parameters
 
-    # Handle special cases like DD * or DD DATA (only if standalone)
-    param_upper = param_string.strip().upper()
-    if param_upper == "*":
-        parameters["*"] = True
-        return parameters
-    elif param_upper == "DATA" or param_upper.startswith("DATA,"):
-        parameters["DATA"] = True
-        # Continue parsing if there are additional parameters after DATA,
-        if "," in param_string:
-            # Parse remaining parameters
-            remaining = param_string[param_string.index(",") + 1 :]
-            # Continue to normal parameter parsing
-            param_string = remaining
-        else:
+    # Only a ``*`` or ``DATA...`` operand needs the in-stream special case.
+    if param_upper == "*" or param_upper.startswith("DATA"):
+        remaining = _take_inline_data_operand(param_string, param_upper, parameters)
+        if remaining is None:
             return parameters
+        param_string = remaining
 
     # Validate balance then split using the canonical ParameterParser implementation
     _check_param_balance(param_string, line_number)
-    global _PARAMETER_PARSER
-    if _PARAMETER_PARSER is None:
-        from .parameter_ast import ParameterParser
-
-        _PARAMETER_PARSER = ParameterParser()
-    parts = _PARAMETER_PARSER._split_parameters(param_string)
+    # Read the cached instance directly on the hot path; the getter only runs once.
+    parser = (
+        _PARAMETER_PARSER if _PARAMETER_PARSER is not None else _get_parameter_parser()
+    )
+    parts = parser._split_parameters(param_string)
 
     # Parse individual parameters
     for i, part in enumerate(parts):
@@ -656,26 +726,9 @@ def _extract_jcllib_order(content: str) -> list[str]:
     libraries: list[str] = []
     lines = split_source_lines(content)
     for index, line in enumerate(lines):
-        line = line.lstrip()
-        if not line.startswith("//") or line.startswith("//*"):
+        params_part = _jcllib_operands(line)
+        if params_part is None:
             continue
-        # Detect JCLLIB operation token (same token-match approach as INCLUDE)
-        statement = line[2:]
-        stripped = statement.lstrip()
-        parts = stripped.split(None, 1)
-        if not parts:
-            continue
-        first_upper = parts[0].upper()
-        if first_upper == "JCLLIB":
-            params_part = parts[1] if len(parts) > 1 else ""
-        else:
-            # Try label + JCLLIB
-            if len(parts) < 2:
-                continue
-            rest_parts = parts[1].split(None, 1)
-            if not rest_parts or rest_parts[0].upper() != "JCLLIB":
-                continue
-            params_part = rest_parts[1] if len(rest_parts) > 1 else ""
 
         # Extract ORDER= value
         upper_params = params_part.upper()
@@ -685,27 +738,68 @@ def _extract_jcllib_order(content: str) -> list[str]:
         # The operand field ends at the first blank; the rest is a comment.
         rest = (params_part[order_idx + 6 :].split(None, 1) or [""])[0]
         if rest.startswith("("):
-            # Follow the list onto continuation records (``//`` then blank)
-            # until it closes.
-            follow = index + 1
-            while ")" not in rest and follow < len(lines):
-                cont = lines[follow]
-                follow += 1
-                if cont.startswith("//*"):
-                    continue
-                if not cont.startswith("// ") or not cont[2:].strip():
-                    break
-                rest += cont[2:].split(None, 1)[0]
-            end = rest.find(")")
-            rest = rest[1:end] if end != -1 else rest[1:]
-        for lib in rest.split(","):
-            lib = lib.strip()
-            # A library name may be coded in quotes (``ORDER=('MY.PROCLIB')``);
-            # the main parse drops them, so the pre-scan must too.
-            if len(lib) >= 2 and lib[0] == lib[-1] == "'":
-                lib = lib[1:-1].strip()
-            if lib:
-                libraries.append(lib)
+            rest = _follow_jcllib_order_list(rest, lines, index + 1)
+        libraries.extend(_split_jcllib_libraries(rest))
+    return libraries
+
+
+def _jcllib_operands(line: str) -> str | None:
+    """Return the operand text of a ``JCLLIB`` record, or None if *line* is not one.
+
+    Recognises ``// JCLLIB``, ``//JCLLIB`` and ``//LABEL JCLLIB``.
+    """
+    line = line.lstrip()
+    if not line.startswith("//") or line.startswith("//*"):
+        return None
+    # Detect JCLLIB operation token (same token-match approach as INCLUDE)
+    statement = line[2:]
+    stripped = statement.lstrip()
+    parts = stripped.split(None, 1)
+    if not parts:
+        return None
+    first_upper = parts[0].upper()
+    if first_upper == "JCLLIB":
+        return parts[1] if len(parts) > 1 else ""
+    # Try label + JCLLIB
+    if len(parts) < 2:
+        return None
+    rest_parts = parts[1].split(None, 1)
+    if not rest_parts or rest_parts[0].upper() != "JCLLIB":
+        return None
+    return rest_parts[1] if len(rest_parts) > 1 else ""
+
+
+def _follow_jcllib_order_list(rest: str, lines: list[str], follow: int) -> str:
+    """Return the contents of the parenthesised ORDER list starting in *rest*.
+
+    *follow* is the index in *lines* of the first record after the JCLLIB
+    statement; the surrounding parentheses are removed from the result.
+    """
+    # Follow the list onto continuation records (``//`` then blank)
+    # until it closes.
+    while ")" not in rest and follow < len(lines):
+        cont = lines[follow]
+        follow += 1
+        if cont.startswith("//*"):
+            continue
+        if not cont.startswith("// ") or not cont[2:].strip():
+            break
+        rest += cont[2:].split(None, 1)[0]
+    end = rest.find(")")
+    return rest[1:end] if end != -1 else rest[1:]
+
+
+def _split_jcllib_libraries(order_value: str) -> list[str]:
+    """Split a comma-separated ORDER value into non-empty library names."""
+    libraries: list[str] = []
+    for lib in order_value.split(","):
+        lib = lib.strip()
+        # A library name may be coded in quotes (``ORDER=('MY.PROCLIB')``);
+        # the main parse drops them, so the pre-scan must too.
+        if len(lib) >= 2 and lib[0] == lib[-1] == "'":
+            lib = lib[1:-1].strip()
+        if lib:
+            libraries.append(lib)
     return libraries
 
 

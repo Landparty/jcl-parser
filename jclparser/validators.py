@@ -358,7 +358,7 @@ def validate_disposition(disp) -> bool:
     return result.is_valid
 
 
-def validate_data_dependencies(job: Job) -> list[ValidationError]:
+def validate_data_dependencies(job: Job) -> list[ValidationError]:  # noqa: C901 -- complexity baseline, split when touched
     """
     Validate data dependencies between job steps.
 

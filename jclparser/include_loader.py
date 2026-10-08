@@ -232,7 +232,7 @@ def resolve_includes(
     # Records of in-stream data (``DD *`` / ``DD DATA,DLM=``) and CNTL blocks
     # are not JCL: a ``// INCLUDE`` among them is data and must stay as-is.
     # They are located with the same scan the parser itself uses.
-    from .parser import _merge_source_lines
+    from ._source_scanner import _merge_source_lines
 
     _, inline_data, control_data, _ = _merge_source_lines(content)
     data_indices = inline_data | control_data
@@ -255,32 +255,19 @@ def resolve_includes(
                 "INCLUDE member %r is recursive; leaving statement intact", member
             )
         elif member is not None:
-            member_content = loader.load_member(member, libraries)
-            if member_content is not None:
-                _budget[0] -= member_content.count("\n") + 1
-                if _budget[0] < 0:
-                    raise JCLStructureError(
-                        f"INCLUDE expansion exceeds {max_lines:,} lines "
-                        f"(at member {member})"
-                    )
-                if _collected is not None:
-                    _collected.append(member)
-                logger.debug("resolved INCLUDE member %r (depth %d)", member, _depth)
-                expanded = resolve_includes(
-                    member_content,
-                    loader=loader,
-                    libraries=libraries,
-                    max_depth=max_depth,
-                    _depth=_depth + 1,
-                    _collected=_collected,
-                    max_lines=max_lines,
-                    _active=_active | {member},
-                    _budget=_budget,
-                    _symbols=_symbols,
-                )
-                # Ensure the inlined content ends with a newline
-                if not expanded.endswith("\n"):
-                    expanded += "\n"
+            expanded = _expand_include_member(
+                member,
+                loader,
+                libraries,
+                max_depth,
+                _depth,
+                _collected,
+                max_lines,
+                _active,
+                _budget,
+                _symbols,
+            )
+            if expanded is not None:
                 result.append(expanded)
                 continue
             # Member not found — leave the INCLUDE line intact
@@ -290,6 +277,55 @@ def resolve_includes(
         result.append(line)
 
     return "".join(result)
+
+
+def _expand_include_member(
+    member: str,
+    loader: IncludeMemberLoader,
+    libraries: list[str] | None,
+    max_depth: int,
+    depth: int,
+    collected: list[str] | None,
+    max_lines: int,
+    active: frozenset[str],
+    budget: list[int],
+    symbols: dict[str, str],
+) -> str | None:
+    """Load *member* and return its recursively expanded, newline-terminated text.
+
+    Returns ``None`` if the loader cannot find the member. Charges the
+    member's lines against the shared *budget* (see :func:`resolve_includes`).
+
+    Raises:
+        JCLStructureError: If the expansion exceeds *max_lines*.
+    """
+    member_content = loader.load_member(member, libraries)
+    if member_content is None:
+        return None
+    budget[0] -= member_content.count("\n") + 1
+    if budget[0] < 0:
+        raise JCLStructureError(
+            f"INCLUDE expansion exceeds {max_lines:,} lines (at member {member})"
+        )
+    if collected is not None:
+        collected.append(member)
+    logger.debug("resolved INCLUDE member %r (depth %d)", member, depth)
+    expanded = resolve_includes(
+        member_content,
+        loader=loader,
+        libraries=libraries,
+        max_depth=max_depth,
+        _depth=depth + 1,
+        _collected=collected,
+        max_lines=max_lines,
+        _active=active | {member},
+        _budget=budget,
+        _symbols=symbols,
+    )
+    # Ensure the inlined content ends with a newline
+    if not expanded.endswith("\n"):
+        expanded += "\n"
+    return expanded
 
 
 def _record_set_symbols(line: str, symbols: dict[str, str]) -> None:

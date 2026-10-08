@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, ClassVar
 
 # Backward-compatible re-exports: these helpers historically lived in this
 # module (and before that in ``jclparser.parser``) and are imported from here
@@ -100,6 +100,36 @@ class JobBuilder:
     ``_on_<type>`` handler. Call :meth:`finish` after the last line to obtain
     the assembled :class:`Job`.
     """
+
+    # Statement type -> name of its ``_on_<type>`` handler.  Every type in
+    # ``_STATEMENT_TYPES`` must appear here, even when its handler is a
+    # deliberate no-op (NULL, ENDCNTL): an unlisted type is dropped
+    # without a trace.
+    _HANDLERS: ClassVar[dict[str, str]] = {
+        "JOB": "_on_job",
+        "EXEC": "_on_exec",
+        "DD": "_on_dd",
+        "PROC": "_on_proc",
+        "PEND": "_on_pend",
+        "SET": "_on_set",
+        "EXPORT": "_on_export",
+        "JCLLIB": "_on_jcllib",
+        "INCLUDE": "_on_include",
+        "IF": "_on_conditional",
+        "THEN": "_on_conditional",
+        "ELSE": "_on_conditional",
+        "ENDIF": "_on_conditional",
+        "JES": "_on_jes",
+        "OUTPUT": "_on_output",
+        "NULL": "_on_null",
+        # No richer model representation for COMMAND / SCHEDULE / CNTL.
+        "COMMAND": "_on_control",
+        "SCHEDULE": "_on_control",
+        "CNTL": "_on_control",
+        "ENDCNTL": "_on_endcntl",
+        "UNKNOWN": "_on_unknown",
+        "XMIT": "_on_xmit",
+    }
 
     def __init__(self, dialect: str = "standard") -> None:
         #: ``ParserConfig.dialect``: decides which JES control statements are
@@ -251,45 +281,9 @@ class JobBuilder:
         if stmt.warnings:
             self._warnings_sink().extend(stmt.warnings)
 
-        if stmt.type == "JOB":
-            self._on_job(stmt, line_num)
-        elif stmt.type == "EXEC":
-            self._on_exec(stmt, line_num)
-        elif stmt.type == "DD":
-            self._on_dd(stmt, line_num)
-        elif stmt.type == "PROC":
-            self._on_proc(stmt)
-        elif stmt.type == "PEND":
-            self._on_pend()
-        elif stmt.type == "SET":
-            self._on_set(stmt)
-        elif stmt.type == "EXPORT":
-            self._on_export(stmt)
-        elif stmt.type == "JCLLIB":
-            self._on_jcllib(stmt)
-        elif stmt.type == "INCLUDE":
-            self._on_include(stmt)
-        elif stmt.type in ["IF", "THEN", "ELSE", "ENDIF"]:
-            self._on_conditional(stmt, line_num)
-        elif stmt.type == "JES":
-            self._on_jes(stmt)
-        elif stmt.type == "OUTPUT":
-            self._on_output(stmt)
-        elif stmt.type == "NULL":
-            # NULL statement (//) - just ignore, used as delimiter
-            pass
-        elif stmt.type in ("COMMAND", "SCHEDULE", "CNTL"):
-            # No richer model representation, but they are real statements —
-            # record them verbatim rather than discarding them.
-            self._on_control(stmt)
-        elif stmt.type == "ENDCNTL":
-            # Closes the CNTL block opened by _on_control; the block itself is
-            # already recorded, so there is nothing more to keep.
-            self.current_cntl = None
-        elif stmt.type == "UNKNOWN":
-            self._on_unknown(stmt, line_num)
-        elif stmt.type == "XMIT":
-            self._on_xmit(stmt)
+        handler_name = self._HANDLERS.get(stmt.type)
+        if handler_name is not None:
+            getattr(self, handler_name)(stmt, line_num)
 
     # ------------------------------------------------------------------ #
     # Per-statement-type handlers
@@ -411,7 +405,7 @@ class JobBuilder:
             self.current_delimiter = current_delimiter
             self.current_terminates_on_slash = terminates_on_slash
 
-    def _on_proc(self, stmt: Statement) -> None:
+    def _on_proc(self, stmt: Statement, line_num: int) -> None:
         # Inline procedure definition - start tracking procedure
         self.current_procedure = Procedure(
             name=stmt.name or "UNNAMED",
@@ -425,12 +419,12 @@ class JobBuilder:
         # Reset current_step since we're now inside procedure
         self.current_step = None
 
-    def _on_pend(self) -> None:
+    def _on_pend(self, stmt: Statement, line_num: int) -> None:
         # End of procedure definition - stop tracking
         self.current_procedure = None
         self.current_step = None
 
-    def _on_set(self, stmt: Statement) -> None:
+    def _on_set(self, stmt: Statement, line_num: int) -> None:
         # SET symbol=value statement.  A SET before the JOB statement (or in a
         # JOB-less member) is buffered rather than dropped; finish() flushes it.
         # A SET inside a PROC/PEND body belongs to the procedure: it only takes
@@ -473,7 +467,7 @@ class JobBuilder:
                     "SYMBOL=value; ignored"
                 )
 
-    def _on_export(self, stmt: Statement) -> None:
+    def _on_export(self, stmt: Statement, line_num: int) -> None:
         # EXPORT SYMLIST=(A,B,...)  or  EXPORT SYMLIST=*
         symlist = stmt.parameters.get("SYMLIST")
         names: list[str] = []
@@ -487,7 +481,7 @@ class JobBuilder:
         for n in names:
             sink.add(n)
 
-    def _on_jcllib(self, stmt: Statement) -> None:
+    def _on_jcllib(self, stmt: Statement, line_num: int) -> None:
         # JCLLIB ORDER=(lib1,lib2,...)
         if "ORDER" not in stmt.parameters:
             return
@@ -500,7 +494,7 @@ class JobBuilder:
             libs = order_value.strip("()").split(",")
             sink.extend([lib.strip() for lib in libs])
 
-    def _on_include(self, stmt: Statement) -> None:
+    def _on_include(self, stmt: Statement, line_num: int) -> None:
         # INCLUDE MEMBER=name
         member = stmt.parameters.get("MEMBER") or stmt.parameters.get(
             f"{POSITIONAL_PARAM_PREFIX}0"
@@ -519,64 +513,78 @@ class JobBuilder:
     def _on_conditional(self, stmt: Statement, line_num: int) -> None:
         # Conditional logic - track conditionals properly
         if stmt.type == "IF":
-            # stmt.name is the IF statement's label (``//CHK1 IF ...``), never
-            # part of its relational expression.
-            condition_parts = []
-            for key, value in stmt.parameters.items():
-                if not key.startswith("_"):
-                    condition_parts.append(f"{key}={value}")
-                else:
-                    condition_parts.append(str(value))
-            condition = " ".join(condition_parts)
-            if condition.upper().endswith(" THEN"):
-                condition = condition[:-5]
-            conditional = ConditionalBlock(
-                condition=condition,
-                condition_ast=parse_condition(condition),
-                line_number=stmt.line_number,
-            )
-            if self.job is not None:
-                self.job.add_conditional(conditional)
-            else:
-                self.pending_conditionals.append(conditional)
-            if self.conditional_stack:
-                active_cond, active_branch = self.conditional_stack[-1]
-                if active_branch == "THEN":
-                    active_cond.add_then_step(conditional)
-                else:
-                    active_cond.add_else_step(conditional)
-            elif self.current_procedure is not None:
-                self.current_procedure.steps.append(conditional)
-            elif self.job is not None:
-                self.job.steps.append(conditional)
-            else:
-                self.pending_steps.append(conditional)
-            self.conditional_stack.append((conditional, "THEN"))
-        elif stmt.type == "THEN":
-            if self.conditional_stack:
-                active_cond, _ = self.conditional_stack.pop()
-                self.conditional_stack.append((active_cond, "THEN"))
-            else:
-                self._warnings_sink().append(
-                    f"Line {line_num}: THEN with no matching IF; ignored"
-                )
-        elif stmt.type == "ELSE":
-            if self.conditional_stack:
-                active_cond, _ = self.conditional_stack.pop()
-                self.conditional_stack.append((active_cond, "ELSE"))
-            else:
-                self._warnings_sink().append(
-                    f"Line {line_num}: ELSE with no matching IF; ignored"
-                )
+            self._open_if(stmt)
+        elif stmt.type in ("THEN", "ELSE"):
+            self._switch_branch(stmt.type, line_num)
         elif stmt.type == "ENDIF":
-            if self.conditional_stack:
-                self.conditional_stack.pop()
-            else:
-                self._warnings_sink().append(
-                    f"Line {line_num}: ENDIF with no matching IF; ignored"
-                )
+            self._close_if(line_num)
 
-    def _on_jes(self, stmt: Statement) -> None:
+    @staticmethod
+    def _if_condition_text(stmt: Statement) -> str:
+        """Rebuild the relational expression text of an ``IF`` statement."""
+        # stmt.name is the IF statement's label (``//CHK1 IF ...``), never
+        # part of its relational expression.
+        condition_parts = []
+        for key, value in stmt.parameters.items():
+            if not key.startswith("_"):
+                condition_parts.append(f"{key}={value}")
+            else:
+                condition_parts.append(str(value))
+        condition = " ".join(condition_parts)
+        if condition.upper().endswith(" THEN"):
+            condition = condition[:-5]
+        return condition
+
+    def _attach_conditional(self, conditional: ConditionalBlock) -> None:
+        """Place a new IF block in the enclosing branch, PROC, job or buffer."""
+        if self.conditional_stack:
+            active_cond, active_branch = self.conditional_stack[-1]
+            if active_branch == "THEN":
+                active_cond.add_then_step(conditional)
+            else:
+                active_cond.add_else_step(conditional)
+        elif self.current_procedure is not None:
+            self.current_procedure.steps.append(conditional)
+        elif self.job is not None:
+            self.job.steps.append(conditional)
+        else:
+            self.pending_steps.append(conditional)
+
+    def _open_if(self, stmt: Statement) -> None:
+        """Handle ``IF``: record a new :class:`ConditionalBlock` and enter it."""
+        condition = self._if_condition_text(stmt)
+        conditional = ConditionalBlock(
+            condition=condition,
+            condition_ast=parse_condition(condition),
+            line_number=stmt.line_number,
+        )
+        if self.job is not None:
+            self.job.add_conditional(conditional)
+        else:
+            self.pending_conditionals.append(conditional)
+        self._attach_conditional(conditional)
+        self.conditional_stack.append((conditional, "THEN"))
+
+    def _switch_branch(self, branch: str, line_num: int) -> None:
+        """Handle ``THEN`` / ``ELSE``: make *branch* the open IF's active one."""
+        if self.conditional_stack:
+            active_cond, _ = self.conditional_stack.pop()
+            self.conditional_stack.append((active_cond, branch))
+        else:
+            self._warnings_sink().append(
+                f"Line {line_num}: {branch} with no matching IF; ignored"
+            )
+
+    def _close_if(self, line_num: int) -> None:
+        """Handle ``ENDIF``: leave the innermost open IF block."""
+        if self.conditional_stack:
+            self.conditional_stack.pop()
+        else:
+            self._warnings_sink().append(
+                f"Line {line_num}: ENDIF with no matching IF; ignored"
+            )
+
+    def _on_jes(self, stmt: Statement, line_num: int) -> None:
         raw_params = stmt.parameters.get("_raw", "")
         jes_content = f"/*{stmt.name} {raw_params}".strip()
         # Also try to promote to a typed JES control statement.
@@ -602,18 +610,29 @@ class JobBuilder:
             if typed is not None:
                 self.pending_jes_typed.append(typed)
 
-    def _on_output(self, stmt: Statement) -> None:
+    def _on_output(self, stmt: Statement, line_num: int) -> None:
         # OUTPUT statement - JES output descriptor; promote to typed model
         sink = self.job.output_statements if self.job else self.pending_outputs
         sink.append(OutputStatement.from_statement(stmt))
 
-    def _on_control(self, stmt: Statement) -> None:
+    def _on_null(self, stmt: Statement, line_num: int) -> None:
+        # NULL statement (//) - just ignore, used as delimiter
+        pass
+
+    def _on_control(self, stmt: Statement, line_num: int) -> None:
         """Record a COMMAND / SCHEDULE / CNTL statement verbatim."""
+        # No richer model representation, but they are real statements —
+        # record them verbatim rather than discarding them.
         if stmt.type == "CNTL":
             stmt.parameters.setdefault("_records", [])
             self.current_cntl = stmt
         sink = self.job.control_statements if self.job else self.pending_control
         sink.append(stmt)
+
+    def _on_endcntl(self, stmt: Statement, line_num: int) -> None:
+        # Closes the CNTL block opened by _on_control; the block itself is
+        # already recorded, so there is nothing more to keep.
+        self.current_cntl = None
 
     def handle_control_data(self, line: str) -> None:
         """Collect a program control record from inside a CNTL/ENDCNTL block."""
@@ -634,7 +653,7 @@ class JobBuilder:
         )
         self._warnings_sink().append(unknown_msg)
 
-    def _on_xmit(self, stmt: Statement) -> None:
+    def _on_xmit(self, stmt: Statement, line_num: int) -> None:
         # XMIT statement - similar to DD but for data transmission
         if self.current_step:
             self.current_dd = DDStatement(
@@ -708,23 +727,37 @@ class JobBuilder:
             self.current_dd.inline_data = "\n".join(self.inline_data_lines)
         unclosed_data_warning = self._unclosed_data_warning()
 
-        job = self.job
-        if job is None:
-            if self.pending_procedures:
-                job = Job(name="", line_number=0)
-                for proc in self.pending_procedures:
-                    job.add_procedure(proc)
-                    # A JOB-less member (a cataloged procedure) has no job
-                    # scope of its own: its procedures' SETs are the member's
-                    # SETs, so the synthetic job exposes them too. The
-                    # Procedure keeps its own copy for explosion.
-                    job.set_statements.update(proc.set_statements)
-            else:
-                raise JCLSyntaxError("No JOB statement found", 0)
+        job = self._job_or_procedure_member()
 
         if self.pending_warnings:
             job.warnings.extend(self.pending_warnings)
+        self._warn_missing_pend(job)
+        if unclosed_data_warning is not None:
+            job.warnings.append(unclosed_data_warning)
 
+        self._flush_pending_statements(job)
+        self._warn_orphaned_dds(job)
+        self._warn_unclosed_ifs(job)
+
+        return job
+
+    def _job_or_procedure_member(self) -> Job:
+        """The parsed Job, or a synthetic one for a JOB-less PROC member."""
+        if self.job is not None:
+            return self.job
+        if not self.pending_procedures:
+            raise JCLSyntaxError("No JOB statement found", 0)
+        job = Job(name="", line_number=0)
+        for proc in self.pending_procedures:
+            job.add_procedure(proc)
+            # A JOB-less member (a cataloged procedure) has no job
+            # scope of its own: its procedures' SETs are the member's
+            # SETs, so the synthetic job exposes them too. The
+            # Procedure keeps its own copy for explosion.
+            job.set_statements.update(proc.set_statements)
+        return job
+
+    def _warn_missing_pend(self, job: Job) -> None:
         # An in-stream PROC with no PEND reads every later statement into the
         # procedure, so the job silently loses its steps.  A JOB-less member
         # (a cataloged PROC) needs no PEND, so only a real job is warned.
@@ -734,14 +767,26 @@ class JobBuilder:
                 f"{self.current_procedure.name} has no PEND; the statements "
                 "after it were read as part of the procedure"
             )
-        if unclosed_data_warning is not None:
-            job.warnings.append(unclosed_data_warning)
 
+    def _flush_pending_statements(self, job: Job) -> None:
+        """Attach statements buffered before the JOB statement onto *job*."""
         if self.pending_jes_statements:
             job.jes_statements.extend(self.pending_jes_statements)
         if self.pending_jes_typed:
             job.jes_typed_statements.extend(self.pending_jes_typed)
 
+        self._flush_pending_sets(job)
+        job.exported_symbols |= self.pending_exported
+        job.jcllib_order[:0] = self.pending_jcllib
+        for member in self.pending_includes:
+            if member not in job.includes:
+                job.includes.append(member)
+        job.output_statements[:0] = self.pending_outputs
+        job.conditionals[:0] = self.pending_conditionals
+        job.steps[:0] = self.pending_steps
+        job.control_statements[:0] = self.pending_control
+
+    def _flush_pending_sets(self, job: Job) -> None:
         # Statements seen before the JOB statement (or in a JOB-less member)
         # are attached now.  Later definitions of the same SET symbol win, so
         # buffered values only fill in symbols the job does not already define.
@@ -755,16 +800,8 @@ class JobBuilder:
                 for k, v in (step.set_symbols or {}).items()
             ):
                 step.set_symbols = None
-        job.exported_symbols |= self.pending_exported
-        job.jcllib_order[:0] = self.pending_jcllib
-        for member in self.pending_includes:
-            if member not in job.includes:
-                job.includes.append(member)
-        job.output_statements[:0] = self.pending_outputs
-        job.conditionals[:0] = self.pending_conditionals
-        job.steps[:0] = self.pending_steps
-        job.control_statements[:0] = self.pending_control
 
+    def _warn_orphaned_dds(self, job: Job) -> None:
         # orphaned_dds is only ever non-empty here when the whole job had no
         # EXEC statement at all (the first EXEC always flushes and clears the
         # list) -- those DD statements have nowhere to attach and are
@@ -776,6 +813,7 @@ class JobBuilder:
                 f"anywhere in the job; discarded: {dd_names}"
             )
 
+    def _warn_unclosed_ifs(self, job: Job) -> None:
         # An IF block left open (no matching ENDIF) at end-of-job is malformed
         # JCL; the then/else steps collected so far are still attached to the
         # ConditionalBlock and not lost, but the imbalance itself is worth
@@ -784,5 +822,3 @@ class JobBuilder:
             job.warnings.append(
                 f"Line {_cond.line_number}: IF block has no matching ENDIF"
             )
-
-        return job

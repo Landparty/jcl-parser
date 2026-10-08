@@ -161,7 +161,7 @@ class DatasetNameValidator:
     )
 
     @classmethod
-    def validate(
+    def validate(  # noqa: C901 -- complexity baseline, split when touched
         cls, dsn: str, allow_temporary: bool = True, allow_gdg: bool = True
     ) -> ValidationResult:
         """

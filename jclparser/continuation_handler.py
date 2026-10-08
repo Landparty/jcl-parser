@@ -65,7 +65,7 @@ class ContinuationLineHandler:
     # behavior.
     JCL_KEYWORDS: ClassVar[set[str]] = _STATEMENT_TYPES | {"GOTO", "SCHED"}
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.context = ContinuationContext()
         #: ``(index_in_input_list, comment_text)`` for every stripped comment
         #: field that still looks like it holds operands (it contains an
@@ -217,148 +217,184 @@ class ContinuationLineHandler:
         Returns:
             List of (merged_line, original_line_number) tuples
         """
-        merged = []
+        merged: list[tuple[str, int]] = []
         self.suspect_comments = []
         i = 0
 
         while i < len(lines):
             line = lines[i]
-            original_line_num = i + 1
 
             # Skip comments and empty lines
             if not line.strip() or line.strip().startswith("//*"):
-                merged.append((line, original_line_num))
+                merged.append((line, i + 1))
                 i += 1
                 continue
 
             # Check if this is a JCL statement
             if not line.startswith("//"):
-                merged.append((line, original_line_num))
+                merged.append((line, i + 1))
                 i += 1
                 continue
 
-            # Strip the statement's comment field before anything else: a
-            # comment after a trailing comma otherwise hides the comma and the
-            # continued operands are lost (see split_comment_field).
-            group_operation = statement_operation(line)
-            line = self._strip_comment(line, group_operation, original_line_num)
-
-            # Start building merged line
-            merged_line = line.rstrip()
-            # Compute initial context for this statement line once.
-            cached_ctx = self._analyze_line_context(merged_line)
-            j = i + 1
-            # The record whose text currently ends merged_line.
-            last_record = i
-            # Comments encountered mid-continuation are buffered and emitted
-            # right after the statement they interrupted (see below) instead
-            # of immediately, so the statement itself keeps its place in the
-            # output relative to source order.
-            interspersed_comments: list[tuple[str, int]] = []
-
-            # Look ahead for continuation lines
-            while j < len(lines):
-                next_line = lines[j]
-                next_stripped = next_line.strip()
-
-                if next_stripped.startswith("//*"):
-                    # A comment does not terminate a statement that has an
-                    # explicit pending continuation (trailing comma, or an
-                    # unclosed paren/quote) — per z/OS, comments may be
-                    # interspersed within a continued statement. Preserve the
-                    # comment in the output and keep looking for the actual
-                    # continuation line so its operands aren't lost.
-                    pending_continuation = (
-                        merged_line.rstrip().endswith(",")
-                        or cached_ctx.paren_depth > 0
-                        or cached_ctx.in_quotes
-                    )
-                    if pending_continuation:
-                        interspersed_comments.append((next_line, j + 1))
-                        j += 1
-                        continue
-                    break
-
-                # Stop merging if we hit an empty line
-                if not next_stripped:
-                    break
-
-                # A continuation record only has a comment field of its own
-                # when the statement so far is syntactically closed (the
-                # blank that starts a comment would otherwise be inside the
-                # quoted string or parenthesised list being continued).
-                # The comment is only recorded once the record is known to be
-                # merged: a record that starts the next statement is stripped
-                # (and recorded) again as that statement, which would report
-                # the same comment twice.
-                next_comment = ""
-                if not cached_ctx.in_quotes and cached_ctx.paren_depth == 0:
-                    next_line, next_comment = split_comment_field(
-                        next_line, group_operation
-                    )
-
-                # Check if next line is a continuation, passing cached context
-                # to avoid re-scanning the full (growing) merged_line.
-                continues_if = self._continues_if(
-                    merged_line, group_operation, next_line
-                )
-                if continues_if or self.is_continuation_line(
-                    next_line, merged_line, ctx=cached_ctx
-                ):
-                    self._record_suspect_comment(j + 1, next_comment)
-                    raw_after_slashes = (next_line.removeprefix("//")).lstrip()
-                    had_leading_comma = raw_after_slashes.startswith(",")
-
-                    # Extract continuation content
-                    cont_content = self._extract_continuation_content(next_line)
-
-                    # Merge with proper separator
-                    stripped = merged_line.rstrip()
-                    if (
-                        cached_ctx.in_quotes
-                        and last_record in card_images
-                        and not next_line[2:15].strip()
-                    ):
-                        # IBM: a quoted string is coded through column 71
-                        # and continues in column 16 of the next record, so
-                        # blanks on either side of the break are part of it.
-                        pad = 71 - len(lines[last_record].rstrip())
-                        cont_content = next_line[15:]
-                        merged_line = merged_line + " " * max(pad, 0) + cont_content
-                    elif stripped.endswith(","):
-                        merged_line = stripped + cont_content
-                    elif had_leading_comma:
-                        merged_line = stripped + "," + cont_content
-                    elif continues_if:
-                        # IF operands are blank-delimited: keep a blank.
-                        merged_line = stripped + " " + cont_content
-                    else:
-                        merged_line = stripped + cont_content
-
-                    # Incrementally update context: scan only the new content
-                    # starting from the prior cached state (not the full merged line).
-                    cached_ctx = self._analyze_line_context(
-                        cont_content, starting_ctx=cached_ctx
-                    )
-                    last_record = j
-                    j += 1
-                else:
-                    # Not a continuation, stop merging
-                    break
-
-            continued = j - i - 1
-            if continued:
-                logger.debug(
-                    "merged %d continuation line(s) into statement at line %d",
-                    continued,
-                    original_line_num,
-                )
-
-            merged.append((merged_line, original_line_num))
-            merged.extend(interspersed_comments)
-            i = j
+            i = self._merge_statement(lines, i, card_images, merged)
 
         return merged
+
+    def _merge_statement(
+        self,
+        lines: list[str],
+        i: int,
+        card_images: Collection[int],
+        merged: list[tuple[str, int]],
+    ) -> int:
+        """Merge the JCL statement starting at ``lines[i]`` with its continuations.
+
+        Appends the merged statement (followed by any comments interspersed
+        within it) to *merged* and returns the index of the first record
+        after the statement.
+        """
+        original_line_num = i + 1
+        # Strip the statement's comment field before anything else: a
+        # comment after a trailing comma otherwise hides the comma and the
+        # continued operands are lost (see split_comment_field).
+        group_operation = statement_operation(lines[i])
+        line = self._strip_comment(lines[i], group_operation, original_line_num)
+
+        # Start building merged line
+        merged_line = line.rstrip()
+        # Compute initial context for this statement line once.
+        cached_ctx = self._analyze_line_context(merged_line)
+        j = i + 1
+        # The record whose text currently ends merged_line.
+        last_record = i
+        # Comments encountered mid-continuation are buffered and emitted
+        # right after the statement they interrupted (see below) instead
+        # of immediately, so the statement itself keeps its place in the
+        # output relative to source order.
+        interspersed_comments: list[tuple[str, int]] = []
+
+        # Look ahead for continuation lines
+        while j < len(lines):
+            next_line = lines[j]
+            next_stripped = next_line.strip()
+
+            if next_stripped.startswith("//*"):
+                # A comment does not terminate a statement that has an
+                # explicit pending continuation (trailing comma, or an
+                # unclosed paren/quote) — per z/OS, comments may be
+                # interspersed within a continued statement. Preserve the
+                # comment in the output and keep looking for the actual
+                # continuation line so its operands aren't lost.
+                pending_continuation = (
+                    merged_line.rstrip().endswith(",")
+                    or cached_ctx.paren_depth > 0
+                    or cached_ctx.in_quotes
+                )
+                if pending_continuation:
+                    interspersed_comments.append((next_line, j + 1))
+                    j += 1
+                    continue
+                break
+
+            # Stop merging if we hit an empty line
+            if not next_stripped:
+                break
+
+            # A continuation record only has a comment field of its own
+            # when the statement so far is syntactically closed (the
+            # blank that starts a comment would otherwise be inside the
+            # quoted string or parenthesised list being continued).
+            # The comment is only recorded once the record is known to be
+            # merged: a record that starts the next statement is stripped
+            # (and recorded) again as that statement, which would report
+            # the same comment twice.
+            next_comment = ""
+            if not cached_ctx.in_quotes and cached_ctx.paren_depth == 0:
+                next_line, next_comment = split_comment_field(
+                    next_line, group_operation
+                )
+
+            # Check if next line is a continuation, passing cached context
+            # to avoid re-scanning the full (growing) merged_line.
+            continues_if = self._continues_if(merged_line, group_operation, next_line)
+            if not (
+                continues_if
+                or self.is_continuation_line(next_line, merged_line, ctx=cached_ctx)
+            ):
+                # Not a continuation, stop merging
+                break
+
+            self._record_suspect_comment(j + 1, next_comment)
+            # A quoted string continued from a column-72 card image keeps its
+            # blanks through column 71 (see _join_continuation).
+            card_image_pad = (
+                71 - len(lines[last_record].rstrip())
+                if cached_ctx.in_quotes and last_record in card_images
+                else None
+            )
+            merged_line, cont_content = self._join_continuation(
+                merged_line, next_line, continues_if, card_image_pad
+            )
+
+            # Incrementally update context: scan only the new content
+            # starting from the prior cached state (not the full merged line).
+            cached_ctx = self._analyze_line_context(
+                cont_content, starting_ctx=cached_ctx
+            )
+            last_record = j
+            j += 1
+
+        continued = j - i - 1
+        if continued:
+            logger.debug(
+                "merged %d continuation line(s) into statement at line %d",
+                continued,
+                original_line_num,
+            )
+
+        merged.append((merged_line, original_line_num))
+        merged.extend(interspersed_comments)
+        return j
+
+    def _join_continuation(
+        self,
+        merged_line: str,
+        next_line: str,
+        continues_if: bool,
+        card_image_pad: int | None,
+    ) -> tuple[str, str]:
+        """Append continuation record *next_line* to *merged_line*.
+
+        *card_image_pad* is ``71 - len(previous record)`` when the statement
+        is inside a quoted string and the record that currently ends
+        *merged_line* was a card image continued in column 72, else ``None``.
+
+        Returns ``(new_merged_line, continuation_content)``; the content is
+        what the caller feeds into the incremental context scan.
+        """
+        raw_after_slashes = (next_line.removeprefix("//")).lstrip()
+        had_leading_comma = raw_after_slashes.startswith(",")
+
+        # Extract continuation content
+        cont_content = self._extract_continuation_content(next_line)
+
+        # Merge with proper separator
+        stripped = merged_line.rstrip()
+        if card_image_pad is not None and not next_line[2:15].strip():
+            # IBM: a quoted string is coded through column 71
+            # and continues in column 16 of the next record, so
+            # blanks on either side of the break are part of it.
+            cont_content = next_line[15:]
+            padding = " " * max(card_image_pad, 0)
+            return merged_line + padding + cont_content, cont_content
+        if stripped.endswith(","):
+            return stripped + cont_content, cont_content
+        if had_leading_comma:
+            return stripped + "," + cont_content, cont_content
+        if continues_if:
+            # IF operands are blank-delimited: keep a blank.
+            return stripped + " " + cont_content, cont_content
+        return stripped + cont_content, cont_content
 
     def _extract_continuation_content(self, line: str) -> str:
         """

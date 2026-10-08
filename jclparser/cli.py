@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-def _main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:  # noqa: C901 -- complexity baseline, split when touched
     """:func:`main` without the OS-error guard."""
     # --lint-list doesn't require FILE — handle before argparse
     _argv = argv if argv is not None else sys.argv[1:]
@@ -844,7 +844,7 @@ def _print_dd_brief(dd: DDStatement, indent: int = 0) -> None:
     print(f"{pad}{dd.name:<12} {detail}{inline}")
 
 
-def _print_dd_detail(dd: DDStatement) -> None:
+def _print_dd_detail(dd: DDStatement) -> None:  # noqa: C901 -- complexity baseline, split when touched
     print(f"  DD: {dd.name}  (line {dd.line_number})")
     if dd.dataset_name:
         print(f"    DSN={dd.dataset_name}")

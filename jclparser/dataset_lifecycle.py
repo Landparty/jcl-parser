@@ -270,7 +270,7 @@ def _merge_states(
     return merged
 
 
-def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:
+def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:  # noqa: C901 -- complexity baseline, split when touched
     """Validate cross-step dataset lifecycle consistency.
 
     Checks for:
