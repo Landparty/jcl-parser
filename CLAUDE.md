@@ -153,4 +153,5 @@ jcl-parser is free software under the **GNU AGPL v3.0 or later** (`LICENSE`), th
 
 - Python 3.10+ type hints on all new/changed signatures.
 - `ruff` for linting + formatting (line-length 88). `black` is not used — `ruff format` handles formatting.
+- **Complexity gate:** `ruff` enforces McCabe complexity <= 12 (`C901`). Functions that predate the gate carry `# noqa: C901 -- complexity baseline` (none left in the parsing pipeline); split one when you touch it and drop its marker. Never add a new marker — extract helpers instead.
 - No runtime dependencies; dev tools live in the `[dev]` extra.
