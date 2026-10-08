@@ -6,8 +6,6 @@ operand) was previously discarded with no error and no diagnostic. The
 fixes route these cases through ``Job.warnings`` instead of vanishing.
 """
 
-import inspect
-
 from jclparser import explode_job, parse_jcl
 from jclparser._job_builder import JobBuilder
 from jclparser._statement_parser import _STATEMENT_TYPES
@@ -28,9 +26,14 @@ class TestStatementDispatchCompleteness:
     reach an explicit (even if intentionally no-op) branch."""
 
     def test_every_recognized_statement_type_has_a_dispatch_branch(self):
-        source = inspect.getsource(JobBuilder.handle_statement)
-        missing = [t for t in _STATEMENT_TYPES if f'"{t}"' not in source]
+        missing = [t for t in _STATEMENT_TYPES if t not in JobBuilder._HANDLERS]
         assert not missing, f"No dispatch branch for statement type(s): {missing}"
+        unbound = [
+            name
+            for name in JobBuilder._HANDLERS.values()
+            if not callable(getattr(JobBuilder, name, None))
+        ]
+        assert not unbound, f"Dispatch table names missing handlers: {unbound}"
 
 
 class TestDuplicateParameterWarning:
