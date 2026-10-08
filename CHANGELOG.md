@@ -7,6 +7,87 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.0.0](https://github.com/Landparty/jcl-parser/compare/v1.4.0...v2.0.0) (2026-10-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* registered plugins no longer run unless a ParserConfig enables them (pass ParserConfig(enabled_plugins=[ALL_PLUGINS]) for the old behaviour); validate_jcl and ParserConfig raise ValueError for an unknown validation level or dialect instead of ignoring it.
+* parse_jcl("job.jcl") and other str sources are parsed as JCL text, never opened. Use parse_jcl(Path("job.jcl")).
+
+### Features
+
+* **program-profiles:** close common IBM/utility program coverage gaps ([d8c7f6f](https://github.com/Landparty/jcl-parser/commit/d8c7f6f2331c655bb52e4975020f9573f6e3c86b))
+
+
+### Bug Fixes
+
+* accept SPACE=(TRK,0) primary allocation ([#65](https://github.com/Landparty/jcl-parser/issues/65)) ([f4dd94e](https://github.com/Landparty/jcl-parser/commit/f4dd94e6b904cc149eef559adc923c0b5b7d7dbf))
+* **analysis:** exact RC domain, not-run steps, NG/NL, lifecycle branches and referbacks ([922f024](https://github.com/Landparty/jcl-parser/commit/922f02402db11536c4ce7865a5bcb84e301c7abd))
+* apply dataset dispositions at step end in lifecycle check ([#65](https://github.com/Landparty/jcl-parser/issues/65)) ([820d212](https://github.com/Landparty/jcl-parser/commit/820d212e2655d033a65c1923e7c82364b025287d))
+* bound RC feasibility search by combination count ([#65](https://github.com/Landparty/jcl-parser/issues/65)) ([4d165f7](https://github.com/Landparty/jcl-parser/commit/4d165f77d8fdec09b4872cb143a602fd5f2ad097))
+* **build:** avoid Cython compiler crash in dataset_lifecycle._merge_states ([7aef911](https://github.com/Landparty/jcl-parser/commit/7aef911fdb8fbf6c15ef764baa6d955a5080e08c))
+* **cli:** print parameters in JCL syntax, not Python reprs ([0695b70](https://github.com/Landparty/jcl-parser/commit/0695b70479e86c4fe070260114ef813a2352bc65))
+* close audit patch-release findings (C1-C6, H1, H2, H5, M3) ([944233b](https://github.com/Landparty/jcl-parser/commit/944233bd171b9bc1b5366c8f2d894913ac9bc266))
+* **conditions:** stop truncating and inverting IF conditions ([e09453f](https://github.com/Landparty/jcl-parser/commit/e09453fbe017c32e98744de21b481135c0d89f36))
+* **continuation:** report a suspect comment field once, not twice ([4f9f756](https://github.com/Landparty/jcl-parser/commit/4f9f756194077e5ac989541153d4461eef8b52fa))
+* DCB override merge, concatenated DD member overrides, symbols in override DDs, CLI queries ([308b223](https://github.com/Landparty/jcl-parser/commit/308b223c60f2b0a58576db7d8088a4559b1fd38c))
+* **dd:** read DSNAME= as the DD's dataset name ([4125f55](https://github.com/Landparty/jcl-parser/commit/4125f556e8bc67d7fadbb376725fd55e98c2c0b4))
+* **disp:** read an omitted DISP status as NEW ([c468754](https://github.com/Landparty/jcl-parser/commit/c46875473b674004c6770014d8f3b1cc5291c477))
+* **explosion:** apply EXEC keyword overrides to PROC steps ([1c35c21](https://github.com/Landparty/jcl-parser/commit/1c35c219e7f7c853362b72d07091a6ec31e7e52a))
+* **explosion:** keep && temporary dataset names through explosion ([e41dfdd](https://github.com/Landparty/jcl-parser/commit/e41dfdd6525a9a8e947fab37818be2fc48f5df7d))
+* **explosion:** merge PROC DD overrides instead of replacing the DD ([2356596](https://github.com/Landparty/jcl-parser/commit/235659612df1314524eccaf6d184c9e5102aed56))
+* **explosion:** PROC SET scoping, JCLLIB loader in explode_job, EXEC override symbols ([b636924](https://github.com/Landparty/jcl-parser/commit/b6369241ce5250160b4957c980a375029b659986))
+* **explosion:** qualify step references made inside a PROC ([1a8b476](https://github.com/Landparty/jcl-parser/commit/1a8b476338e684a11c02b0c52bc930ab06810b6d))
+* file-type detection, value-first conditions, IDCAMS continuations, RECFM/BLKSIZE validation ([4041508](https://github.com/Landparty/jcl-parser/commit/404150868e2baa8b66c2aa02972bc0ddb98fd8b6))
+* IF-statement parsing and DD overrides on conditional PROC steps ([02f7f7a](https://github.com/Landparty/jcl-parser/commit/02f7f7aa29f2a9a1e2afebb0c35e1de60c260876))
+* INCLUDE inside in-stream data, quoted JCLLIB names, valid SARIF, abbreviated IDCAMS DEFINE ([d60be12](https://github.com/Landparty/jcl-parser/commit/d60be125e7befc2bcaea8c3da355289f7520c7a4))
+* **include:** search JCLLIB libraries on continuation lines; warn on missing member ([73b9a2f](https://github.com/Landparty/jcl-parser/commit/73b9a2ff4e85de4f33c50561cf51fe436b1de7a2))
+* **io:** parse JCL with a UTF-8 BOM; never treat JCL text as a path ([357d8cc](https://github.com/Landparty/jcl-parser/commit/357d8cc2fa81c23f163e00fe996f4d166d32b39c))
+* JES comment fields, dynamnbr/perform crash, rc_analysis verdicts and speed, abnormal UNCATLG, SYSTSIN concatenation ([2703e57](https://github.com/Landparty/jcl-parser/commit/2703e5745813f674820de4f559fcc56361759e49))
+* keep comment records inside a continued in-stream DD out of its data ([#58](https://github.com/Landparty/jcl-parser/issues/58)) ([00ec7b3](https://github.com/Landparty/jcl-parser/commit/00ec7b36b3069cb080e5f5325d906272c1e430bb))
+* keep ContinuationLineHandler and utils helpers importable from parser ([beedc82](https://github.com/Landparty/jcl-parser/commit/beedc8204e8179cc9aa6433810e3677f91ad9211))
+* keep significant blanks when a quoted string is continued ([#65](https://github.com/Landparty/jcl-parser/issues/65)) ([b1fa877](https://github.com/Landparty/jcl-parser/commit/b1fa877c154030075c203cef153780118d12b2b9))
+* **lint:** don't flag symbolic dataset names as literal HLQs ([4031b96](https://github.com/Landparty/jcl-parser/commit/4031b9671453f5467dc897e525971e20416a7de9))
+* make every ParserConfig field take effect ([#67](https://github.com/Landparty/jcl-parser/issues/67)) ([0412283](https://github.com/Landparty/jcl-parser/commit/041228373d8e31804cfaa27aea119e63079ef696))
+* never read a str as a file; DLM= only on DD */DATA; bound PROC lookups ([a0c30c9](https://github.com/Landparty/jcl-parser/commit/a0c30c9cbac1935f4f09dc3fe4d982043a7786bd))
+* **parser:** read a continued DD * / DD DATA statement before its data ([1e15e2f](https://github.com/Landparty/jcl-parser/commit/1e15e2f44a5d32147ba1f70458bf08f1c53b9b28))
+* **parser:** read in-stream data with no DD as an implicit SYSIN ([27fe776](https://github.com/Landparty/jcl-parser/commit/27fe77612a3bc95c57c8db94290e4f27d68018eb))
+* **parser:** stop silently dropping real-world JCL content ([e739f1d](https://github.com/Landparty/jcl-parser/commit/e739f1dd2a42fe06e6c9f5f95e84f9f9b95c8a05))
+* **profiles:** read SYSTSIN like TSO when finding the program a wrapper runs ([05d8fb6](https://github.com/Landparty/jcl-parser/commit/05d8fb61e39db18a209928523e2758d0e8caa530))
+* **program_profiles:** read PARM= as TSO control text, not just SYSTSIN ([e63171f](https://github.com/Landparty/jcl-parser/commit/e63171f6c2fb33639df195e25091239419b3f96a))
+* **program-profiles:** derive DD events from the DISP the JCL states ([b1f102b](https://github.com/Landparty/jcl-parser/commit/b1f102bf52b9f1806ddb48c8df508b451c571fef))
+* reject unknown characters and bare RC in IF conditions ([#63](https://github.com/Landparty/jcl-parser/issues/63)) ([4a841e3](https://github.com/Landparty/jcl-parser/commit/4a841e324592bed1920687c9f11472a3ac9224a2))
+* report job.validate() errors from validate_jcl and --validate ([#57](https://github.com/Landparty/jcl-parser/issues/57)) ([1df9a2e](https://github.com/Landparty/jcl-parser/commit/1df9a2ec2aa3d15026ed727596ea77be5d1f898d))
+* report OS errors from the CLI instead of a traceback ([#65](https://github.com/Landparty/jcl-parser/issues/65)) ([3385a32](https://github.com/Landparty/jcl-parser/commit/3385a32810daf17f87c7ee491e89120a7a75054d))
+* resolve SET symbols in EXEC PGM= and PROC names ([5615641](https://github.com/Landparty/jcl-parser/commit/561564170c19b1c46f526173967b68395b1ef66b))
+* SET redefinition scope, unqualified-override concatenation members, DFSRRC00 list PARM ([e5d8430](https://github.com/Landparty/jcl-parser/commit/e5d84308d5ea78087a1889be0bdb0ada2d60f578))
+* split records on newlines only and decode cp1252 before latin-1 ([#62](https://github.com/Landparty/jcl-parser/issues/62)) ([2bb8ce7](https://github.com/Landparty/jcl-parser/commit/2bb8ce7b8154bf2daf374025780ca45b007f983f))
+* **sql:** stop reporting utility control statements as SQL ([73a1944](https://github.com/Landparty/jcl-parser/commit/73a1944971e4bed384b570e65c5d85794fb1e001))
+* stop reporting TSO DELETE/ALTER as embedded SQL in profiles ([#66](https://github.com/Landparty/jcl-parser/issues/66)) ([00d0a8a](https://github.com/Landparty/jcl-parser/commit/00d0a8a77fe0040e6c1e9c099553937d4c77ea77))
+* **symbols:** keep system symbols through the parse-time SET pass ([d6888bd](https://github.com/Landparty/jcl-parser/commit/d6888bd3268a277a6ae856e68bf901775e6d4fcb))
+* **symbols:** resolve symbol values that reference system symbols ([9dd42d3](https://github.com/Landparty/jcl-parser/commit/9dd42d3c229aade87330f57bc3273470018eb162))
+* **symbols:** substitute parenthesised symbol values as JCL; don't crash on SET lists ([6bbe77e](https://github.com/Landparty/jcl-parser/commit/6bbe77e242b5c382d05be86b275764dc89810022))
+* temp dataset DISP=MOD, catalog state in lifecycle checks, ValidationPlugin step/DD hooks, metrics referbacks ([177a966](https://github.com/Landparty/jcl-parser/commit/177a966505f36dd7bc5912f1a325a5936cf17b0b))
+* treat RUN of an unknown step as unknown in RC analysis ([#61](https://github.com/Landparty/jcl-parser/issues/61)) ([0d2de0d](https://github.com/Landparty/jcl-parser/commit/0d2de0db496cf9e004e2cfd13f44c9a3a1aa61b6))
+* **validation:** exploded step names, temp dataset re-creation, DISP status, JES comments ([cfa2804](https://github.com/Landparty/jcl-parser/commit/cfa2804b9da1e2dd1bc2d920a896edb61b9056c3))
+* **validators:** accept DD DUMMY, work files, PDS members and (,CATLG) ([15d7800](https://github.com/Landparty/jcl-parser/commit/15d7800c4401bdf2b5a7392bf824b8ed13e53a32))
+* walk IF branches separately for temporary dataset creation ([#60](https://github.com/Landparty/jcl-parser/issues/60)) ([3bce8cd](https://github.com/Landparty/jcl-parser/commit/3bce8cd3b5d58fb3e49e361d0ca25fcde5b3a0d0))
+* warn when a PROC has no PEND or unclosed in-stream data swallows JCL ([#59](https://github.com/Landparty/jcl-parser/issues/59)) ([f7436cb](https://github.com/Landparty/jcl-parser/commit/f7436cb2b62fc8fd877c289fc6d7d217a9a4050b))
+* warn when a qualified DD override names no procedure step ([#64](https://github.com/Landparty/jcl-parser/issues/64)) ([1cc00c3](https://github.com/Landparty/jcl-parser/commit/1cc00c343db44d8d16f8e5b944e969cf4a8df91c))
+
+
+### Documentation
+
+* add codebase audit and prioritised refactor plan ([e5408e4](https://github.com/Landparty/jcl-parser/commit/e5408e47d04f65bedbaa41c0cbf528a87250b0f1))
+* interface contract — parse_jcl never returns None, str is always content ([a61830a](https://github.com/Landparty/jcl-parser/commit/a61830acd57c87e90b33a6022f2b036cf72ae4ca))
+* **okf:** audit bundle against current code ([d9c73d6](https://github.com/Landparty/jcl-parser/commit/d9c73d6c87ce5f3910f9fb240e645116dd6dadf9))
+* **okf:** audit bundle against current code ([1918459](https://github.com/Landparty/jcl-parser/commit/1918459cc533c9d9aee167a55093a9a26d2d1480))
+* **okf:** correct fabricated APIs and close the PR [#42](https://github.com/Landparty/jcl-parser/issues/42) gap in the bundle ([bebc7ba](https://github.com/Landparty/jcl-parser/commit/bebc7bab2796e3365f36b785521342d88179c95b))
+* **okf:** format the validation_level example for ruff ([da7afe1](https://github.com/Landparty/jcl-parser/commit/da7afe1d8dc045905fe483ee9cbcb8339725a030))
+* **okf:** record the 2026-09-28 bug-hunt fixes ([c535814](https://github.com/Landparty/jcl-parser/commit/c5358143b716c37647df5b15364206b077aabced))
+* **okf:** separate the update-log entries with blank lines ([af1c077](https://github.com/Landparty/jcl-parser/commit/af1c077ff10c3c8ef36269c11034a86c1df8033b))
+
 ## [1.4.0](https://github.com/Landparty/jcl-parser/compare/v1.3.0...v1.4.0) (2026-09-01)
 
 
