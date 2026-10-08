@@ -5,15 +5,19 @@ This module contains the main parsing entry points for converting JCL scripts
 into structured Python objects with full support for syntax validation
 and plugin extensibility.
 
-The implementation is split across three modules:
+The implementation is split across several modules:
 
+* :mod:`jclparser._source_scanner` — the source pre-scan that marks in-stream
+  data and CNTL records and merges continuation lines (``_merge_source_lines``).
 * :mod:`jclparser._statement_parser` — single-statement line parsing
   (``parse_statement``, parameter tokenization, INCLUDE/JCLLIB pre-scans).
 * :mod:`jclparser._job_builder` — ``Statement`` → model assembly
-  (:class:`~jclparser._job_builder.JobBuilder` per-statement handlers) and
-  the post-parse passes (external PROCs, OUTPUT refs, SET substitution).
+  (:class:`~jclparser._job_builder.JobBuilder` per-statement handlers), with
+  the factories in :mod:`jclparser._model_factories` and the post-parse passes
+  (external PROCs, OUTPUT refs, SET substitution) in
+  :mod:`jclparser._post_parse`.
 * this module — the public API (``parse_jcl``, ``validate_jcl``,
-  ``parse_statement``) and the core loop orchestration.
+  ``parse_statement``), the parse loop and the phases around it.
 
 For backward compatibility every helper that historically lived here is still
 importable from ``jclparser.parser``.
@@ -23,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Literal, overload
+from typing import IO, TYPE_CHECKING, Any, Literal, overload
 
 # Backward-compatible re-exports: these helpers historically lived in this
 # module and are imported from ``jclparser.parser`` by tests and downstream
@@ -43,6 +47,13 @@ from ._job_builder import (  # noqa: F401
     load_external_procedures,
     resolve_set_symbols,
 )
+from ._source_scanner import (  # noqa: F401
+    ScannedSource,
+    _expects_continuation,
+    _instream_delimiter,
+    _merge_source_lines,
+    merge_continuations,
+)
 from ._statement_parser import (  # noqa: F401
     _OPERATOR_PREFIXES,
     _RE_HAS_INCLUDE,
@@ -58,7 +69,6 @@ from ._statement_parser import (  # noqa: F401
     split_comment_field,
     statement_operation,
 )
-from .continuation_handler import ContinuationLineHandler
 from .errors import (
     ErrorSeverity,
     ErrorType,
@@ -86,8 +96,6 @@ from .plugins import (
 from .profiling import ProfilerContext, ProfilingResult
 from .utils import (
     POSITIONAL_PARAM_PREFIX,  # noqa: F401
-    instream_delimiter,
-    is_continued_card_image,
     is_positional_key,
     normalize_jcl_line,
     read_source,
@@ -98,248 +106,6 @@ if TYPE_CHECKING:
     from .include_loader import IncludeMemberLoader
 
 logger = logging.getLogger(__name__)
-
-
-def _merge_source_lines(
-    content: str,
-) -> tuple[list[tuple[str, int]], set[int], set[int], list[str]]:
-    """Normalize, mark in-stream data, and merge continuation lines.
-
-    Returns ``(merged_lines, inline_data_indices, control_data_indices,
-    source_warnings)`` where *merged_lines* is a list of ``(line, 1-based line
-    number)`` pairs ready for the parse loop, *inline_data_indices* is the set
-    of 0-based original indices that belong to in-stream (``DD *`` / ``DD
-    DATA``) data blocks, *control_data_indices* is the set of 0-based indices
-    holding the program control records of a ``CNTL``/``ENDCNTL`` block — both
-    of which must never be parsed as JCL statements — and *comment_warnings*
-    reports comment fields that were stripped off statements but still looked
-    like operands (truncated or garbled records).
-    """
-    raw_lines = split_source_lines(content)
-    lines = [normalize_jcl_line(line) for line in raw_lines]
-
-    # Single pass: separate inline data lines from regular lines.
-    # Simultaneously records which original indices are inline data
-    # and builds the non-inline list for continuation merging.
-    inline_data_indices: set[int] = set()
-    control_data_indices: set[int] = set()
-    non_inline_lines: list[str] = []
-    non_inline_orig_indices: list[int] = []  # parallel to non_inline_lines
-    in_inline_data = False
-    in_cntl_block = False
-    cntl_start_line = 0
-    source_warnings: list[str] = []
-    delimiter = "/*"
-    # When the current in-stream dataset was opened with ``DD *`` (and *no*
-    # custom ``DLM=``), z/OS terminates the data at the next record beginning
-    # with ``//`` as well as at ``/*``.  ``DD DATA`` deliberately does not do
-    # this so that records containing ``//`` can be supplied as data; for
-    # ``DD DATA`` (or any dataset with an explicit ``DLM=``) only the delimiter
-    # ends the data.
-    terminates_on_slash = False
-    # Once a step exists, a record that is not JCL (no ``//`` or ``/*``)
-    # starts in-stream data with no DD statement, which JES reads as an
-    # implicit ``//SYSIN DD *`` (see JobBuilder.start_implicit_sysin).
-    seen_exec = False
-    # Operands of a DD statement whose continuation records are still coming.
-    pending_dd: str | None = None
-
-    for i, line in enumerate(lines):
-        if in_inline_data:
-            # The delimiter only counts in columns 1-2: an indented ``/*`` is
-            # data (a C, REXX or SQL comment in SYSIN).
-            if line.startswith(delimiter):
-                # The delimiter record belongs to the in-stream data block
-                # (it is not a JCL statement) — mark it and stop collecting.
-                inline_data_indices.add(i)
-                in_inline_data = False
-                continue
-            if terminates_on_slash and line.startswith("//"):
-                # Unterminated ``DD *`` data: the next JCL statement ends it.
-                # Fall through so this line is treated as a normal statement.
-                in_inline_data = False
-            else:
-                inline_data_indices.add(i)
-                continue
-        if in_cntl_block:
-            # Records between CNTL and ENDCNTL are program control statements
-            # handed to the program, not JCL: they must not be merged as
-            # continuations nor parsed.  ENDCNTL closes the block; so does any
-            # record that is unmistakably a JCL statement, so an unterminated
-            # CNTL cannot swallow the rest of the job (that gets a warning).
-            cntl_operation = statement_operation(line)
-            if cntl_operation == "ENDCNTL":
-                in_cntl_block = False
-            elif cntl_operation in _STATEMENT_TYPES:
-                in_cntl_block = False
-                source_warnings.append(
-                    f"Line {cntl_start_line}: CNTL block has no matching ENDCNTL; "
-                    f"ended at the {cntl_operation} statement on line {i + 1}"
-                )
-            else:
-                control_data_indices.add(i)
-                continue
-        if (
-            not line.startswith(("//", "/*"))
-            and seen_exec
-            and line.strip()
-            and not _expects_continuation(lines, i)
-        ):
-            inline_data_indices.add(i)
-            in_inline_data = True
-            delimiter = "/*"
-            terminates_on_slash = True
-            continue
-        if (
-            line.strip()
-            and line.startswith("//")
-            and not line.strip().startswith("//*")
-        ):
-            upper_line = line.upper()
-            if (
-                not seen_exec
-                and "EXEC" in upper_line
-                and statement_operation(line) == "EXEC"
-            ):
-                seen_exec = True
-            if "CNTL" in upper_line and statement_operation(line) == "CNTL":
-                in_cntl_block = True
-                cntl_start_line = i + 1
-            # In-stream data starts at ``DD *`` / ``DD DATA`` / any DD with an
-            # explicit DLM=.  The operand field is located by tokenizing the
-            # record — the same way the JobBuilder reads it — so that spacing
-            # ("//SYSIN    DD    *") can never make the two disagree and leave
-            # data records to be parsed as JCL.
-            # A DD statement continued onto further records (``DD DATA,`` /
-            # ``//   DLM=$$``) is only judged once its last record is read:
-            # those records are JCL, and DLM= may sit on any of them.
-            dd_operands: str | None = None
-            if pending_dd is not None:
-                if statement_operation(line) in _STATEMENT_TYPES:
-                    pending_dd = None  # continuation never came
-                else:
-                    cont = split_comment_field(line, "DD")[0][2:].strip()
-                    pending_dd += cont
-                    if not cont.endswith(","):
-                        dd_operands, pending_dd = pending_dd, None
-            elif "DD" in upper_line:
-                dd_field = _operand_field(line)
-                if dd_field is not None and dd_field[1] == "DD":
-                    statement = split_comment_field(line, "DD")[0]
-                    operands = statement[dd_field[0] :].strip()
-                    if operands.endswith(","):
-                        pending_dd = operands
-                    else:
-                        dd_operands = operands
-            if dd_operands is not None:
-                instream = _instream_delimiter(dd_operands)
-                if instream is not None:
-                    delimiter, terminates_on_slash = instream
-                    in_inline_data = True
-        non_inline_lines.append(line)
-        non_inline_orig_indices.append(i)
-
-    # Merge continuation lines on the non-inline subset only.
-    handler = ContinuationLineHandler()
-    merged_non_inline = handler.merge_continuation_lines(
-        non_inline_lines,
-        card_images={
-            n
-            for n, orig in enumerate(non_inline_orig_indices)
-            if is_continued_card_image(raw_lines[orig])
-        },
-    )
-
-    # Recombine: build lookup of orig_idx -> merged_line for group-start lines only.
-    # Continuation lines that were folded into a group are simply absent from this map
-    # and will be skipped in the loop below — which is correct.
-    merged_start: dict[int, str] = {}
-    for merged_line, ni_line_num in merged_non_inline:
-        orig_idx = non_inline_orig_indices[ni_line_num - 1]
-        merged_start[orig_idx] = merged_line
-
-    # A comment (or blank) record met inside a continued statement is its own
-    # entry, but it must come *before* that merged statement: a DD that opens
-    # in-stream data (``DD *,`` / ``//* c`` / ``//  DLM=$$``) would otherwise
-    # read the comment as its first data record, or end its data at it
-    # (issue #58).  ``stmt_pos`` is the entry of the last statement still
-    # open to continuation records.
-    merged_lines: list[tuple[str, int]] = []
-    stmt_pos: int | None = None
-    for i, line in enumerate(lines):
-        if i in inline_data_indices or i in control_data_indices:
-            merged_lines.append((line, i + 1))
-            stmt_pos = None
-        elif i in merged_start:
-            merged_lines.append((merged_start[i], i + 1))
-            if line.strip() and not line.startswith("//*"):
-                stmt_pos = len(merged_lines) - 1
-        elif stmt_pos is not None and stmt_pos < len(merged_lines) - 1:
-            # A continuation record folded into the statement at stmt_pos,
-            # with comment records in between: move the statement after them.
-            merged_lines.append(merged_lines.pop(stmt_pos))
-            stmt_pos = len(merged_lines) - 1
-
-    # Map the handler's suspect comment fields back to original line numbers.
-    source_warnings.extend(
-        f"Line {non_inline_orig_indices[ni_line_num - 1] + 1}: text after the "
-        f"operand field ignored as a comment, but it looks like operands: "
-        f"{comment!r}"
-        for ni_line_num, comment in handler.suspect_comments
-    )
-
-    return merged_lines, inline_data_indices, control_data_indices, source_warnings
-
-
-def _instream_delimiter(operands: str) -> tuple[str, bool] | None:
-    """Return ``(delimiter, ends_at_slash)`` if a DD's operands open in-stream data.
-
-    *operands* is the DD's whole operand field (continuations joined, comment
-    field removed). They are tokenized exactly as the JobBuilder tokenizes
-    them and judged by the same :func:`~jclparser.utils.instream_delimiter`
-    rule, so the pre-scan can never mark records as data that the builder
-    then has no DD to attach to (the old substring test did, for any DD
-    mentioning ``DLM=``, silently dropping the rest of the job).
-    """
-    try:
-        parameters = _parse_parameters(operands)
-    except JCLSyntaxError:
-        # Unbalanced operands: the statement parser reports them; no data.
-        return None
-    instream = instream_delimiter(parameters)
-    if instream is None:
-        return None
-    delimiter, ends_at_slash = instream
-    if not isinstance(delimiter, str):
-        # A malformed DLM= is rejected by the JobBuilder; keep the default
-        # delimiter here so the pre-scan stays in step until then.
-        delimiter = "/*"
-    return delimiter, ends_at_slash
-
-
-def _expects_continuation(lines: list[str], index: int) -> bool:
-    """Return True if the JCL record before *index* awaits a continuation.
-
-    A statement whose operand field ends in a comma expects a ``//``
-    continuation record; a non-JCL record there is a broken continuation,
-    not in-stream data, and is left for parse_statement() to reject.
-    Only called for the rare non-JCL record, so the backward scan is cheap.
-    """
-    prev = index - 1
-    while prev >= 0 and (not lines[prev].strip() or lines[prev].startswith("//*")):
-        prev -= 1
-    if prev < 0 or not lines[prev].startswith("//"):
-        return False
-    # The operation of the statement that record belongs to decides where
-    # its comment field starts.
-    group_operation = ""
-    for k in range(prev, -1, -1):
-        operation = statement_operation(lines[k])
-        if operation in _STATEMENT_TYPES:
-            group_operation = operation
-            break
-    statement_part = split_comment_field(lines[prev], group_operation)[0]
-    return statement_part.rstrip().endswith(",")
 
 
 def _parse_jcl_core(
@@ -363,82 +129,17 @@ def _parse_jcl_core(
     strict_mode = strict_mode or (config is not None and config.strict_mode)
     # Handle different input source types (FileNotFoundError propagates)
     content = read_source(source)
+    content, expanded_includes = _expand_includes(
+        content, include_loader, proc_base_path
+    )
 
-    # Expand INCLUDE MEMBER= statements before the main parse loop so that
-    # inlined content participates in continuation-line merging and everything
-    # else that follows.
-    _expanded_includes: list[str] = []
-    if _has_include_statement(content):
-        from .include_loader import JCLLIBMemberLoader, resolve_includes
-
-        if include_loader is None:
-            include_loader = JCLLIBMemberLoader(base_path=proc_base_path)
-        # Pre-scan the raw content for JCLLIB ORDER so the loader can search
-        # the correct libraries.  This is a best-effort single-line scan;
-        # ORDER values spread across continuation lines are not picked up here
-        # (those are rare in practice).
-        jcllib_libs = _extract_jcllib_order(content) or None
-        content = resolve_includes(
-            content,
-            loader=include_loader,
-            libraries=jcllib_libs,
-            _collected=_expanded_includes,
-        )
-        logger.debug(
-            "expanded %d INCLUDE member(s) before parse: %s",
-            len(_expanded_includes),
-            _expanded_includes,
-        )
-
-    # Normalize the content and merge continuation lines
-    (
-        merged_lines,
-        inline_data_indices,
-        control_data_indices,
-        source_warnings,
-    ) = _merge_source_lines(content)
-
-    # Now parse the merged lines; the builder holds all loop state and has
-    # one handler per statement type (see jclparser/_job_builder.py).
-    builder = JobBuilder(dialect=config.dialect if config is not None else "standard")
-    for line, line_num in merged_lines:
-        # Handle inline data continuation
-        if builder.consume_inline_data(line):
-            continue
-
-        # Skip comments and empty lines (but recognise JES3 //*ROUTE XEQ
-        # control statements before dropping the comment).
-        if not line.strip() or line.strip().startswith("//*"):
-            builder.handle_comment_line(line, line_num)
-            continue
-
-        # Skip lines marked as inline data (line_num is 1-indexed, markers use 0-indexed)
-        if (line_num - 1) in inline_data_indices:
-            if not line.startswith(("//", "/*")):
-                # In-stream data with no DD statement ahead of it.
-                builder.start_implicit_sysin(line, line_num)
-            continue
-
-        # Program control records inside a CNTL/ENDCNTL block are kept with
-        # the CNTL statement rather than parsed as JCL.
-        if (line_num - 1) in control_data_indices:
-            builder.handle_control_data(line)
-            continue
-
-        # Parse the statement
-        stmt = parse_statement(line, line_num, config)
-        if not stmt:
-            continue
-
-        # Process the statement (dispatches on stmt.type)
-        builder.handle_statement(stmt, line_num)
-
-    job = builder.finish()
+    scanned = _merge_source_lines(content)
+    job = _build_job(scanned, config)
 
     # Anything the line-classification pass discarded or repaired (a comment
     # field that looked like operands, an unterminated CNTL block) is reported
     # rather than dropped without a trace.
-    job.warnings.extend(source_warnings)
+    job.warnings.extend(scanned.warnings)
 
     # Create and attach procedure loader for external PROC loading
     load_external_procedures(
@@ -452,12 +153,108 @@ def _parse_jcl_core(
     if strict_mode and not job.steps:
         enforce_strict_dd_structure(content)
 
+    _resolve_references(job, expanded_includes)
+
+    if strict_mode and validate_job:
+        _raise_on_fatal_findings(job)
+
+    # Optional: auto-run SQL detection when requested via ParserConfig
+    if config is not None and getattr(config, "detect_sql", False):
+        _detect_sql(job)
+
+    if logger.isEnabledFor(logging.INFO):
+        _log_parse_summary(job)
+
+    return job
+
+
+def _expand_includes(
+    content: str,
+    include_loader: IncludeMemberLoader | None,
+    proc_base_path: str | Path | None,
+) -> tuple[str, list[str]]:
+    """Expand INCLUDE MEMBER= statements; return the content and the members.
+
+    This runs before the main parse loop so that inlined content participates
+    in continuation-line merging and everything else that follows.
+    """
+    expanded: list[str] = []
+    if not _has_include_statement(content):
+        return content, expanded
+
+    from .include_loader import JCLLIBMemberLoader, resolve_includes
+
+    if include_loader is None:
+        include_loader = JCLLIBMemberLoader(base_path=proc_base_path)
+    # Pre-scan the raw content for JCLLIB ORDER so the loader can search
+    # the correct libraries.  This is a best-effort single-line scan;
+    # ORDER values spread across continuation lines are not picked up here
+    # (those are rare in practice).
+    jcllib_libs = _extract_jcllib_order(content) or None
+    content = resolve_includes(
+        content,
+        loader=include_loader,
+        libraries=jcllib_libs,
+        _collected=expanded,
+    )
+    logger.debug(
+        "expanded %d INCLUDE member(s) before parse: %s",
+        len(expanded),
+        expanded,
+    )
+    return content, expanded
+
+
+def _build_job(scanned: ScannedSource, config: ParserConfig | None) -> Job:
+    """Run the parse loop over the scanned source lines.
+
+    The builder holds all loop state and has one handler per statement type
+    (see jclparser/_job_builder.py).
+    """
+    builder = JobBuilder(dialect=config.dialect if config is not None else "standard")
+    for line, line_num in scanned.merged_lines:
+        # Handle inline data continuation
+        if builder.consume_inline_data(line):
+            continue
+
+        # Skip comments and empty lines (but recognise JES3 //*ROUTE XEQ
+        # control statements before dropping the comment).
+        if not line.strip() or line.strip().startswith("//*"):
+            builder.handle_comment_line(line, line_num)
+            continue
+
+        # Skip lines marked as inline data (line_num is 1-indexed, markers use 0-indexed)
+        if (line_num - 1) in scanned.inline_data_indices:
+            if not line.startswith(("//", "/*")):
+                # In-stream data with no DD statement ahead of it.
+                builder.start_implicit_sysin(line, line_num)
+            continue
+
+        # Program control records inside a CNTL/ENDCNTL block are kept with
+        # the CNTL statement rather than parsed as JCL.
+        if (line_num - 1) in scanned.control_data_indices:
+            builder.handle_control_data(line)
+            continue
+
+        # Parse the statement
+        stmt = parse_statement(line, line_num, config)
+        if not stmt:
+            continue
+
+        # Process the statement (dispatches on stmt.type)
+        builder.handle_statement(stmt, line_num)
+
+    return builder.finish()
+
+
+def _resolve_references(job: Job, expanded_includes: list[str]) -> None:
+    """Post-parse passes that need the whole job: INCLUDEs, OUTPUT=, SET."""
     # Record any INCLUDE members that were expanded during pre-processing.
     # Members resolved before the main parse loop never reach the INCLUDE
     # handler in the loop, so we add them here to keep job.includes complete.
-    for _member in _expanded_includes:
-        if _member not in job.includes:
-            job.includes.append(_member)
+    for member in expanded_includes:
+        if member not in job.includes:
+            job.includes.append(member)
 
     # Resolve OUTPUT=*.name back-references on every DD.
     _resolve_output_refs(job)
@@ -473,47 +270,45 @@ def _parse_jcl_core(
         )
         resolve_set_symbols(job)
 
-    # Validate the parsed job if in strict mode.  Only ERROR-severity findings
-    # are fatal — WARNING/INFO findings (e.g. unresolved OUTPUT back-references,
-    # forward dataset references) are advisory and must not break strict parsing.
-    if strict_mode and validate_job:
-        logger.debug("running strict-mode validation for job %s", job.name)
-        validation_errors = job.validate()
-        fatal = [
-            err for err in validation_errors if err.severity == ErrorSeverity.ERROR
-        ]
-        if fatal:
-            error_msg = "; ".join([err.message for err in fatal])
-            raise JCLValidationError(f"Job validation failed: {error_msg}")
 
-    # Optional: auto-run SQL detection when requested via ParserConfig
-    if config is not None and getattr(config, "detect_sql", False):
-        from .sql_detector import detect_sql_in_job
+def _raise_on_fatal_findings(job: Job) -> None:
+    """Strict-mode validation: raise if ``job.validate()`` reports an ERROR.
 
-        for result in detect_sql_in_job(job):
-            if result.step_name:
-                job.sql_detections[result.step_name] = result
+    WARNING/INFO findings (e.g. unresolved OUTPUT back-references, forward
+    dataset references) are advisory and must not break strict parsing.
+    """
+    logger.debug("running strict-mode validation for job %s", job.name)
+    fatal = [err for err in job.validate() if err.severity == ErrorSeverity.ERROR]
+    if fatal:
+        error_msg = "; ".join([err.message for err in fatal])
+        raise JCLValidationError(f"Job validation failed: {error_msg}")
 
-    if logger.isEnabledFor(logging.INFO):
-        from .model import iter_execution_steps
 
-        step_count = sum(1 for _ in iter_execution_steps(job.steps))
-        dd_count = len(job.get_dd_statements())
-        if job.name:
-            logger.info(
-                "parsed job %s: %d steps, %d DD statements",
-                job.name,
-                step_count,
-                dd_count,
-            )
-        else:
-            logger.info(
-                "parsed PROC-only file: %d procedures, %d DD statements",
-                len(job.procedures),
-                dd_count,
-            )
+def _detect_sql(job: Job) -> None:
+    """Store SQL detection results per step on ``job.sql_detections``."""
+    from .sql_detector import detect_sql_in_job
 
-    return job
+    for result in detect_sql_in_job(job):
+        if result.step_name:
+            job.sql_detections[result.step_name] = result
+
+
+def _log_parse_summary(job: Job) -> None:
+    step_count = sum(1 for _ in iter_execution_steps(job.steps))
+    dd_count = len(job.get_dd_statements())
+    if job.name:
+        logger.info(
+            "parsed job %s: %d steps, %d DD statements",
+            job.name,
+            step_count,
+            dd_count,
+        )
+    else:
+        logger.info(
+            "parsed PROC-only file: %d procedures, %d DD statements",
+            len(job.procedures),
+            dd_count,
+        )
 
 
 @overload
@@ -641,7 +436,8 @@ def validate_jcl(
     if level is None:
         level = config.validation_level if config is not None else "basic"
     effective_level = normalize_validation_level(level)
-    errors = []
+
+    errors: list[ParseError] = []
 
     # First try normal parsing to catch basic structure issues
     try:
@@ -652,90 +448,96 @@ def validate_jcl(
         job = _parse_jcl_core(
             source, strict_mode=True, config=config, validate_job=False
         )
+        _add_job_findings(job, effective_level, errors)
+        # Plugin-based validation (opt-in: only the plugins the config enables)
+        if effective_level == ValidationLevel.SEMANTIC and config is not None:
+            _add_plugin_findings(job, config, errors)
+        return errors
+    except (JCLSyntaxError, JCLValidationError, JCLStructureError):
+        # If parsing failed, do line-by-line validation to collect multiple errors
+        pass
 
-        # job.validate() findings.  The basic level reports the ERROR ones --
-        # exactly what makes a strict parse fail; structure and semantic
-        # report every finding, warnings included.
-        for err in job.validate():
-            if (
-                effective_level == ValidationLevel.BASIC
-                and err.severity != ErrorSeverity.ERROR
-            ):
-                continue
+    errors.extend(_validate_line_by_line(source, config))
+    return errors
+
+
+def _add_job_findings(
+    job: Job, level: ValidationLevel, errors: list[ParseError]
+) -> None:
+    """Append the ``job.validate()`` findings to report at *level*.
+
+    The basic level reports the ERROR ones -- exactly what makes a strict
+    parse fail; structure and semantic report every finding, warnings
+    included.
+    """
+    for err in job.validate():
+        if level == ValidationLevel.BASIC and err.severity != ErrorSeverity.ERROR:
+            continue
+        errors.append(
+            ParseError(
+                error_type=err.error_type,
+                message=err.message,
+                line_number=err.line_number or 0,
+                severity=err.severity,
+            )
+        )
+
+
+def _add_plugin_findings(
+    job: Job, config: ParserConfig, errors: list[ParseError]
+) -> None:
+    """Append the findings of every validation plugin *config* enables."""
+    registry = get_plugin_registry()
+    flat_steps = list(iter_execution_steps(job.steps))
+    validators = [v for v in registry.get_validators() if config.is_plugin_enabled(v)]
+    for validator in validators:
+        # A ValidationPlugin has three hooks; run each of them, so a rule
+        # written against validate_step / validate_dd is not silently skipped.
+        validation_errors = list(validator.validate_job(job))
+        for step in flat_steps:
+            validation_errors.extend(validator.validate_step(step))
+            for dd in step.dd_statements:
+                validation_errors.extend(validator.validate_dd(dd))
+        for err in validation_errors:
             errors.append(
                 ParseError(
                     error_type=err.error_type,
                     message=err.message,
                     line_number=err.line_number or 0,
-                    severity=err.severity,
+                    # Keep a plugin's WARNING/INFO findings as such.
+                    severity=getattr(err, "severity", None) or ErrorSeverity.ERROR,
                 )
             )
 
-        # Plugin-based validation (opt-in: only the plugins the config enables)
-        if effective_level == ValidationLevel.SEMANTIC and config is not None:
-            registry = get_plugin_registry()
-            flat_steps = list(iter_execution_steps(job.steps))
-            validators = [
-                v for v in registry.get_validators() if config.is_plugin_enabled(v)
-            ]
-            for validator in validators:
-                # A ValidationPlugin has three hooks; run each of them, so a
-                # rule written against validate_step / validate_dd is not
-                # silently skipped.
-                validation_errors = list(validator.validate_job(job))
-                for step in flat_steps:
-                    validation_errors.extend(validator.validate_step(step))
-                    for dd in step.dd_statements:
-                        validation_errors.extend(validator.validate_dd(dd))
-                for err in validation_errors:
-                    errors.append(
-                        ParseError(
-                            error_type=err.error_type,
-                            message=err.message,
-                            line_number=err.line_number or 0,
-                            # Keep a plugin's WARNING/INFO findings as such.
-                            severity=getattr(err, "severity", None)
-                            or ErrorSeverity.ERROR,
-                        )
-                    )
 
-        return errors
+def _validate_line_by_line(
+    source: str | Path | IO[Any], config: ParserConfig | None
+) -> list[ParseError]:
+    """Fallback validation when the strict parse failed.
 
-    except (JCLSyntaxError, JCLValidationError, JCLStructureError):
-        # If parsing failed, do line-by-line validation to collect multiple errors
-        pass
-
-    # Line-by-line validation to catch multiple syntax errors
-    # Parse content from source
+    Each merged statement is parsed on its own, so one bad statement does not
+    hide the errors in the others, and a few structural rules are checked
+    along the way.
+    """
     try:
         content = read_source(source)
     except FileNotFoundError as exc:
-        errors.append(
+        return [
             ParseError(
                 error_type=ErrorType.SYNTAX_ERROR,
                 message=str(exc),
                 line_number=0,
                 severity=ErrorSeverity.ERROR,
             )
-        )
-        return errors
+        ]
 
     # Merge continuation lines so multi-line statements are validated as a unit
     source_lines = split_source_lines(content)
-    raw_lines = [normalize_jcl_line(line) for line in source_lines]
-    handler = ContinuationLineHandler()
-    merged_pairs = handler.merge_continuation_lines(
-        raw_lines,
-        card_images={
-            n for n, line in enumerate(source_lines) if is_continued_card_image(line)
-        },
-    )
-    has_job = False
-    in_proc = False
-    has_exec = False
-    has_dd = False
-    current_step = None
+    lines = [normalize_jcl_line(line) for line in source_lines]
+    merged_pairs = merge_continuations(source_lines, lines, range(len(lines)))
 
+    errors: list[ParseError] = []
+    structure = _StructureTracker(errors)
     for line, line_num in merged_pairs:
         line = line.strip()
 
@@ -747,96 +549,89 @@ def validate_jcl(
         try:
             stmt = parse_statement(line, line_num, config)
             if stmt:
-                # Basic structure validation
-                if stmt.type == "JOB":
-                    if has_job:
-                        errors.append(
-                            ParseError(
-                                error_type=ErrorType.SYNTAX_ERROR,
-                                message="Multiple JOB statements found",
-                                line_number=line_num,
-                                severity=ErrorSeverity.ERROR,
-                            )
-                        )
-                    has_job = True
-
-                elif stmt.type == "PROC":
-                    in_proc = True
-
-                elif stmt.type == "PEND":
-                    in_proc = False
-
-                elif stmt.type == "EXEC":
-                    if not has_job and not in_proc:
-                        errors.append(
-                            ParseError(
-                                error_type=ErrorType.SYNTAX_ERROR,
-                                message="EXEC statement before JOB statement",
-                                line_number=line_num,
-                                severity=ErrorSeverity.ERROR,
-                            )
-                        )
-
-                    # Check for missing program or procedure.
-                    # This fallback path is only reached when parse_jcl raised
-                    # (e.g., undefined PROC), so we intentionally do NOT accept
-                    # bare "PROC=name" here — the reference is known to be
-                    # unresolvable, and we want at least one error in the output.
-                    has_pgm = "PGM" in stmt.parameters
-                    has_positional = any(is_positional_key(k) for k in stmt.parameters)
-                    if not has_pgm and not has_positional:
-                        errors.append(
-                            ParseError(
-                                error_type=ErrorType.SYNTAX_ERROR,
-                                message="EXEC statement missing program or procedure",
-                                line_number=line_num,
-                                severity=ErrorSeverity.ERROR,
-                            )
-                        )
-                    has_exec = True
-                    current_step = stmt
-
-                elif stmt.type == "DD":
-                    has_dd = True
-                    if current_step is None:
-                        # DD before EXEC is allowed (e.g. JOBLIB before the
-                        # first step) as long as some EXEC exists later in
-                        # the job; checked for the whole job after the loop.
-                        pass
-
+                structure.check(stmt, line_num)
         except JCLSyntaxError as e:
-            errors.append(
-                ParseError(
-                    error_type=ErrorType.SYNTAX_ERROR,
-                    message=e.message,
-                    line_number=e.line_number or line_num,
-                    context=e.context,
-                    severity=ErrorSeverity.ERROR,
-                )
-            )
+            errors.append(_statement_error(ErrorType.SYNTAX_ERROR, e, line_num))
         except JCLValidationError as e:
-            errors.append(
-                ParseError(
-                    error_type=ErrorType.VALIDATION_ERROR,
-                    message=e.message,
-                    line_number=e.line_number or line_num,
-                    context=e.context,
-                    severity=ErrorSeverity.ERROR,
-                )
-            )
+            errors.append(_statement_error(ErrorType.VALIDATION_ERROR, e, line_num))
 
-    # Mirrors the strict-mode structural check in _parse_jcl_core: a DD
-    # statement with no EXEC anywhere in the job is a structural error, not
-    # just a syntax quirk to ignore.
-    if has_job and has_dd and not has_exec:
-        errors.append(
+    structure.finish()
+    return errors
+
+
+def _statement_error(
+    error_type: ErrorType,
+    exc: JCLSyntaxError | JCLValidationError,
+    line_num: int,
+) -> ParseError:
+    return ParseError(
+        error_type=error_type,
+        message=exc.message,
+        line_number=exc.line_number or line_num,
+        context=exc.context,
+        severity=ErrorSeverity.ERROR,
+    )
+
+
+class _StructureTracker:
+    """Statement-order checks for :func:`_validate_line_by_line`."""
+
+    def __init__(self, errors: list[ParseError]) -> None:
+        self.errors = errors
+        self.has_job = False
+        self.in_proc = False
+        self.has_exec = False
+        self.has_dd = False
+
+    def _error(self, message: str, line_number: int) -> None:
+        self.errors.append(
             ParseError(
-                error_type=ErrorType.STRUCTURE_ERROR,
-                message="DD statement found before any EXEC step. "
-                "Each DD must belong to a step.",
-                line_number=0,
+                error_type=ErrorType.SYNTAX_ERROR,
+                message=message,
+                line_number=line_number,
                 severity=ErrorSeverity.ERROR,
             )
         )
 
-    return errors
+    def check(self, stmt: Statement, line_num: int) -> None:
+        if stmt.type == "JOB":
+            if self.has_job:
+                self._error("Multiple JOB statements found", line_num)
+            self.has_job = True
+        elif stmt.type == "PROC":
+            self.in_proc = True
+        elif stmt.type == "PEND":
+            self.in_proc = False
+        elif stmt.type == "EXEC":
+            if not self.has_job and not self.in_proc:
+                self._error("EXEC statement before JOB statement", line_num)
+            # Check for missing program or procedure. This fallback path is
+            # only reached when the strict parse raised (e.g., undefined
+            # PROC), so we intentionally do NOT accept bare "PROC=name" here
+            # — the reference is known to be unresolvable, and we want at
+            # least one error in the output.
+            has_pgm = "PGM" in stmt.parameters
+            has_positional = any(is_positional_key(k) for k in stmt.parameters)
+            if not has_pgm and not has_positional:
+                self._error("EXEC statement missing program or procedure", line_num)
+            self.has_exec = True
+        elif stmt.type == "DD":
+            # DD before EXEC is allowed (e.g. JOBLIB before the first step)
+            # as long as some EXEC exists later in the job; checked for the
+            # whole job in finish().
+            self.has_dd = True
+
+    def finish(self) -> None:
+        # Mirrors the strict-mode structural check in _parse_jcl_core: a DD
+        # statement with no EXEC anywhere in the job is a structural error,
+        # not just a syntax quirk to ignore.
+        if self.has_job and self.has_dd and not self.has_exec:
+            self.errors.append(
+                ParseError(
+                    error_type=ErrorType.STRUCTURE_ERROR,
+                    message="DD statement found before any EXEC step. "
+                    "Each DD must belong to a step.",
+                    line_number=0,
+                    severity=ErrorSeverity.ERROR,
+                )
+            )

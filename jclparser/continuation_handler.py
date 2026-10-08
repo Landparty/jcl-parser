@@ -65,7 +65,7 @@ class ContinuationLineHandler:
     # behavior.
     JCL_KEYWORDS: ClassVar[set[str]] = _STATEMENT_TYPES | {"GOTO", "SCHED"}
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.context = ContinuationContext()
         #: ``(index_in_input_list, comment_text)`` for every stripped comment
         #: field that still looks like it holds operands (it contains an

@@ -82,6 +82,7 @@ See [`.okf/core/parsing-pipeline.md`](.okf/core/parsing-pipeline.md) for the ful
 | Module | Role |
 |--------|------|
 | `parser.py` | Core — `parse_jcl()`, `validate_jcl()`, `parse_statement()` (public API + core loop; re-exports all historical `jclparser.parser` helpers) |
+| `_source_scanner.py` | Source pre-scan — `_merge_source_lines()` marks in-stream data / CNTL records and merges continuations |
 | `_statement_parser.py` | Single-statement line parsing — `parse_statement()`, parameter tokenization, `_STATEMENT_TYPES`, INCLUDE/JCLLIB pre-scans |
 | `_job_builder.py` | `JobBuilder` — per-statement-type dispatch state machine for the core loop (re-exports the helpers below for backward compatibility) |
 | `_model_factories.py` | `Statement`→model factories (`_create_job/step/dd_from_statement`) and SET-value resolution helpers |
@@ -120,7 +121,7 @@ Set `JCL_PROCLIB_PATH` env var or pass `proc_base_path` to `parse_jcl()`. Layout
 2. **Column 71 is the continuation boundary** — column 72 is the continuation indicator, 73-80 the sequence field; `normalize_jcl_line()` strips both from fixed-format records and `ContinuationLineHandler` merges what is left. Never pass pre-stripped lines.
 3. **`ConditionalBlock.condition` (raw string) is authoritative** — `condition_ast` may be `None` if the expression was unparseable; always use `condition` for display.
 4. **`&&` is an escaped ampersand in JCL** — symbol substitution replaces `&NAME` → value and `&&` → `&`, except in a dataset name, where `&&TEMP` is a temporary dataset and is kept. Handled in `explosion.py`.
-5. **mypy strict is not yet clean** — 85 known violations across ~25 modules (most in `explosion.py` and `model.py`), listed in `mypy-baseline.txt`. Add annotations when touching a file; never widen the config. CI's `typecheck` job runs `scripts/mypy_ratchet.py`, which fails only on errors missing from `mypy-baseline.txt`; after fixing errors, shrink it with `python scripts/mypy_ratchet.py --update` (mypy 2.4.0, as pinned in CI).
+5. **mypy strict is not yet clean** — 82 known violations across ~25 modules (most in `explosion.py` and `model.py`), listed in `mypy-baseline.txt`. Add annotations when touching a file; never widen the config. CI's `typecheck` job runs `scripts/mypy_ratchet.py`, which fails only on errors missing from `mypy-baseline.txt`; after fixing errors, shrink it with `python scripts/mypy_ratchet.py --update` (mypy 2.4.0, as pinned in CI).
 6. **Coverage floor is 90%** — every `pytest` run enforces it. Add tests alongside any new module.
 7. **A statement's operand field ends at the first blank** outside quotes/parens — the rest is a comment field, stripped before continuation merging (`split_comment_field()`). `IF`/`THEN`/`ELSE`/`ENDIF` are exempt.
 
