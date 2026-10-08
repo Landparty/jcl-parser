@@ -69,6 +69,7 @@ from ._statement_parser import (  # noqa: F401
     split_comment_field,
     statement_operation,
 )
+from .continuation_handler import ContinuationLineHandler  # noqa: F401
 from .errors import (
     ErrorSeverity,
     ErrorType,
@@ -96,6 +97,8 @@ from .plugins import (
 from .profiling import ProfilerContext, ProfilingResult
 from .utils import (
     POSITIONAL_PARAM_PREFIX,  # noqa: F401
+    instream_delimiter,  # noqa: F401
+    is_continued_card_image,  # noqa: F401
     is_positional_key,
     normalize_jcl_line,
     read_source,
