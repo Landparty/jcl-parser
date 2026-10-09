@@ -300,18 +300,18 @@ class ContinuationLineHandler:
             if not next_stripped:
                 break
 
-            # A continuation record only has a comment field of its own
-            # when the statement so far is syntactically closed (the
-            # blank that starts a comment would otherwise be inside the
-            # quoted string or parenthesised list being continued).
+            # A continuation record has no comment field of its own while
+            # a quoted string is being continued (the blank would be inside
+            # it). Inside a parenthesised list it may have one after a
+            # subparameter's comma, so the open depth is passed along.
             # The comment is only recorded once the record is known to be
             # merged: a record that starts the next statement is stripped
             # (and recorded) again as that statement, which would report
             # the same comment twice.
             next_comment = ""
-            if not cached_ctx.in_quotes and cached_ctx.paren_depth == 0:
+            if not cached_ctx.in_quotes:
                 next_line, next_comment = split_comment_field(
-                    next_line, group_operation
+                    next_line, group_operation, cached_ctx.paren_depth
                 )
 
             # Check if next line is a continuation, passing cached context
