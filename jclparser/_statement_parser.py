@@ -173,17 +173,36 @@ def _resumes_operands(text: str) -> bool:
     return "=" in token.split(",")[0]
 
 
-def _find_comment_start(operands: str) -> int | None:
+def _closes_parens(text: str, depth: int) -> bool:
+    """Return True if *text*, read at paren *depth*, brings the depth to 0."""
+    in_quotes = False
+    for char in text:
+        if char == "'":
+            in_quotes = not in_quotes
+        elif not in_quotes:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth <= 0:
+                    return True
+    return False
+
+
+def _find_comment_start(operands: str, depth: int = 0) -> int | None:
     """Index of the comment field inside *operands*, or ``None`` if there is none.
 
     The operand field ends at the first blank that is outside quotes and
     outside parentheses; everything after it is the comment field (z/OS JCL
-    Reference, "Comment field").
+    Reference, "Comment field"). Inside a parenthesised list, a blank that
+    follows a subparameter's comma also starts a comment when the rest of
+    the record neither resumes operands nor closes the list: the list goes
+    on in the next record. *depth* is the paren depth the record starts at
+    (non-zero for a record continuing an open list).
     """
     if " " not in operands and "\t" not in operands:
         # No blank at all: the operand field runs to the end of the record.
         return None
-    depth = 0
     in_quotes = False
     i = 0
     n = len(operands)
@@ -206,6 +225,16 @@ def _find_comment_start(operands: str) -> int | None:
                 if operands[:i].rstrip().endswith(",") and _resumes_operands(rest):
                     i = n - len(rest)
                     continue
+                return i
+            elif (
+                char.isspace()
+                and operands[:i].endswith(",")
+                and not _resumes_operands(operands[i:].lstrip())
+                and not _closes_parens(operands[i:], depth)
+            ):
+                # A parenthesised list interrupted after a subparameter's
+                # comma may carry a comment (z/OS JCL Reference, "Continuing
+                # the operand field"); the list resumes on the next record.
                 return i
         i += 1
     return None
@@ -240,7 +269,9 @@ def _find_then_end(operands: str) -> int | None:
     return None
 
 
-def split_comment_field(line: str, group_operation: str = "") -> tuple[str, str]:
+def split_comment_field(
+    line: str, group_operation: str = "", paren_depth: int = 0
+) -> tuple[str, str]:
     """Split a JCL statement record into ``(statement, comment)``.
 
     In JCL a statement's operand field ends at the first blank outside quotes
@@ -270,7 +301,7 @@ def split_comment_field(line: str, group_operation: str = "") -> tuple[str, str]
         if cut is None:
             return line, ""
         return (line[:start] + operands[:cut]).rstrip(), operands[cut:].strip()
-    cut = _find_comment_start(operands)
+    cut = _find_comment_start(operands, paren_depth)
     if cut is None:
         return line, ""
     return (line[:start] + operands[:cut]).rstrip(), operands[cut:].strip()
