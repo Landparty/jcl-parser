@@ -89,8 +89,19 @@ class FeasibilityReport:
         )
 
 
+#: Suffix marking a PROC call in the optional-step set: every
+#: ``stepname.procstep`` under it may not run (see :func:`_may_not_run`).
+_ANY_PROCSTEP = ".*"
+
+
 def _collect_optional_steps(job: Job) -> frozenset[str]:
-    """Names of steps that may not run: inside an IF branch, or with ``COND=``."""
+    """Names of steps that may not run: inside an IF branch, or with ``COND=``.
+
+    A step that calls a PROC (on a job not yet exploded) is entered as
+    ``NAME.*``: the PROC's own steps are not in the job, so whether one of
+    them runs (it may carry ``COND=`` or sit in an IF of the PROC) is not
+    known, and a ``NAME.PROCSTEP`` test must not assume it ran.
+    """
     names: set[str] = set()
 
     def _walk(items: list[Step | ConditionalBlock], nested: bool) -> None:
@@ -101,9 +112,19 @@ def _collect_optional_steps(job: Job) -> frozenset[str]:
             elif isinstance(item, Step) and item.name:
                 if nested or item.parameters.get("COND") is not None:
                     names.add(item.name.upper())
+                if item.is_procedure:
+                    names.add(item.name.upper() + _ANY_PROCSTEP)
 
     _walk(job.steps, False)
     return frozenset(names)
+
+
+def _may_not_run(name: str, optional_steps: frozenset[str]) -> bool:
+    """True when step *name* (``STEP`` or ``STEP.PROCSTEP``) may not run."""
+    if name in optional_steps:
+        return True
+    caller, dot, _ = name.partition(".")
+    return bool(dot) and caller + _ANY_PROCSTEP in optional_steps
 
 
 def _collect_referenced_steps(ast: ConditionNode) -> set[str]:
@@ -254,7 +275,7 @@ def _evaluate_over_domain(
         # A step that may not have run (inside an IF branch, or with COND=)
         # is also explored as not run, which makes ``STEP.RUN`` and any
         # ``STEP.RC`` / ``STEP.ABEND`` test of it false.
-        if name in optional_steps:
+        if _may_not_run(name, optional_steps):
             states.append(NOT_RUN)
         return states
 

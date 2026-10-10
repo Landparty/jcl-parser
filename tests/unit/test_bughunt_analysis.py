@@ -138,6 +138,55 @@ class TestNotRun:
         assert report.unreachable_steps == []
 
 
+_PROC_STEP_TESTS = (
+    "//J JOB 1\n"
+    "//P PROC\n"
+    "//PS1 EXEC PGM=X,COND=(4,LT)\n"
+    "//PS2 EXEC PGM=Y\n"
+    "// PEND\n"
+    "//R EXEC P\n"
+    "// IF (R.PS1.RUN) THEN\n"
+    "//A EXEC PGM=A\n"
+    "// ELSE\n"
+    "//B EXEC PGM=B\n"
+    "// ENDIF\n"
+    "// IF (NOT R.PS1.RUN) THEN\n"
+    "//C EXEC PGM=C\n"
+    "// ENDIF\n"
+)
+
+
+class TestProcStepOnUnexplodedJob:
+    """A ``stepname.procstep`` test on an unexploded job: the PROC's steps
+    are not in the job, so whether the procstep ran is not known."""
+
+    def test_proc_step_may_not_run(self):
+        report = compute_feasible_paths(parse_jcl(_PROC_STEP_TESTS))
+        assert report.unreachable_steps == []
+        assert report.always_skipped == []
+        assert report.contradictory_conditions == []
+
+    def test_exploded_job_still_judged(self):
+        from jclparser import explode_job
+
+        jcl = _PROC_STEP_TESTS.replace("R.PS1.RUN", "R.PS2.RUN")
+        report = compute_feasible_paths(explode_job(parse_jcl(jcl)))
+        assert report.unreachable_steps == ["C"]
+        assert report.always_skipped == ["B"]
+
+    def test_program_step_qualifier_unchanged(self):
+        report = compute_feasible_paths(
+            parse_jcl(
+                "//J JOB 1\n"
+                "//S1 EXEC PGM=A\n"
+                "// IF (NOT S1.RUN) THEN\n"
+                "//S2 EXEC PGM=B\n"
+                "// ENDIF\n"
+            )
+        )
+        assert report.unreachable_steps == ["S2"]
+
+
 # ---------------------------------------------------------------------------
 # condition_parser: NG / NL
 # ---------------------------------------------------------------------------
