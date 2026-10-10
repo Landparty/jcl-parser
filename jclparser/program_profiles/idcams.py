@@ -51,7 +51,12 @@ _RE_DEFINE = re.compile(
     + r")\b",
     re.IGNORECASE | re.MULTILINE,
 )
-_RE_NAME_PARAM = re.compile(r"NAME\s*\(\s*([A-Z0-9.@#$\-']+)\s*\)", re.IGNORECASE)
+# ``NAME(entry)``: the entry may be quoted, carry a member or a relative GDG
+# generation (``NAME(A.B(+1))``) or a JCL symbol (``NAME(&HLQ..BASE)``).
+_RE_NAME_PARAM = re.compile(
+    r"NAME\s*\(\s*('[^']*'|[A-Z0-9.@#$&\-]+(?:\([A-Z0-9@#$+\-]+\))?)\s*\)",
+    re.IGNORECASE,
+)
 _RE_REPRO = re.compile(r"^\s*REPRO\b", re.IGNORECASE | re.MULTILINE)
 _RE_ALTER = re.compile(r"^\s*ALTER\s+([A-Z0-9.@#$\-']+)", re.IGNORECASE | re.MULTILINE)
 _RE_LISTCAT = re.compile(r"^\s*LISTCAT\b", re.IGNORECASE | re.MULTILINE)
@@ -98,8 +103,11 @@ class IDCAMSProfile(ProgramProfile):
         # DEFINE CLUSTER / GDG / ... — pair with the nearest NAME(...) parameter
         for m in _RE_DEFINE.finditer(text):
             define_kind = _DEFINE_KINDS[m.group(1).upper()]
-            # Search for NAME(...) starting at the DEFINE position.
-            tail = text[m.end() :]
+            # Search for NAME(...) in this command only: continuations are
+            # joined, so the command ends at the end of its line, and a
+            # DEFINE with no NAME must not take the next command's.
+            end = text.find("\n", m.end())
+            tail = text[m.end() : end if end != -1 else len(text)]
             name_m = _RE_NAME_PARAM.search(tail)
             dsn = _strip_quotes(name_m.group(1)) if name_m else "(unknown)"
             events.append(
