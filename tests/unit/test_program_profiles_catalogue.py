@@ -682,3 +682,38 @@ class TestIDCAMSContinuedCommands:
             "IDCAMS DEFINE USERCATALOG MY.CAT",
         ]
         assert [e.action for e in result.dataset_events] == ["ALLOCATE"] * 4
+
+    def test_define_name_stays_in_its_own_command(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IDCAMS\n"
+            "//SYSIN    DD *\n"
+            "  DEFINE CLUSTER (INDEXED KEYS(8 0))\n"
+            "  DEFINE CLUSTER -\n"
+            "     (NAME(LATER.KSDS) INDEXED)\n"
+            "/*\n"
+        )
+        result = analyze_job(jp.parse_jcl(src))[0]
+        assert result.notes == [
+            "IDCAMS DEFINE CLUSTER (unknown)",
+            "IDCAMS DEFINE CLUSTER LATER.KSDS",
+        ]
+
+    def test_define_name_with_generation_or_symbol(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IDCAMS\n"
+            "//SYSIN    DD *\n"
+            "  DEFINE NONVSAM -\n"
+            "     (NAME(BANK.TRAN.DAILY(+1)) -\n"
+            "      VOLUMES(V1))\n"
+            "  DEFINE GDG (NAME(&HLQ..GDG.BASE) LIMIT(5))\n"
+            "  DEFINE CLUSTER (NAME('Q.QUOTED') INDEXED)\n"
+            "/*\n"
+        )
+        result = analyze_job(jp.parse_jcl(src))[0]
+        assert result.notes == [
+            "IDCAMS DEFINE NONVSAM BANK.TRAN.DAILY(+1)",
+            "IDCAMS DEFINE GDG &HLQ..GDG.BASE",
+            "IDCAMS DEFINE CLUSTER Q.QUOTED",
+        ]
