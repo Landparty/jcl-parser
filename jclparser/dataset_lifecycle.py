@@ -34,6 +34,7 @@ Usage::
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from .errors import ErrorSeverity, ErrorType, ValidationError
@@ -136,6 +137,9 @@ class _Branch:
 #: ``(dataset key, position in that dataset's event list, event)``.
 _Event = tuple[str, int, DatasetEvent]
 
+#: The IF branches a step sits in, outermost first: ``(IF id, is THEN)``.
+_Path = tuple[tuple[int, bool], ...]
+
 
 @dataclass
 class _StepEvents:
@@ -146,6 +150,27 @@ class _StepEvents:
     """
 
     events: list[_Event]
+    path: _Path = ()
+
+
+def _on_one_path(a: _Path, b: _Path) -> bool:
+    """True unless *a* and *b* sit in opposite branches of the same IF."""
+    for (a_if, a_then), (b_if, b_then) in zip(a, b, strict=False):
+        if a_if != b_if:
+            return True
+        if a_then != b_then:
+            return False
+    return True
+
+
+def _iter_step_events(nodes: list[_Node]) -> Iterator[_StepEvents]:
+    """Every :class:`_StepEvents` under *nodes*, in flattened order."""
+    for node in nodes:
+        if isinstance(node, _Branch):
+            yield from _iter_step_events(node.then_nodes)
+            yield from _iter_step_events(node.else_nodes)
+        else:
+            yield node
 
 
 #: One step's events, or the two branches of an ``IF``.
@@ -156,6 +181,7 @@ def _collect_events(
     items: list[Step | ConditionalBlock],
     lifecycle: dict[str, list[DatasetEvent]],
     by_dd: dict[str, str],
+    path: _Path = (),
 ) -> list[_Node]:
     """Record the events of *items* into *lifecycle*, keeping their IF shape.
 
@@ -164,14 +190,20 @@ def _collect_events(
     them); the returned nodes keep each ``IF``'s branches apart so catalog
     state can be run through them separately.  *by_dd* maps ``"STEP.DD"`` to
     the dataset seen so far, to resolve ``DSN=*.STEP.DD`` backward references.
+    *path* is the IF branches *items* sit in.
     """
     nodes: list[_Node] = []
     for item in items:
         if isinstance(item, ConditionalBlock):
+            branch = id(item)
             nodes.append(
                 _Branch(
-                    _collect_events(item.then_steps, lifecycle, by_dd),
-                    _collect_events(item.else_steps, lifecycle, by_dd),
+                    _collect_events(
+                        item.then_steps, lifecycle, by_dd, path + ((branch, True),)
+                    ),
+                    _collect_events(
+                        item.else_steps, lifecycle, by_dd, path + ((branch, False),)
+                    ),
                 )
             )
             continue
@@ -206,7 +238,7 @@ def _collect_events(
             step_events.append((dsn_key, len(events), event))
             events.append(event)
         if step_events:
-            nodes.append(_StepEvents(step_events))
+            nodes.append(_StepEvents(step_events, path))
     return nodes
 
 
@@ -300,14 +332,23 @@ def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:  # noqa: C901
     """
     lifecycle: dict[str, list[DatasetEvent]] = {}
     nodes = _collect_events(job.steps, lifecycle, {})
-    # Position (in flattened order) of each dataset's first allocation, for
-    # the forward-reference heuristic.
-    first_alloc: dict[str, int] = {}
-    for dsn, events in lifecycle.items():
-        for pos, evt in enumerate(events):
+    # Each dataset's allocations (position in flattened order, IF branches),
+    # for the forward-reference heuristic.
+    allocations: dict[str, list[tuple[int, _Path]]] = {}
+    for step in _iter_step_events(nodes):
+        for dsn, pos, evt in step.events:
             if evt.action == "ALLOCATE":
-                first_alloc[dsn] = pos
-                break
+                allocations.setdefault(dsn, []).append((pos, step.path))
+
+    def _allocated_only_later(dsn: str, pos: int, path: _Path) -> bool:
+        """True when *dsn* is allocated after *pos*, and not before it, on a
+        path through the job that also runs the event at *pos*: the THEN
+        and ELSE branches of one IF never both run."""
+        on_path = [
+            p for p, alloc in allocations.get(dsn, []) if _on_one_path(path, alloc)
+        ]
+        return bool(on_path) and min(on_path) > pos
+
     # Errors per dataset, keyed by event position, so they come out grouped by
     # dataset in event order however the branches are walked.
     found: dict[str, list[tuple[int, ValidationError]]] = {}
@@ -326,7 +367,7 @@ def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:  # noqa: C901
         )
 
     def _check(
-        dsn: str, pos: int, evt: DatasetEvent, state: _CatalogState
+        dsn: str, pos: int, evt: DatasetEvent, state: _CatalogState, path: _Path
     ) -> _CatalogState:
         cataloged_by, uncataloged_by = state
         is_catlg = (
@@ -367,7 +408,7 @@ def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:  # noqa: C901
             # Forward-reference check: dataset opened (OLD or SHR) before it
             # is allocated anywhere in the job — heuristic warning because
             # the dataset may already exist in the catalog from a prior run.
-            if first_alloc.get(dsn, -1) > pos:
+            if _allocated_only_later(dsn, pos, path):
                 disp_label = (
                     "DISP=OLD" if evt.action == "OPEN_EXCLUSIVE" else "DISP=SHR"
                 )
@@ -423,7 +464,9 @@ def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:  # noqa: C901
             # follows DISP=(OLD,DELETE) of the same dataset in the same step
             # still finds it there: check every DD first ...
             for dsn, pos, evt in events:
-                state[dsn] = _check(dsn, pos, evt, state.get(dsn, (None, None)))
+                state[dsn] = _check(
+                    dsn, pos, evt, state.get(dsn, (None, None)), node.path
+                )
             # ... then apply the dispositions, in DD order.
             for dsn, _pos, evt in events:
                 state[dsn] = _dispose(evt, state[dsn])

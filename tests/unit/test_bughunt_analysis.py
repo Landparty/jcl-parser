@@ -311,6 +311,50 @@ class TestLifecycleBranches:
         )
         assert len(msgs) == 1
 
+    def test_open_in_then_not_forward_reference_to_else_allocation(self):
+        msgs = _messages(
+            "//J JOB 1\n"
+            "//S1 EXEC PGM=A\n"
+            "// IF S1.RC = 0 THEN\n"
+            "//S2 EXEC PGM=B\n"
+            "//IN DD DSN=A.B.C,DISP=OLD\n"
+            "// ELSE\n"
+            "//S3 EXEC PGM=C\n"
+            "//OUT DD DSN=A.B.C,DISP=(NEW,CATLG,DELETE),SPACE=(TRK,1)\n"
+            "// ENDIF\n"
+        )
+        assert msgs == []
+
+    def test_forward_reference_across_branches_of_different_ifs(self):
+        msgs = _messages(
+            "//J JOB 1\n"
+            "//S1 EXEC PGM=A\n"
+            "// IF S1.RC = 0 THEN\n"
+            "//S2 EXEC PGM=B\n"
+            "//IN DD DSN=A.B.C,DISP=OLD\n"
+            "// ENDIF\n"
+            "// IF S1.RC = 4 THEN\n"
+            "//S3 EXEC PGM=C\n"
+            "// ELSE\n"
+            "//S4 EXEC PGM=C\n"
+            "//OUT DD DSN=A.B.C,DISP=(NEW,CATLG,DELETE),SPACE=(TRK,1)\n"
+            "// ENDIF\n"
+        )
+        assert len(msgs) == 1
+        assert "before it is allocated in a later step" in msgs[0]
+
+    def test_open_in_else_after_then_allocation_not_forward(self):
+        msgs = _messages(
+            "//J JOB 1\n"
+            "//S0 EXEC PGM=A\n"
+            "//X DD DSN=A.B.C,DISP=(NEW,CATLG),SPACE=(TRK,1)\n"
+            "// IF S0.RC = 0 THEN\n"
+            "//S1 EXEC PGM=B\n"
+            "//IN DD DSN=A.B.C,DISP=SHR\n"
+            "// ENDIF\n"
+        )
+        assert msgs == []
+
 
 # ---------------------------------------------------------------------------
 # program profiles
