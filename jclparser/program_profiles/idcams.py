@@ -22,7 +22,7 @@ from ._invoked import _normalize_control_text
 from .base import ProgramAnalysis, ProgramProfile, _sysin_text
 
 # One catalog entry name: a dataset name, optionally quoted or with a member.
-_ENTRY_NAME = r"'[^']*'|[A-Z0-9.@#$\-]+(?:\([A-Z0-9@#$+\-]+\))?"
+_ENTRY_NAME = r"'[^']*'|[A-Z0-9.@#$&\-]+(?:\([A-Z0-9@#$+\-]+\))?"
 _RE_ENTRY_NAME = re.compile(_ENTRY_NAME, re.IGNORECASE)
 # ``DELETE`` (or its abbreviation ``DEL``) names one entry, or a list of
 # them in parentheses: ``DELETE (A.B C.D) PURGE``.
@@ -60,6 +60,17 @@ _RE_NAME_PARAM = re.compile(
 _RE_REPRO = re.compile(r"^\s*REPRO\b", re.IGNORECASE | re.MULTILINE)
 _RE_ALTER = re.compile(r"^\s*ALTER\s+([A-Z0-9.@#$\-']+)", re.IGNORECASE | re.MULTILINE)
 _RE_LISTCAT = re.compile(r"^\s*LISTCAT\b", re.IGNORECASE | re.MULTILINE)
+# A command also starts after ``THEN`` / ``ELSE`` (``IF LASTCC = 0 THEN
+# DELETE X``) and after a ``;`` terminator (``DELETE A; DELETE B``).  Not
+# inside a name: ``MY.THEN.FILE`` is no keyword.
+_RE_COMMAND_START = re.compile(
+    r"(?:(?<![^\s)])(THEN|ELSE)(?=\s|$)|;)", re.IGNORECASE | re.MULTILINE
+)
+
+
+def _one_command_per_line(text: str) -> str:
+    """Put each command of normalized control text on a line of its own."""
+    return _RE_COMMAND_START.sub(lambda m: (m.group(1) or "") + "\n", text)
 
 
 def _strip_quotes(s: str) -> str:
@@ -77,7 +88,7 @@ class IDCAMSProfile(ProgramProfile):
         # IDCAMS continues a command with a trailing ``-`` (or ``+``) and
         # comments with ``/* ... */``.  Join and strip them first, or
         # ``DELETE -`` / next line ``MY.DSN`` reads the ``-`` as the name.
-        text = _normalize_control_text(raw)
+        text = _one_command_per_line(_normalize_control_text(raw))
         events: list[DatasetEvent] = []
         notes: list[str] = []
 
@@ -104,7 +115,8 @@ class IDCAMSProfile(ProgramProfile):
         for m in _RE_DEFINE.finditer(text):
             define_kind = _DEFINE_KINDS[m.group(1).upper()]
             # Search for NAME(...) in this command only: continuations are
-            # joined, so the command ends at the end of its line, and a
+            # joined and commands split, so the command ends at the end of
+            # its line, and a
             # DEFINE with no NAME must not take the next command's.
             end = text.find("\n", m.end())
             tail = text[m.end() : end if end != -1 else len(text)]
