@@ -717,3 +717,22 @@ class TestIDCAMSContinuedCommands:
             "IDCAMS DEFINE GDG &HLQ..GDG.BASE",
             "IDCAMS DEFINE CLUSTER Q.QUOTED",
         ]
+
+
+class TestSortKeywordsOutsideLiterals:
+    """A word inside a DFSORT literal is data, not a control statement."""
+
+    def test_literal_text_is_not_a_filter_or_reformat(self):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=SORT\n"
+            "//SYSIN    DD *\n"
+            "  INCLUDE COND=(1,4,CH,EQ,C'OMIT',OR,5,6,CH,EQ,C'INREC')\n"
+            "  SORT FIELDS=(1,5,CH,A)\n"
+            "  OUTFIL HEADER1=('IT''S AN OUTREC REPORT')\n"
+            "/*\n"
+        )
+        assert analyze_job(jp.parse_jcl(src))[0].notes == [
+            "SORT FIELDS",
+            "INCLUDE filter",
+        ]

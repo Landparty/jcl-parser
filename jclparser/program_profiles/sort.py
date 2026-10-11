@@ -27,6 +27,9 @@ _RE_OUTREC = re.compile(r"\bOUTREC\b", re.IGNORECASE)
 _RE_MERGE = re.compile(r"\bMERGE\s+FIELDS\s*=", re.IGNORECASE)
 # A ``*`` in column 1 makes a DFSORT comment statement.
 _RE_COMMENT_LINE = re.compile(r"^\s*\*.*$", re.MULTILINE)
+# A quoted literal (``C'OMIT'``, ``X'C1'``, a header ``'IT''S'``): its text is
+# data, so a keyword in it names no control statement.
+_RE_LITERAL = re.compile(r"'(?:[^'\n]|'')*'")
 
 
 class SortProfile(ProgramProfile):
@@ -36,7 +39,7 @@ class SortProfile(ProgramProfile):
         raw = _sysin_text(step) or ""
         # Comment statements are not control statements: ``* OMIT ...`` must
         # not read as an OMIT filter.
-        text = _RE_COMMENT_LINE.sub("", raw)
+        text = _RE_LITERAL.sub("''", _RE_COMMENT_LINE.sub("", raw))
         notes: list[str] = []
 
         if _RE_SORT_FIELDS.search(text):
