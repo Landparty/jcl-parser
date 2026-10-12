@@ -9,7 +9,14 @@ import logging
 import re
 
 from .errors import ErrorSeverity, ErrorType, ValidationError
-from .model import ConditionalBlock, DDStatement, Job, Step, iter_execution_steps
+from .model import (
+    ConditionalBlock,
+    DDStatement,
+    Job,
+    Step,
+    _dataset_dds,
+    iter_execution_steps,
+)
 from .parameter_validators import DatasetNameValidator, DISPValidator
 
 logger = logging.getLogger(__name__)
@@ -385,7 +392,7 @@ def validate_data_dependencies(job: Job) -> list[ValidationError]:  # noqa: C901
         """
         step_name = step.name or f"Step{len(temp_datasets_created) + 1}"
 
-        for dd in step.dd_statements:
+        for dd in _dataset_dds(step):
             if dd.dataset_name and dd.dataset_name.startswith("&&"):
                 # &&GOSET(GO) names a member of &&GOSET: key on the dataset.
                 temp_ds = dd.dataset_name.split("(", 1)[0]

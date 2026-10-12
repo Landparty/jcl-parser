@@ -39,7 +39,7 @@ from dataclasses import dataclass
 
 from .errors import ErrorSeverity, ErrorType, ValidationError
 from .metrics import _counted_dataset_name
-from .model import ConditionalBlock, Job, Step
+from .model import ConditionalBlock, Job, Step, _dataset_dds
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -211,7 +211,7 @@ def _collect_events(
             continue
         step_name = item.name or ""
         step_events: list[_Event] = []
-        for dd in item.dd_statements:
+        for dd in _dataset_dds(item):
             if not dd.dataset_name:
                 continue
             # A backward reference names the dataset of the DD it points at;
