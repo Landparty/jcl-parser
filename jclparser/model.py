@@ -41,12 +41,23 @@ class OutputStatement:
         name: OUTPUT statement name (referenced by DD OUTPUT= parameter)
         parameters: Raw parameter dictionary (all OUTPUT parameters)
         line_number: Source line number
+        step_name: Name of the step the statement is coded in (a step-level
+            OUTPUT statement), or ``None`` for a job-level one (coded before
+            the first EXEC). Inside an in-stream PROC body it names the
+            procedure step. ``DD OUTPUT=*.name`` resolves to the OUTPUT
+            statement of that name in the DD's own step, else to the
+            job-level one; ``*.stepname.name`` to the one in step
+            *stepname*.
+        procedure_name: Name of the in-stream PROC whose body holds the
+            statement, ``None`` outside a PROC/PEND body.
         type: Always ``"OUTPUT"`` — kept for compatibility with generic Statement access
     """
 
     name: str
     parameters: dict[str, Any] = field(default_factory=dict)
     line_number: int = 0
+    step_name: str | None = None
+    procedure_name: str | None = None
     type: str = field(default="OUTPUT", init=False, repr=False)
 
     @property
@@ -120,12 +131,19 @@ class OutputStatement:
         return _to_int_or_none(self.parameters.get("INDEX"))
 
     @classmethod
-    def from_statement(cls, stmt: Statement) -> OutputStatement:
+    def from_statement(
+        cls,
+        stmt: Statement,
+        step_name: str | None = None,
+        procedure_name: str | None = None,
+    ) -> OutputStatement:
         """Create an OutputStatement from a generic Statement object."""
         return cls(
             name=stmt.name,
             parameters=stmt.parameters,
             line_number=stmt.line_number,
+            step_name=step_name,
+            procedure_name=procedure_name,
         )
 
 
