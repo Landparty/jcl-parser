@@ -131,10 +131,13 @@ class JobBuilder:
         "XMIT": "_on_xmit",
     }
 
-    def __init__(self, dialect: str = "standard") -> None:
+    def __init__(self, dialect: str = "standard", strict: bool = False) -> None:
         #: ``ParserConfig.dialect``: decides which JES control statements are
         #: interpreted (see ``jclparser.plugins.SUPPORTED_DIALECTS``).
         self.dialect = dialect
+        #: Strict parsing: a SET value over ``MAX_SYMBOL_VALUE_LENGTH`` raises
+        #: instead of being left unresolved with a warning.
+        self.strict = strict
         self.job: Job | None = None
         #: tuples: (ConditionalBlock, active_branch)
         self.conditional_stack: list[tuple[ConditionalBlock, str]] = []
@@ -437,7 +440,14 @@ class JobBuilder:
             symbols = self.job.set_statements if self.job else self.pending_sets
 
         def _record(symbol: str, value: str) -> None:
-            resolved = _resolve_set_value(value, symbols)
+            resolved = _resolve_set_value(
+                value,
+                symbols,
+                symbol=symbol,
+                line_number=stmt.line_number,
+                strict=self.strict,
+                warnings=self._warnings_sink(),
+            )
             if procedure is not None:
                 procedure.set_statements[symbol] = resolved
             elif self.job:

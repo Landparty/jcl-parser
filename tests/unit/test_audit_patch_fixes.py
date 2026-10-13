@@ -119,8 +119,13 @@ class TestSymbolExpansionBounds:
     def test_fan_out_over_distinct_symbols_is_capped(self):
         symbols = {f"S{i}": f"&S{i + 1}" * 20 for i in range(7)}
         symbols["S7"] = "X" * 20
-        with pytest.raises(JCLStructureError, match="expands to more than"):
-            substitute_symbols("&S0", SymbolScope(set_symbols=symbols))
+        scope = SymbolScope(set_symbols=symbols)
+        with pytest.raises(JCLStructureError, match="expand to more than"):
+            substitute_symbols("&S0", scope, strict=True)
+        # Lenient (#70): left unresolved, with a warning.
+        warnings: list[str] = []
+        assert substitute_symbols("&S0", scope, warnings=warnings) == "&S0"
+        assert any("expand to more than" in w for w in warnings)
 
     def test_self_referencing_proc_default_is_fast(self):
         jcl = (

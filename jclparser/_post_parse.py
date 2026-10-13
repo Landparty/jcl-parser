@@ -246,7 +246,7 @@ def enforce_strict_dd_structure(content: str) -> None:
                 )
 
 
-def resolve_set_symbols(job: Job) -> None:
+def resolve_set_symbols(job: Job, strict: bool = False) -> None:
     """Substitute fully-resolved SET symbols into DD and EXEC-step parameters.
 
     SET statements may appear before or after the DD statements that reference
@@ -274,11 +274,17 @@ def resolve_set_symbols(job: Job) -> None:
     pass.  It also covers EXEC step parameters (e.g. ``PARM=&SYM``), not just
     DD dataset names/dispositions, so a job-level SET symbol resolves the same
     way regardless of which kind of statement references it.
+
+    A SET value whose expansion would exceed ``utils.MAX_SYMBOL_VALUE_LENGTH``
+    characters is left unresolved with one warning on ``job.warnings`` (#70);
+    a statement referencing it keeps the reference as written (again with a
+    warning). With *strict*, :class:`~jclparser.errors.JCLSyntaxError` is
+    raised instead.
     """
     from .explosion import substitute_dd_statement
     from .system_symbols import is_system_symbol_name
 
-    _set_scope = _scope_for_table(job.set_statements)
+    _set_scope = _scope_for_table(job.set_statements, job.warnings, strict)
     # A step read before a SET redefined a symbol sees the value in effect at
     # that point (Step.set_symbols); symbols it has no snapshot for (forward
     # references) still fall back to the job's final table.
@@ -290,7 +296,7 @@ def resolve_set_symbols(job: Job) -> None:
     for _owner, _dd in _dds_with_owners(_flat_steps):
         substitute_dd_statement(
             _dd,
-            _scope_for_step(_owner, job, _set_scope, _step_scopes),
+            _scope_for_step(_owner, job, _set_scope, _step_scopes, strict),
             strict=False,
             warnings=job.warnings,
             collapse_double_amp=False,
@@ -298,14 +304,18 @@ def resolve_set_symbols(job: Job) -> None:
         )
 
     for _step in _flat_steps:
-        _step_scope = _scope_for_step(_step, job, _set_scope, _step_scopes)
+        _step_scope = _scope_for_step(_step, job, _set_scope, _step_scopes, strict)
         _substitute_step_parameters(_step, _step_scope, job.warnings)
         _substitute_step_names(_step, _step_scope)
 
 
-def _preresolve_set_table(table: dict[str, str]) -> dict[str, str]:
-    """Return a copy of SET *table* with symbol references between values expanded."""
-    from .explosion import SymbolScope, substitute_symbols
+def _preresolve_set_table(table: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    """Return a copy of SET *table* with symbol references between values expanded.
+
+    Also returns the names of the symbols whose expansion would exceed
+    ``utils.MAX_SYMBOL_VALUE_LENGTH``; those keep their unexpanded value.
+    """
+    from .explosion import SymbolScope, _substitute_symbols_bounded, _SymbolOverflow
 
     # Pre-resolve the symbol table so every value is fully expanded before
     # we apply it to DD dataset names.  On each pass we substitute symbols
@@ -313,36 +323,67 @@ def _preresolve_set_table(table: dict[str, str]) -> dict[str, str]:
     # (excluding the symbol itself prevents direct self-reference loops).
     # We repeat until no value changes or we reach the pass limit.
     _raw: dict[str, str] = dict(table)
+    _overflowed: list[str] = []
     for _pass in range(10):
         _changed = False
         for _name, _val in list(_raw.items()):
-            if "&" not in _val:
+            if "&" not in _val or _name in _overflowed:
                 continue
             # Build a temporary scope that excludes this symbol's own name
             # so "&A." inside SET A's value does not expand to itself.
             _scope_for_val = SymbolScope(
                 set_symbols={k: v for k, v in _raw.items() if k != _name}
             )
-            _new_val = substitute_symbols(
-                _val,
-                _scope_for_val,
-                allow_undefined=True,
-                collapse_double_amp=False,
-            )
+            try:
+                _new_val = _substitute_symbols_bounded(
+                    _val,
+                    _scope_for_val,
+                    allow_undefined=True,
+                    collapse_double_amp=False,
+                )
+            except _SymbolOverflow:
+                # Values only grow from pass to pass: never retry it.
+                _overflowed.append(_name)
+                continue
             if _new_val != _val:
                 _raw[_name] = _new_val
                 _changed = True
         if not _changed:
             break  # table has stabilised – no need for more passes
-    return _raw
+    return _raw, _overflowed
 
 
-def _scope_for_table(table: dict[str, str]) -> SymbolScope:
-    """Build the substitution scope for SET symbol *table* (see resolve_set_symbols)."""
+def _report_table_overflow(
+    overflowed: list[str], warnings: list[str], strict: bool
+) -> None:
+    """Raise (strict) or warn once that the *overflowed* SET symbols stay unresolved."""
+    from .utils import MAX_SYMBOL_VALUE_LENGTH
+
+    names = ", ".join(f"&{n}" for n in overflowed)
+    message = (
+        f"SET symbol(s) {names} expand to more than "
+        f"{MAX_SYMBOL_VALUE_LENGTH:,} characters"
+    )
+    if strict:
+        raise JCLSyntaxError(message)
+    message += "; left unresolved"
+    if message not in warnings:
+        warnings.append(message)
+
+
+def _scope_for_table(
+    table: dict[str, str], warnings: list[str], strict: bool = False
+) -> SymbolScope:
+    """Build the substitution scope for SET symbol *table* (see resolve_set_symbols).
+
+    Overflow of a SET value is reported on *warnings* (or raised, *strict*).
+    """
     from .explosion import SymbolScope
     from .system_symbols import is_system_symbol_name
 
-    _raw = _preresolve_set_table(table)
+    _raw, _overflowed = _preresolve_set_table(table)
+    if _overflowed:
+        _report_table_overflow(_overflowed, warnings, strict)
 
     # Symbols whose values still contain a genuinely unresolved
     # &-reference after all passes are excluded from the final scope.
@@ -355,10 +396,15 @@ def _scope_for_table(table: dict[str, str]) -> SymbolScope:
     # ``DSN=&SYSUID..WORK`` before that pass runs (keep_undefined below). A value that legitimately contains "&&" (e.g.
     # SET MYTEMP=&&WORK) is NOT excluded -- it has nothing left to
     # resolve, it just happens to contain an escaped literal ampersand.
+    #
+    # An overflowed symbol keeps its unexpanded value in the scope, so a
+    # statement referencing it overflows the substitution budget in turn and
+    # keeps the reference as written instead of having it blanked (#70).
     _resolved_symbols = {
         k: v
         for k, v in _raw.items()
-        if not _has_unresolved_symbol_ref(v, ignore=is_system_symbol_name)
+        if k in _overflowed
+        or not _has_unresolved_symbol_ref(v, ignore=is_system_symbol_name)
     }
     return SymbolScope(set_symbols=_resolved_symbols)
 
@@ -368,6 +414,7 @@ def _scope_for_step(
     job: Job,
     set_scope: SymbolScope,
     step_scopes: dict[int, SymbolScope],
+    strict: bool = False,
 ) -> SymbolScope:
     """Return the SET scope in effect for *step*, memoised in *step_scopes*.
 
@@ -378,7 +425,7 @@ def _scope_for_step(
         return set_scope
     if id(step) not in step_scopes:
         step_scopes[id(step)] = _scope_for_table(
-            {**job.set_statements, **step.set_symbols}
+            {**job.set_statements, **step.set_symbols}, job.warnings, strict
         )
     return step_scopes[id(step)]
 

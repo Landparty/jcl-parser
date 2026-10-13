@@ -36,7 +36,7 @@ from .proc_loader import (
     create_default_loader,
 )
 from .system_symbols import SystemSymbolProvider, get_default_provider
-from .utils import jcl_value_text
+from .utils import MAX_SYMBOL_VALUE_LENGTH, jcl_value_text
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +53,23 @@ _SYMBOL_SUB_PATTERN = re.compile(r"&&|&([A-Z0-9@#$]+)\.?")
 # how deep those nested references are followed.
 _MAX_NESTED_SUBSTITUTION = 8
 
-# Total characters nested symbol values may expand to within one substitution.
-# Fan-out over distinct symbols (``A='&B&B&B'``, ``B='&C&C&C'`` ...) grows
-# exponentially with depth even without a cycle, so depth alone is no bound.
-_MAX_NESTED_EXPANSION_CHARS = 1_000_000
+# Total characters the symbol values spliced in by one substitution may add
+# up to (``utils.MAX_SYMBOL_VALUE_LENGTH``). Fan-out over distinct symbols
+# (``A='&B&B&B'``, ``B='&C&C&C'`` ...) grows exponentially with depth even
+# without a cycle, so depth alone is no bound (#70).
+_MAX_NESTED_EXPANSION_CHARS = MAX_SYMBOL_VALUE_LENGTH
+
+
+class _SymbolOverflow(Exception):
+    """Internal: a substitution would splice in more than the character budget."""
+
+
+def _overflow_message(source_text: str) -> str:
+    return (
+        f"Symbols in '{source_text[:80]}' expand to more than "
+        f"{_MAX_NESTED_EXPANSION_CHARS:,} characters"
+    )
+
 
 # A value ending in a bare ``&NAME`` reference (not the ``&&NAME`` literal).
 _TRAILING_SYMBOL_REF = re.compile(r"(?<!&)&[A-Z0-9@#$]+$")
@@ -319,10 +332,13 @@ def _make_replacer(
     *_resolving* holds the symbols whose values are being expanded above this
     level; a reference back to one of them is a cycle and is left as written.
     *_budget* is a one-element list shared by every nested level, counting
-    down the characters nested expansion may still produce.
+    down the characters the substitution may still splice in; running out
+    raises :class:`_SymbolOverflow`, so no level builds a string much longer
+    than the budget.
     """
     if _budget is None:
         _budget = [_MAX_NESTED_EXPANSION_CHARS]
+    budget = _budget
 
     def _replacer(m: re.Match[str]) -> str:
         if m.group(0) == "&&":
@@ -361,17 +377,13 @@ def _make_replacer(
                     collapse_double_amp=False,
                     _depth=_depth + 1,
                     _resolving=_resolving | {symbol_name},
-                    _budget=_budget,
+                    _budget=budget,
                 ),
                 value,
             )
-            _budget[0] -= len(value)
-            if _budget[0] < 0:
-                raise JCLStructureError(
-                    f"Symbol &{symbol_name} expands to more than "
-                    f"{_MAX_NESTED_EXPANSION_CHARS:,} characters in "
-                    f"'{source_text[:80]}'"
-                )
+        budget[0] -= len(value)
+        if budget[0] < 0:
+            raise _SymbolOverflow
         if _TRAILING_SYMBOL_REF.search(value):
             # Splicing a bare ``&SYSUID`` in front of ``.DATA`` would make that
             # period the reference's delimiter; give it its own.
@@ -379,6 +391,30 @@ def _make_replacer(
         return value
 
     return _replacer
+
+
+def _substitute_symbols_bounded(
+    text: str,
+    scope: "SymbolScope",
+    strict: bool = False,
+    allow_undefined: bool = False,
+    warnings: list[str] | None = None,
+    collapse_double_amp: bool = True,
+    keep_undefined: Callable[[str], bool] | None = None,
+) -> str:
+    """:func:`substitute_symbols` that raises :class:`_SymbolOverflow` on overflow."""
+    return _SYMBOL_SUB_PATTERN.sub(
+        _make_replacer(
+            scope,
+            strict,
+            allow_undefined,
+            source_text=text,
+            warnings=warnings,
+            collapse_double_amp=collapse_double_amp,
+            keep_undefined=keep_undefined,
+        ),
+        text,
+    )
 
 
 def substitute_symbols(
@@ -415,25 +451,35 @@ def substitute_symbols(
             symbols) can still resolve it.
 
     Returns:
-        Text with symbols substituted
+        Text with symbols substituted. When the substituted values would add
+        up to more than ``utils.MAX_SYMBOL_VALUE_LENGTH`` characters (chained
+        symbols that double at each step), *text* is returned unchanged and a
+        message goes to *warnings* (#70).
 
     Raises:
         UndefinedSymbolError: If strict=True and symbol undefined
+        JCLStructureError: If strict=True and the substitution would exceed
+            ``utils.MAX_SYMBOL_VALUE_LENGTH`` characters
     """
     if not text or not isinstance(text, str):
         return text
-    return _SYMBOL_SUB_PATTERN.sub(
-        _make_replacer(
+    try:
+        return _substitute_symbols_bounded(
+            text,
             scope,
-            strict,
-            allow_undefined,
-            source_text=text,
+            strict=strict,
+            allow_undefined=allow_undefined,
             warnings=warnings,
             collapse_double_amp=collapse_double_amp,
             keep_undefined=keep_undefined,
-        ),
-        text,
-    )
+        )
+    except _SymbolOverflow:
+        message = _overflow_message(text)
+        if strict:
+            raise JCLStructureError(message) from None
+        if warnings is not None:
+            warnings.append(f"{message}; left unresolved")
+        return text
 
 
 def detect_circular_refs(

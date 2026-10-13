@@ -153,6 +153,15 @@ def normalize_jcl_line(line: str) -> str:
     return line
 
 
+#: Longest value a symbol substitution may produce: a resolved SET value, a
+#: pre-resolved SET table entry, or the characters one ``substitute_symbols()``
+#: call splices in. A safety limit against chained symbols that double at each
+#: step (``SET A2='&A1&A1'`` ...), deliberately far above the z/OS 255-character
+#: symbol limit so every currently accepted job still parses. Past it the text
+#: is left unresolved with a warning, or the strict paths raise.
+MAX_SYMBOL_VALUE_LENGTH: int = 65536
+
+
 #: Largest PROC / INCLUDE library member the loaders will read. Members are
 #: named by the JCL being parsed, so an oversized file is refused (read as
 #: missing, with a warning) rather than pulled into memory whole.
