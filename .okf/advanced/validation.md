@@ -140,6 +140,10 @@ Every result location carries `physicalLocation.artifactLocation` (SARIF 2.1.0 r
 
 Built-in rule IDs follow `JCL-LINT-NNN`. Custom rules extend `LintRule` ABC.
 
+Each SARIF `tool.driver.rules[]` entry takes its `shortDescription` and `fullDescription` from the registered rule's `description` (rules have no separate title, so both carry it); the pseudo-codes `JCL-LINT-000` (a rule raised) and `JCL-GEN-000` (finding without a code) have fixed descriptions, and a code no registered rule carries gets only `shortDescription` = its code (fixed 2026-10-13, #88: `shortDescription` was the code and `fullDescription` the first finding's message, truncated to 120 characters).
+
+`JCL-LINT-003` (critical dataset, `LintConfig.critical_dataset_patterns`) fires only on `DISP=(NEW,CATLG,DELETE)` and `DISP=(NEW,KEEP,DELETE)` (an omitted status counts as `NEW`): a successful run keeps the dataset, an abend deletes it. An omitted normal disposition (`(NEW,,DELETE)`, which defaults to DELETE), `DELETE` or `PASS` does not fire, and the message shows the disposition as coded (fixed 2026-10-13, #88: any `(NEW,x,DELETE)` fired, and an omitted normal disposition was reported as `CATLG`).
+
 # Citations
 
 [1] [development/invariants.md](../development/invariants.md) — invariant 7 (validate_jcl return shape)
