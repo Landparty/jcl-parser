@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from jclparser.errors import ErrorType
 from jclparser.parser import validate_jcl
 
 
@@ -164,3 +165,83 @@ INVALID LINE WITHOUT SLASHES
         # The "INVALID LINE" should produce a syntax error
         assert isinstance(errors, list)
         assert len(errors) >= 1
+
+
+@pytest.mark.unit
+class TestValidateJCLFallbackReportsStrictError:
+    """#75: the fallback skips data records and keeps the strict-parse error."""
+
+    @staticmethod
+    def _findings(jcl):
+        return [(e.line_number, e.message) for e in validate_jcl(jcl)]
+
+    def test_instream_data_not_reported_and_real_cause_kept(self):
+        jcl = (
+            "//J JOB 1\n//S EXEC PGM=SORT\n//SYSIN DD *\n  SORT FIELDS=COPY\n"
+            "/*\n//S2 EXEC PROC=XYZ,A=1\n"
+        )
+        errors = validate_jcl(jcl)
+        assert len(errors) == 1
+        assert errors[0].line_number == 6
+        assert errors[0].message.startswith("Procedure 'XYZ' not found")
+        assert errors[0].error_type == ErrorType.SYNTAX_ERROR
+
+    def test_cntl_control_records_not_reported(self):
+        jcl = (
+            "//J JOB 1\n//S EXEC PGM=X\n//C CNTL\nNOT JCL AT ALL\n"
+            "// ENDCNTL\n//S2 EXEC NOPROC\n"
+        )
+        findings = self._findings(jcl)
+        assert len(findings) == 1
+        assert findings[0][0] == 6
+        assert "Procedure 'NOPROC' not found" in findings[0][1]
+
+    def test_positional_exec_of_unknown_proc_reported(self):
+        findings = self._findings("//J JOB 1\n//S EXEC XYZ\n")
+        assert findings and findings[0][0] == 2
+        assert "Procedure 'XYZ' not found" in findings[0][1]
+
+    def test_malformed_dlm_reported(self):
+        findings = self._findings("//J JOB 1\n//S EXEC PGM=X\n//D DD *,DLM=(AB)\n")
+        assert (3, "DLM= must be a one- or two-character delimiter, got (AB)") in (
+            findings
+        )
+
+    def test_member_without_job_reports_no_job(self):
+        assert self._findings("//D DD DSN=A.B,DISP=SHR\n") == [
+            (0, "No JOB statement found")
+        ]
+
+    def test_empty_and_comment_only_input_lenient(self):
+        assert validate_jcl("") == []
+        assert validate_jcl("//* JUST A COMMENT\n\n") == []
+
+    def test_proc_member_not_flagged_for_missing_job(self):
+        jcl = "//P PROC\n//S EXEC PGM=X\n//D DD DSN=(A\n// PEND\n"
+        messages = [m for _, m in self._findings(jcl)]
+        assert messages and "Unmatched parentheses" in messages[0]
+        assert "No JOB statement found" not in messages
+
+    def test_duplicate_findings_reported_once(self):
+        findings = self._findings("//J JOB 1\n//S EXEC PGM=X\n//J2 JOB 2\n")
+        assert findings == [(3, "Multiple JOB statements found")]
+        dd_only = self._findings("//J JOB 1\n//D DD DSN=A.B,DISP=SHR\n")
+        assert len(dd_only) == 1
+        assert dd_only[0][1].startswith("DD statement found before any EXEC")
+
+    def test_strict_error_inserted_in_line_order(self):
+        jcl = "//J JOB 1\n//S EXEC PGM=X\n//D DD *,DLM=(AB)\n/*\n//S2 EXEC\n"
+        errors = validate_jcl(jcl)
+        assert [e.line_number for e in errors] == [3, 5]
+        assert errors[0].message.startswith("DLM= must be")
+        assert errors[1].message == "EXEC statement missing program or procedure"
+
+    def test_file_like_source_read_once(self):
+        import io
+
+        jcl = "//J JOB 1\n//S EXEC PGM=X\n//SYSIN DD *\nDATA\n/*\n//S2 EXEC XYZ\n"
+        assert self._findings(io.StringIO(jcl)) == self._findings(jcl)
+
+    def test_structure_error_type_kept(self):
+        errors = validate_jcl("//J JOB 1\n//D DD DSN=A.B,DISP=SHR\n")
+        assert errors[0].error_type == ErrorType.STRUCTURE_ERROR

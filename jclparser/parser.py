@@ -99,10 +99,10 @@ from .utils import (
     POSITIONAL_PARAM_PREFIX,  # noqa: F401
     instream_delimiter,  # noqa: F401
     is_continued_card_image,  # noqa: F401
-    is_positional_key,
-    normalize_jcl_line,
+    is_positional_key,  # noqa: F401
+    normalize_jcl_line,  # noqa: F401
     read_source,
-    split_source_lines,
+    split_source_lines,  # noqa: F401
 )
 
 if TYPE_CHECKING:
@@ -441,6 +441,10 @@ def validate_jcl(
     effective_level = normalize_validation_level(level)
 
     errors: list[ParseError] = []
+    if not isinstance(source, (str, Path)):
+        # A file-like object can be read only once; the fallback below needs
+        # the content again.
+        source = read_source(source)
 
     # First try normal parsing to catch basic structure issues
     try:
@@ -456,12 +460,38 @@ def validate_jcl(
         if effective_level == ValidationLevel.SEMANTIC and config is not None:
             _add_plugin_findings(job, config, errors)
         return errors
-    except (JCLSyntaxError, JCLValidationError, JCLStructureError):
-        # If parsing failed, do line-by-line validation to collect multiple errors
-        pass
+    except (JCLSyntaxError, JCLValidationError, JCLStructureError) as exc:
+        # The strict parse stops at the first error; the line-by-line pass
+        # below collects the others, and the strict error itself is reported
+        # too -- it is often the only one naming the real cause (#75).
+        strict_error = exc
 
-    errors.extend(_validate_line_by_line(source, config))
+    errors.extend(_validate_line_by_line(source, config, strict_error))
     return errors
+
+
+_STRICT_ERROR_TYPES: dict[type[Exception], ErrorType] = {
+    JCLSyntaxError: ErrorType.SYNTAX_ERROR,
+    JCLValidationError: ErrorType.VALIDATION_ERROR,
+    JCLStructureError: ErrorType.STRUCTURE_ERROR,
+}
+
+
+def _strict_parse_error(
+    exc: JCLSyntaxError | JCLValidationError | JCLStructureError,
+) -> ParseError:
+    """The :class:`ParseError` reporting the exception the strict parse raised."""
+    error_type = next(
+        (t for cls, t in _STRICT_ERROR_TYPES.items() if isinstance(exc, cls)),
+        ErrorType.SYNTAX_ERROR,
+    )
+    return ParseError(
+        error_type=error_type,
+        message=exc.message,
+        line_number=exc.line_number or 0,
+        context=exc.context,
+        severity=ErrorSeverity.ERROR,
+    )
 
 
 def _add_job_findings(
@@ -514,13 +544,20 @@ def _add_plugin_findings(
 
 
 def _validate_line_by_line(
-    source: str | Path | IO[Any], config: ParserConfig | None
+    source: str | Path | IO[Any],
+    config: ParserConfig | None,
+    strict_error: JCLSyntaxError | JCLValidationError | JCLStructureError | None = None,
 ) -> list[ParseError]:
     """Fallback validation when the strict parse failed.
 
     Each merged statement is parsed on its own, so one bad statement does not
     hide the errors in the others, and a few structural rules are checked
-    along the way.
+    along the way. In-stream data and CNTL control records are not JCL and
+    are skipped, exactly as the parse loop skips them. *strict_error*, the
+    exception the strict parse raised, is reported as well unless this pass
+    already reports it, or it is the "No JOB statement found" a JOB-less
+    member with nothing to run (no statements, or a PROC member) is exempt
+    from.
     """
     try:
         content = read_source(source)
@@ -534,32 +571,60 @@ def _validate_line_by_line(
             )
         ]
 
-    # Merge continuation lines so multi-line statements are validated as a unit
-    source_lines = split_source_lines(content)
-    lines = [normalize_jcl_line(line) for line in source_lines]
-    merged_pairs = merge_continuations(source_lines, lines, range(len(lines)))
+    # Merge continuation lines so multi-line statements are validated as a
+    # unit, and learn which records are in-stream data rather than JCL.
+    scanned = _merge_source_lines(content)
+    data_indices = scanned.inline_data_indices | scanned.control_data_indices
 
     errors: list[ParseError] = []
     structure = _StructureTracker(errors)
-    for line, line_num in merged_pairs:
+    for line, line_num in scanned.merged_lines:
+        if (line_num - 1) in data_indices:
+            continue
         line = line.strip()
 
         # Skip comments and empty lines
         if not line or line.startswith("//*"):
             continue
 
-        # Validate each statement individually
-        try:
-            stmt = parse_statement(line, line_num, config)
-            if stmt:
-                structure.check(stmt, line_num)
-        except JCLSyntaxError as e:
-            errors.append(_statement_error(ErrorType.SYNTAX_ERROR, e, line_num))
-        except JCLValidationError as e:
-            errors.append(_statement_error(ErrorType.VALIDATION_ERROR, e, line_num))
+        _check_statement(line, line_num, config, structure, errors)
 
     structure.finish()
+    if strict_error is not None and not structure.exempt_from(strict_error):
+        _add_unless_reported(_strict_parse_error(strict_error), errors)
     return errors
+
+
+def _check_statement(
+    line: str,
+    line_num: int,
+    config: ParserConfig | None,
+    structure: _StructureTracker,
+    errors: list[ParseError],
+) -> None:
+    """Parse one merged statement on its own and record what is wrong with it."""
+    try:
+        stmt = parse_statement(line, line_num, config)
+        if stmt:
+            structure.check(stmt, line_num)
+    except JCLSyntaxError as e:
+        errors.append(_statement_error(ErrorType.SYNTAX_ERROR, e, line_num))
+    except JCLValidationError as e:
+        errors.append(_statement_error(ErrorType.VALIDATION_ERROR, e, line_num))
+
+
+def _add_unless_reported(error: ParseError, errors: list[ParseError]) -> None:
+    """Add *error* in line order unless *errors* already has the same finding."""
+    if any(
+        e.message == error.message and e.line_number == error.line_number
+        for e in errors
+    ):
+        return
+    position = next(
+        (i for i, e in enumerate(errors) if e.line_number > error.line_number),
+        len(errors),
+    )
+    errors.insert(position, error)
 
 
 def _statement_error(
@@ -576,6 +641,9 @@ def _statement_error(
     )
 
 
+_NO_JOB_MESSAGE = "No JOB statement found"
+
+
 class _StructureTracker:
     """Statement-order checks for :func:`_validate_line_by_line`."""
 
@@ -585,6 +653,20 @@ class _StructureTracker:
         self.in_proc = False
         self.has_exec = False
         self.has_dd = False
+        self.has_statement = False
+        self.has_proc = False
+
+    def exempt_from(self, exc: Exception) -> bool:
+        """Whether the strict parse's *exc* is not an error for this source.
+
+        A source with no statements at all, and a PROC member with steps (a
+        cataloged or in-stream procedure with no JOB), have no JOB statement
+        by design; the strict parse's "No JOB statement found" is not
+        reported for them.
+        """
+        if getattr(exc, "message", "") != _NO_JOB_MESSAGE:
+            return False
+        return not self.has_statement or (self.has_proc and self.has_exec)
 
     def _error(self, message: str, line_number: int) -> None:
         self.errors.append(
@@ -597,25 +679,22 @@ class _StructureTracker:
         )
 
     def check(self, stmt: Statement, line_num: int) -> None:
+        self.has_statement = True
         if stmt.type == "JOB":
             if self.has_job:
                 self._error("Multiple JOB statements found", line_num)
             self.has_job = True
         elif stmt.type == "PROC":
-            self.in_proc = True
+            self.in_proc = self.has_proc = True
         elif stmt.type == "PEND":
             self.in_proc = False
+            self.has_proc = True
         elif stmt.type == "EXEC":
             if not self.has_job and not self.in_proc:
                 self._error("EXEC statement before JOB statement", line_num)
-            # Check for missing program or procedure. This fallback path is
-            # only reached when the strict parse raised (e.g., undefined
-            # PROC), so we intentionally do NOT accept bare "PROC=name" here
-            # — the reference is known to be unresolvable, and we want at
-            # least one error in the output.
-            has_pgm = "PGM" in stmt.parameters
-            has_positional = any(is_positional_key(k) for k in stmt.parameters)
-            if not has_pgm and not has_positional:
+            # An unresolvable PROC= reference is reported by the strict
+            # parse's own error ("Procedure 'X' not found"), not here.
+            if not _exec_has_program_spec(stmt.parameters):
                 self._error("EXEC statement missing program or procedure", line_num)
             self.has_exec = True
         elif stmt.type == "DD":

@@ -54,6 +54,20 @@ config.enable_plugin("SiteRule")  # plugins are opt-in
 errors = validate_jcl(source, config=config)
 ```
 
+## Strict-parse fallback
+
+`validate_jcl()` first parses strict. When that parse raises (`JCLSyntaxError`,
+`JCLValidationError`, `JCLStructureError`), it stops at the first error, so a
+line-by-line pass parses every merged statement on its own and checks statement
+order (multiple JOBs, EXEC before JOB, EXEC with no program / procedure, DD with no
+EXEC in the job). In-stream data and CNTL control records are skipped there exactly
+as the parse loop skips them. The strict exception itself is always reported too
+(since #75; it was discarded), in line order and only once if the line-by-line pass
+already found the same line and message -- it is often the only error naming the real
+cause, e.g. "Procedure 'XYZ' not found", a malformed `DLM=`, or "No JOB statement
+found". That last one is not reported for input with no statements at all
+(`validate_jcl("") == []`) or for a PROC member with steps.
+
 ## What It Checks
 
 Identifier naming (max 8 chars), dataset names (max 44 chars), JOB card present, step structure, DD structure, parameter constraints (RECFM, DSORG, TIME, REGION, MSGLEVEL).
