@@ -1580,7 +1580,7 @@ def _explode_step(  # noqa: C901 -- complexity baseline, split when touched
             proc_name=proc_name,
             parameters=overrides,
             depth=depth,
-            timestamp=datetime.now(),  # noqa: DTZ005 -- local time, matches SYSTIME
+            timestamp=datetime.now(),  # local time, matches SYSTIME
             expanded_steps=[s.name for s in expanded if hasattr(s, "name") and s.name],
         )
         audit_records.append(record)

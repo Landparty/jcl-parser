@@ -126,7 +126,7 @@ class RuntimeSystemSymbolProvider(SystemSymbolProvider):
         self.clone = clone
 
         # Build symbol map once at init time (date/time captured at construction)
-        now = datetime.now()  # noqa: DTZ005 -- &SYSDATE/&SYSTIME are local time
+        now = datetime.now()  # &SYSDATE/&SYSTIME are local time
         self._symbol_map = {
             "SYSUID": self.userid.upper()[:8],  # Max 8 chars
             "SYSDATE": now.strftime("%y/%m/%d"),  # YY/MM/DD
