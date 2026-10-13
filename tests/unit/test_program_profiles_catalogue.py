@@ -741,3 +741,55 @@ class TestIKJEFT01ReadsCommandsNotComments:
             " /* DSN SYSTEM(DB2T) BIND PLAN(OLDPLAN) */\n DSN SYSTEM(DB2P)\n END\n"
         )
         assert notes == ["DSN SYSTEM(DB2P)"]
+
+
+class TestIDCAMSCommandBoundaries:
+    """A command after THEN / ELSE or a ``;`` is a command too."""
+
+    def _notes(self, sysin: str) -> list[str]:
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IDCAMS\n"
+            "//SYSIN    DD *\n" + sysin + "/*\n"
+        )
+        return analyze_job(jp.parse_jcl(src))[0].notes
+
+    def test_commands_in_then_and_else(self):
+        notes = self._notes(
+            "  LISTCAT ENTRIES(MY.KSDS)\n"
+            "  IF LASTCC = 0 THEN DELETE MY.KSDS PURGE\n"
+            "  ELSE DEFINE CLUSTER (NAME(MY.KSDS) INDEXED)\n"
+            "  IF MAXCC = 0 THEN -\n"
+            "     DELETE MY.OLD.DSN\n"
+            "  IF MAXCC > 4 THEN ALTER MY.A NEWNAME(MY.B)\n"
+        )
+        assert notes == [
+            "IDCAMS DELETE MY.KSDS",
+            "IDCAMS DELETE MY.OLD.DSN",
+            "IDCAMS DEFINE CLUSTER MY.KSDS",
+            "IDCAMS ALTER MY.A",
+            "IDCAMS LISTCAT",
+        ]
+
+    def test_commands_separated_by_semicolons(self):
+        notes = self._notes(
+            "  DELETE A.B PURGE; DELETE C.D PURGE\n"
+            "  DEFINE GDG (NAME(E.F) LIMIT(5)); DEFINE GDG (LIMIT(3))\n"
+        )
+        assert notes == [
+            "IDCAMS DELETE A.B",
+            "IDCAMS DELETE C.D",
+            "IDCAMS DEFINE GDG E.F",
+            "IDCAMS DEFINE GDG (unknown)",
+        ]
+
+    def test_then_inside_a_dataset_name_is_not_a_keyword(self):
+        assert self._notes("  DELETE MY.THEN.ELSE PURGE\n") == [
+            "IDCAMS DELETE MY.THEN.ELSE"
+        ]
+
+    def test_delete_name_with_symbol(self):
+        # DEFINE NAME(...) accepts a JCL symbol; DELETE reads the same names.
+        assert self._notes("  DELETE &HLQ..WORK.FILE PURGE\n") == [
+            "IDCAMS DELETE &HLQ..WORK.FILE"
+        ]
