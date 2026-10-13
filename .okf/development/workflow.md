@@ -111,7 +111,7 @@ Line counts as of 2026-10-08 (`wc -l`).
 | `parameter_validators.py` | 262 | Parameter value validators |
 | `validators.py` | 439 | Structural validation |
 | `condition_parser.py` | 562 | `// IF` condition AST, `NOT_RUN` |
-| `dataset_lifecycle.py` | 407 | Cross-step dataset lifecycle analysis |
+| `dataset_lifecycle.py` | 558 | Cross-step dataset lifecycle analysis |
 | `rc_analysis.py` | 502 | RC feasibility (`compute_feasible_paths`) |
 | `metrics.py` | 167 | `compute_metrics` |
 | `sql_detector.py` | 232 | SQL / DB2 detection |
