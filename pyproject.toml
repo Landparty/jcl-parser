@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jcl-parser"
-version = "2.0.1"
+version = "2.0.2"
 description = "Parse IBM JCL (Job Control Language) scripts into Python objects"
 authors = [
     {name = "JCL Parser Team", email = "team@jclparser.dev"}

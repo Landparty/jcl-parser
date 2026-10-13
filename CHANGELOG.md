@@ -7,6 +7,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.0.2](https://github.com/Landparty/jcl-parser/compare/v2.0.1...v2.0.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* cap chained symbol expansion at MAX_SYMBOL_VALUE_LENGTH ([921db7e](https://github.com/Landparty/jcl-parser/commit/921db7ef581af09b669bbce2dca4ee90e3baf6eb)), closes [#70](https://github.com/Landparty/jcl-parser/issues/70)
+* cap chained symbol expansion; drop col-72 indicator on 72-char records ([#70](https://github.com/Landparty/jcl-parser/issues/70), [#80](https://github.com/Landparty/jcl-parser/issues/80)) ([b1c5a43](https://github.com/Landparty/jcl-parser/commit/b1c5a43d917fb5285d2ad7e593cd3290a65679ea))
+* drop column-72 indicator on continued 72-character records ([ddd2b14](https://github.com/Landparty/jcl-parser/commit/ddd2b14d87a4f73fb738d3fbf1f6f826253d1e82)), closes [#80](https://github.com/Landparty/jcl-parser/issues/80)
+
+
+### Documentation
+
+* fold [#70](https://github.com/Landparty/jcl-parser/issues/70)/[#80](https://github.com/Landparty/jcl-parser/issues/80) log entries into the 2026-10-13 heading ([5d45af4](https://github.com/Landparty/jcl-parser/commit/5d45af40660163526f1dcc02612fad1ef22daedb))
+
 ## [2.0.1](https://github.com/Landparty/jcl-parser/compare/v2.0.0...v2.0.1) (2026-10-13)
 
 
