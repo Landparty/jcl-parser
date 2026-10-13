@@ -983,3 +983,25 @@ def iter_execution_steps(steps: list[Step | ConditionalBlock]) -> Iterator[Step]
         elif isinstance(s, ConditionalBlock):
             yield from iter_execution_steps(s.then_steps)
             yield from iter_execution_steps(s.else_steps)
+
+
+def _dataset_dds(step: Step) -> list[DDStatement]:
+    """The DDs of *step* that can name a dataset, in source order.
+
+    On a PROC call that is not exploded, the ``//PROCSTEP.DD`` overrides
+    (and the concatenation members coded after them) live in
+    ``dd_overrides`` rather than ``dd_statements``; they allocate and open
+    datasets all the same, so dataset checks must see them too.  A
+    qualified DD under an ``EXEC PGM=`` step overrides nothing and is ignored
+    (it is reported at parse time), so it is left out here as well.
+    """
+    if not step.is_procedure:
+        return step.dd_statements
+    overrides = [
+        member
+        for key, dd in step.dd_overrides.items()
+        for member in (dd, *step.dd_override_concatenations.get(key, ()))
+    ]
+    if not overrides:
+        return step.dd_statements
+    return sorted([*step.dd_statements, *overrides], key=lambda dd: dd.line_number)

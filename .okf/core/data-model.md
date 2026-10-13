@@ -69,7 +69,7 @@ Useful accessors (not fields): `job.validate()`, `job.explode(...)`,
 | `line_number` | `int` | Default `0`, never `None` |
 | `is_exploded` | `bool` | True after `explode_job()` |
 | `original_proc_call` | `str \| None` | Set after explosion |
-| `dd_overrides` | `dict[str, DDStatement]` | Qualified `PROCSTEP.DDNAME` overrides |
+| `dd_overrides` | `dict[str, DDStatement]` | Qualified `PROCSTEP.DDNAME` overrides. Dataset checks on an unexploded PROC call read them too, through `model._dataset_dds(step)` (fixed 2026-10-12) |
 | `dd_override_concatenations` | `dict[str, list[DDStatement]]` | Unnamed DDs coded after a qualified override (same key): overrides of that DD's later concatenation members |
 | `set_symbols` | `dict[str, str] \| None` | SET table in effect when this job-level step was read; kept only when a later SET redefines a symbol (else `None`). Not part of `==` or `repr` |
 | `is_procedure()` | property → `bool` | **This is how you test for a PROC invocation.** Equivalent to `step.procedure is not None` |

@@ -287,3 +287,46 @@ class TestDDLevelDcbKeywords:
         assert dd.dcb.recfm == "VB"
         dd.parameters = {}
         assert dd.dcb is None
+
+
+class TestProcCallOverrideDatasets:
+    """``//PROCSTEP.DD`` overrides on an unexploded PROC call are DDs too.
+
+    They live in ``Step.dd_overrides``, not ``dd_statements``, so the
+    temporary-dataset and lifecycle checks never saw them: a ``&&T`` created
+    by an override was "used but never created" in the next step, and a
+    dataset cataloged twice went unreported -- until the job was exploded.
+    """
+
+    _JCL = _JOB + (
+        "//P PROC\n"
+        "//PS1 EXEC PGM=X\n"
+        "//OUT DD DUMMY\n"
+        "// PEND\n"
+        "//S1 EXEC P\n"
+        "//PS1.OUT DD DSN=&&T,DISP=(NEW,PASS),UNIT=SYSDA,SPACE=(TRK,1)\n"
+        "//PS1.CAT DD DSN=A.B,DISP=(NEW,CATLG),UNIT=SYSDA,SPACE=(TRK,1)\n"
+        "//S2 EXEC PGM=Y\n"
+        "//IN DD DSN=&&T,DISP=(OLD,DELETE)\n"
+        "//CAT DD DSN=A.B,DISP=(NEW,CATLG),UNIT=SYSDA,SPACE=(TRK,1)\n"
+    )
+
+    def test_override_creates_temporary_dataset(self):
+        assert not any("&&T" in m for m in _messages(self._JCL))
+
+    def test_override_allocation_seen_by_lifecycle(self):
+        from jclparser.dataset_lifecycle import analyze_dataset_lifecycle
+
+        events = analyze_dataset_lifecycle(parse_jcl(self._JCL))
+        assert [(e.step_name, e.dd_name) for e in events["A.B"]] == [
+            ("S1", "PS1.CAT"),
+            ("S2", "CAT"),
+        ]
+        assert any(
+            "'A.B'" in m and "already cataloged" in m for m in _messages(self._JCL)
+        )
+
+    def test_same_findings_as_exploded_job(self):
+        exploded = [e.message for e in explode_job(parse_jcl(self._JCL)).validate()]
+        assert any("already cataloged" in m for m in exploded)
+        assert not any("&&T" in m for m in exploded)
