@@ -7,6 +7,21 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.0.1](https://github.com/Landparty/jcl-parser/compare/v2.0.0...v2.0.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* a PROC step tested by an IF on an unexploded job may not have run ([85abe92](https://github.com/Landparty/jcl-parser/commit/85abe92e56d3d9370288c0fb2c9fa60696746a97))
+* dataset checks read PROC-call DD overrides on an unexploded job ([a5f4dbd](https://github.com/Landparty/jcl-parser/commit/a5f4dbd7a84ed71c43fe1acc6bb81e08ff94686c))
+* dataset checks read PROC-call DD overrides on an unexploded job ([db1e70e](https://github.com/Landparty/jcl-parser/commit/db1e70e8663cef25adee0bbd595d1083aab32f2d))
+* keep a comment inside a continued parenthesised list out of the operands ([a780877](https://github.com/Landparty/jcl-parser/commit/a7808773016494b4028f0fd8248d433f91779df7))
+* lifecycle forward-reference warning ignores the other branch of an IF ([685dacd](https://github.com/Landparty/jcl-parser/commit/685dacde883aa77eda4014e7595f3e558406c208))
+* **profiles:** read IDCAMS commands after THEN/ELSE and `;` ([38dfa73](https://github.com/Landparty/jcl-parser/commit/38dfa73fb4e2edae26a9043f64bc9321d5dd9a9a))
+* **profiles:** read IDCAMS commands after THEN/ELSE and `;` ([a30e409](https://github.com/Landparty/jcl-parser/commit/a30e4093b80682bb7173042bb543c6c84e439b08))
+* **profiles:** read IKJEFT01 DSN/BIND notes from the commands, not comments ([b1e9c32](https://github.com/Landparty/jcl-parser/commit/b1e9c323193a75539699b67e3454a3fd3d19f848))
+* **profiles:** read IKJEFT01 DSN/BIND notes from the commands, not comments ([8bfbfbb](https://github.com/Landparty/jcl-parser/commit/8bfbfbb87d9bea189d5add7ef3b0c4e6e440b815))
+
 ## [2.0.0](https://github.com/Landparty/jcl-parser/compare/v1.4.0...v2.0.0) (2026-10-08)
 
 
