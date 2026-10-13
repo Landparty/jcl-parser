@@ -169,10 +169,16 @@ class TestProcStepOnUnexplodedJob:
     def test_exploded_job_still_judged(self):
         from jclparser import explode_job
 
-        jcl = _PROC_STEP_TESTS.replace("R.PS1.RUN", "R.PS2.RUN")
+        # The first step of the exploded job (no COND=) always runs.  PS2
+        # is not certain to run: PS1 may abend, which bypasses PS2 (#86).
+        jcl = _PROC_STEP_TESTS.replace("PGM=X,COND=(4,LT)", "PGM=X")
         report = compute_feasible_paths(explode_job(parse_jcl(jcl)))
         assert report.unreachable_steps == ["C"]
         assert report.always_skipped == ["B"]
+        jcl = _PROC_STEP_TESTS.replace("R.PS1.RUN", "R.PS2.RUN")
+        report = compute_feasible_paths(explode_job(parse_jcl(jcl)))
+        assert report.unreachable_steps == []
+        assert report.always_skipped == []
 
     def test_program_step_qualifier_unchanged(self):
         report = compute_feasible_paths(
