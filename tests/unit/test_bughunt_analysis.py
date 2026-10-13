@@ -394,7 +394,7 @@ class TestIcetoolAndSortProfiles:
         ]
 
     def test_sort_comment_is_not_a_filter(self):
-        assert self._notes()["S2"] == ["SORT FIELDS"]
+        assert self._notes()["S2"] == ["COPY"]
 
 
 # ---------------------------------------------------------------------------

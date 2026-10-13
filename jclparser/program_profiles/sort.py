@@ -2,11 +2,17 @@
 
 The IBM sort is commonly invoked as ``SORT``, ``ICEMAN``, ``DFSORT``, or
 ``SORTD``, and the third-party Syncsort product under the compatible name
-``SYNCSORT``.  The SYSIN control stream uses ``SORT FIELDS=(…)`` with optional
-``INCLUDE``, ``OMIT``, ``INREC``, ``OUTREC`` statements.  The profile only
-does a shallow parse — enough to surface the *fact* that the step sorts
-and which filters it applies — but does not attempt to validate field
-specifications.
+``SYNCSORT``.  The SYSIN control stream uses ``SORT FIELDS=(…)`` /
+``MERGE FIELDS=(…)`` (or ``FIELDS=COPY`` / ``OPTION COPY`` for a copy) with
+optional ``INCLUDE``, ``OMIT``, ``INREC``, ``OUTREC``, ``OUTFIL`` statements.
+The profile only does a shallow parse — enough to surface the *fact* that
+the step sorts, merges or copies, which filters it applies, and which
+datasets it reads (SORTIN, or SORTIN01-SORTIN99 for a merge) and writes —
+but does not attempt to validate field specifications.
+
+Each control statement is read as DFSORT reads it: an optional label, the
+operation, and the operands up to the first blank outside quotes and
+parentheses; the rest of the line is a remark.
 """
 
 from __future__ import annotations
@@ -14,19 +20,103 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from ._control import ControlStatement, parse_control_statements, split_operands
 from .base import ProgramAnalysis, ProgramProfile, _sysin_text
 
 if TYPE_CHECKING:
     from ..model import Step
 
-_RE_SORT_FIELDS = re.compile(r"\bSORT\s+FIELDS\s*=", re.IGNORECASE)
-_RE_INCLUDE = re.compile(r"\bINCLUDE\b", re.IGNORECASE)
-_RE_OMIT = re.compile(r"\bOMIT\b", re.IGNORECASE)
-_RE_INREC = re.compile(r"\bINREC\b", re.IGNORECASE)
-_RE_OUTREC = re.compile(r"\bOUTREC\b", re.IGNORECASE)
-_RE_MERGE = re.compile(r"\bMERGE\s+FIELDS\s*=", re.IGNORECASE)
-# A ``*`` in column 1 makes a DFSORT comment statement.
-_RE_COMMENT_LINE = re.compile(r"^\s*\*.*$", re.MULTILINE)
+_OPERATIONS = frozenset(
+    {
+        "SORT",
+        "MERGE",
+        "OPTION",
+        "INCLUDE",
+        "OMIT",
+        "INREC",
+        "OUTREC",
+        "OUTFIL",
+        "SUM",
+        "RECORD",
+        "ALTSEQ",
+        "DEBUG",
+        "END",
+        "JOINKEYS",
+        "JOIN",
+        "REFORMAT",
+        "MODS",
+    }
+)
+#: Notes per statement (or ``OUTFIL`` operand) type, in reporting order.
+_CLAUSE_NOTES = (
+    ("INCLUDE", "INCLUDE filter"),
+    ("OMIT", "OMIT filter"),
+    ("INREC", "INREC reformat"),
+    ("OUTREC", "OUTREC reformat"),
+)
+#: An input DD: SORTIN, or SORTIN01-SORTIN99 for a MERGE.
+_RE_INPUT_DD = re.compile(r"^SORTIN(?:0[1-9]|[1-9][0-9])?$")
+
+
+def _operand_keys(stmt: ControlStatement) -> set[str]:
+    """The upper-cased operands of *stmt*, keyword operands by their key."""
+    return {
+        operand.partition("=")[0].strip().upper()
+        for operand in split_operands(stmt.operands)
+    }
+
+
+def _is_copy_fields(stmt: ControlStatement) -> bool:
+    """True for ``FIELDS=COPY`` (or ``FIELDS=(COPY)``) among *stmt*'s operands."""
+    return any(
+        operand.replace(" ", "").upper() in ("FIELDS=COPY", "FIELDS=(COPY)")
+        for operand in split_operands(stmt.operands)
+    )
+
+
+def _kind_notes(statements: list[ControlStatement]) -> list[str]:
+    """``SORT FIELDS`` / ``MERGE FIELDS`` / ``COPY``, as the statements ask."""
+    notes: list[str] = []
+    for stmt in statements:
+        if stmt.operation in ("SORT", "MERGE") and _is_copy_fields(stmt):
+            note = "COPY"
+        elif stmt.operation in ("SORT", "MERGE"):
+            note = f"{stmt.operation} FIELDS"
+        elif stmt.operation == "OPTION" and "COPY" in _operand_keys(stmt):
+            note = "COPY"
+        else:
+            continue
+        if note not in notes:
+            notes.append(note)
+    return notes
+
+
+def _clause_notes(statements: list[ControlStatement]) -> list[str]:
+    """Filter / reformat notes: from the statements, and from the
+    ``INCLUDE=`` / ``OMIT=`` / ``OUTREC=`` operands of ``OUTFIL``."""
+    found: set[str] = set()
+    for stmt in statements:
+        found.add(stmt.operation)
+        if stmt.operation == "OUTFIL":
+            found |= _operand_keys(stmt)
+    return [note for clause, note in _CLAUSE_NOTES if clause in found]
+
+
+def _dataset_notes(step: Step) -> list[str]:
+    """``input:`` for every dataset of SORTIN / SORTINnn (concatenations
+    included), ``output:`` for SORTOUT, in DD order."""
+    notes: list[str] = []
+    current = ""
+    for dd in step.dd_statements:
+        if dd.name:
+            current = dd.name.upper()
+        if not dd.dataset_name:
+            continue
+        if _RE_INPUT_DD.match(current):
+            notes.append(f"input: {dd.dataset_name}")
+        elif current == "SORTOUT" and dd.name:
+            notes.append(f"output: {dd.dataset_name}")
+    return notes
 
 
 class SortProfile(ProgramProfile):
@@ -34,36 +124,16 @@ class SortProfile(ProgramProfile):
 
     def analyze(self, step: Step) -> ProgramAnalysis:
         raw = _sysin_text(step) or ""
-        # Comment statements are not control statements: ``* OMIT ...`` must
-        # not read as an OMIT filter.
-        text = _RE_COMMENT_LINE.sub("", raw)
-        notes: list[str] = []
+        statements = parse_control_statements(raw, _OPERATIONS)
+        kinds = _kind_notes(statements)
+        notes = [*kinds, *_clause_notes(statements), *_dataset_notes(step)]
 
-        if _RE_SORT_FIELDS.search(text):
-            notes.append("SORT FIELDS")
-        if _RE_MERGE.search(text):
-            notes.append("MERGE FIELDS")
-        if _RE_INCLUDE.search(text):
-            notes.append("INCLUDE filter")
-        if _RE_OMIT.search(text):
-            notes.append("OMIT filter")
-        if _RE_INREC.search(text):
-            notes.append("INREC reformat")
-        if _RE_OUTREC.search(text):
-            notes.append("OUTREC reformat")
-
-        sortin = step.get_dd("SORTIN")
-        sortout = step.get_dd("SORTOUT")
-        if sortin and sortin.dataset_name:
-            notes.append(f"input: {sortin.dataset_name}")
-        if sortout and sortout.dataset_name:
-            notes.append(f"output: {sortout.dataset_name}")
-
-        summary = (
-            f"{step.program}: sort/merge with {len(notes)} control clauses"
-            if notes
-            else f"{step.program} with no recognised control statements"
-        )
+        if not notes:
+            summary = f"{step.program} with no recognised control statements"
+        elif kinds == ["COPY"]:
+            summary = f"{step.program}: copy with {len(notes)} control clauses"
+        else:
+            summary = f"{step.program}: sort/merge with {len(notes)} control clauses"
         return ProgramAnalysis(
             program=step.program or "SORT",
             step_name=step.name or "",

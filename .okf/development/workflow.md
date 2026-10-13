@@ -124,7 +124,7 @@ Line counts as of 2026-10-08 (`wc -l`).
 | `cli.py` | 966 | `jcl-parser` CLI |
 | `lint/` (5 files) | 467 | `LintRule`, built-in rules, runner, SARIF |
 | `plugins/` (2 files) | 248 | `ParserConfig`, `ValidationLevel`, plugin registry |
-| `program_profiles/` (26 files) | 2012 | Known-program profiles (SORT, ICETOOL, IDCAMS, IEBGENER, DFSRRC00, …) and registry |
+| `program_profiles/` (27 files) | 2411 | Known-program profiles (SORT, ICETOOL, IDCAMS, IEBGENER, DFSRRC00, …) and registry |
 
 # Common Task → File Map
 

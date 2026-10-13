@@ -25,7 +25,7 @@ from ..dataset_lifecycle import (
 )
 
 if TYPE_CHECKING:
-    from ..model import Step
+    from ..model import DDStatement, Step
 
 
 @dataclass
@@ -111,6 +111,22 @@ def _dd_event(
     )
 
 
+def _concatenation(step: Step, dd_name: str) -> list[DDStatement]:
+    """The DD named *dd_name* and the unnamed DDs concatenated to it.
+
+    A concatenation is coded as a named DD followed by DDs with a blank
+    name field; it ends at the next named DD.
+    """
+    members: list[DDStatement] = []
+    current: str | None = None
+    for dd in step.dd_statements:
+        if dd.name:
+            current = dd.name
+        if current == dd_name:
+            members.append(dd)
+    return members
+
+
 def _sysin_text(step: Step) -> str | None:
     """Return the inline data from the step's SYSIN DD, or None if absent."""
     dd = step.get_dd("SYSIN")
@@ -119,4 +135,10 @@ def _sysin_text(step: Step) -> str | None:
     return dd.inline_data
 
 
-__all__ = ["ProgramAnalysis", "ProgramProfile", "_dd_event", "_sysin_text"]
+__all__ = [
+    "ProgramAnalysis",
+    "ProgramProfile",
+    "_concatenation",
+    "_dd_event",
+    "_sysin_text",
+]
