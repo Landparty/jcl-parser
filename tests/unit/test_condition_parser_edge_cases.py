@@ -149,9 +149,10 @@ class TestMalformedConditions:
         assert result is None
 
     def test_just_a_number(self):
-        """Bare number is treated as RC EQ <value>."""
-        result = parse_condition("4")
-        assert result is not None
+        """A bare number tests nothing: unparseable, not ``RC EQ 4`` (#86)."""
+        assert parse_condition("4") is None
+        assert parse_condition("4 AND RC = 0") is None
+        assert parse_condition("S1.4") is None
 
     def test_nonsense_text(self):
         """Completely invalid text returns None."""

@@ -43,7 +43,7 @@ without importing, via `job.steps` / `job.procedures`).
 | `joblib_dds` | `list[DDStatement]` | JOBLIB concatenation |
 | `control_statements` | `list[Statement]` | `COMMAND` / `SCHEDULE` / `CNTL` kept verbatim; a CNTL block's records live in `parameters["_records"]` |
 | `sql_detections` | `dict[str, Any]` | Keyed by step name; only with `ParserConfig(detect_sql=True)` |
-| `unresolved_output_refs` | `list[tuple[str, str, int]]` | `OUTPUT=*.name` refs with no definition |
+| `unresolved_output_refs` | `list[tuple[str, str, int]]` | `OUTPUT=*.name` refs with no definition in scope: `(step_name, ref, line_number)`, see [OutputStatement](#outputstatement) |
 | `exported_symbols` | `set[str]` | From `EXPORT SYMLIST=(...)`; `"*"` exports every SET symbol |
 | `warnings` | `list[str]` | **Plain strings, not `ParseError`.** Non-fatal issues; parsing never fails on these |
 
@@ -89,7 +89,7 @@ the codebase; use `step.procedure` / `step.is_procedure`.
 | `inline_data` | `str \| None` | Content between `DD *` and `/*`, as **one string** (there is no `instream_data` list). Data records after a step with no `DD *` / `DD DATA` ahead of them get an implicit `SYSIN` DD (`parameters={"*": True}`), as JES does, plus a `job.warnings` entry |
 | `comments` | `list[str]` | Never populated — see invariant 8 |
 | `line_number` | `int` | |
-| `output_refs` | `list[OutputStatement]` | Resolved `OUTPUT=*.name` back-references |
+| `output_refs` | `list[OutputStatement]` | Resolved `OUTPUT=*.name` back-references, by step scope (see [OutputStatement](#outputstatement)) |
 | `is_temporary()` | method → `bool` | True when `dataset_name` starts with `&&`. **Call it** |
 | `is_input()` / `is_output()` | methods → `bool` | Derived from the DISP **status** only: `OLD`/`SHR` → input; `NEW`/`MOD`, or an omitted status (`DISP=(,CATLG)`, default NEW) → output. Normal/abnormal dispositions do not count, so `(SHR,PASS,CATLG)` and `(OLD,KEEP,UNCATLG)` are inputs, not outputs (changed 2026-09-28; every token used to be tested). No DISP → both `False` |
 | `has_inline_data` | property → `bool` | |
@@ -121,6 +121,31 @@ The disposition sets behind `is_input()` / `is_output()` (and `_DD_LEVEL_DCB_KEY
 | `is_external` | `bool` | True when loaded through the loader chain rather than inline |
 | `set_statements` | `dict[str, str]` | Symbols assigned by `SET` statements coded inside the procedure body. Applied only when the procedure is expanded (above job SETs, below PROC defaults and EXEC overrides); never merged into the calling job's `set_statements`. Added 2026-09-28 — see [advanced/proc-expansion](../advanced/proc-expansion.md#symbol-substitution) |
 
+## OutputStatement
+
+An `OUTPUT` JCL statement (JES output descriptor), in `job.output_statements`.
+Properties such as `dest`, `output_class`, `copies` read `parameters`.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `name` | `str` | Label referenced by `DD OUTPUT=*.name` |
+| `parameters` | `dict[str, Any]` | All OUTPUT parameters |
+| `line_number` | `int` | Default `0` |
+| `step_name` | `str \| None` | Step the statement is coded in (step-level OUTPUT); `None` for a job-level one, coded before the first EXEC. In an in-stream PROC body it is the procedure step. Added 2026-10-13 (#85) |
+| `procedure_name` | `str \| None` | In-stream PROC whose body holds the statement; `None` outside `PROC`…`PEND`. Added 2026-10-13 (#85) |
+| `type` | `str` | Always `"OUTPUT"`; not an `__init__` argument |
+
+`OutputStatement(name, parameters, line_number)` still constructs a job-level
+statement. `DD OUTPUT=*.name` resolves to the OUTPUT statement of that name in the
+DD's own step, else the job-level one; `*.step.name` to the one in job step `step`;
+`*.step.procstep.name` to the one in step `procstep` of the in-stream PROC that job
+step `step` calls (not checked when that PROC is external). A step-level OUTPUT in
+another step never satisfies `*.name`: the reference lands on
+`Job.unresolved_output_refs` as `(step, ref, line)`, `ref` as coded after `*.`
+(`"OUT1"`, `"S1.OUT1"`), and `validate_output_references` / lint rule
+`JCL-LINT-008` warn. Before #85 every reference matched by name alone, the last
+OUTPUT of that name in the job winning.
+
 ## Statement
 
 The generic pre-model record produced by `parse_statement()`:
@@ -131,7 +156,7 @@ The generic pre-model record produced by `parse_statement()`:
 
 `ReturnCodeCondition`, `AbendCondition`, `RunCondition`, `NotCondition`, `AndCondition`, `OrCondition` — all importable from `jclparser`.
 
-`parse_condition()` accepts both keyword and symbolic Boolean operators (`AND`/`&`, `OR`/`|`, `NOT`/`¬`, with `^`/`~` for `¬`) and `ABEND`/`RUN` tests written as `= TRUE` / `= FALSE`. It returns `None` rather than a partial AST whenever it cannot consume the whole expression: `ABENDCC` tests, a non-numeric RC value (`RC GT &MAX`), leftover tokens, a character outside the grammar (`S1.RC = -1`, `;`, `*`, ...), and a bare `RC` / `STEP.RC` with no comparison (since 2026-10-04, issue #63: the tokenizer used to skip unknown characters, so `S1.RC = -1` read as `S1.RC EQ 1`, and a bare `RC` was invented as `RC EQ 0`). A missing final `)` and a stray trailing `)` are tolerated. A value-first comparison is mirrored into RC-first form: `4 LT RC` is `RC GT 4`, `4 LT S1.RC` is `S1.RC GT 4` (fixed 2026-09-27; the operator used to be kept as written, inverting the test), and `4 GT` with no RC after it is `None`. The mnemonic `NG` (not greater, → `LE`) and `NL` (not less, → `GE`) operators are accepted (since 2026-09-28; they used to make the result `None`). When evaluating, `step_results` maps an uppercase step name to `(rc, abended)`, or to `condition_parser.NOT_RUN` for a step known not to have executed: `STEP.RC op n`, `STEP.ABEND` and `STEP.RUN` on a `NOT_RUN` step are `False` (IBM), whereas a step absent from the mapping is unknown and its `RC`/`ABEND`/`RUN` tests give `None` (`RC`/`ABEND` since 2026-09-28; `STEP.RUN` returned `False` for an absent step until 2026-10-04, issue #61). `NOT`/`AND`/`OR` combine `None` with Kleene three-valued logic (`None AND False` = `False`, `None OR True` = `True`, otherwise `None`). A condition with no step name follows IBM semantics: `RC` is the **highest** RC of the steps that ran, and `ABEND` is true if **any** of them abended (`NOT_RUN` steps are ignored). `NOT_RUN` is not re-exported from `jclparser`; import it from `jclparser.condition_parser`.
+`parse_condition()` accepts both keyword and symbolic Boolean operators (`AND`/`&`, `OR`/`|`, `NOT`/`¬`, with `^`/`~` for `¬`) and `ABEND`/`RUN` tests written as `= TRUE` / `= FALSE`. It returns `None` rather than a partial AST whenever it cannot consume the whole expression: `ABENDCC` tests, a non-numeric RC value (`RC GT &MAX`), leftover tokens, a character outside the grammar (`S1.RC = -1`, `;`, `*`, ...), and a bare `RC` / `STEP.RC` with no comparison (since 2026-10-04, issue #63: the tokenizer used to skip unknown characters, so `S1.RC = -1` read as `S1.RC EQ 1`, and a bare `RC` was invented as `RC EQ 0`). A bare number (`4`, `4 AND RC = 0`) is `None` too (since 2026-10-13, issue #86; it used to be invented as `RC EQ 4`). A missing final `)` and a stray trailing `)` are tolerated. A value-first comparison is mirrored into RC-first form: `4 LT RC` is `RC GT 4`, `4 LT S1.RC` is `S1.RC GT 4` (fixed 2026-09-27; the operator used to be kept as written, inverting the test), and `4 GT` with no RC after it is `None`. The mnemonic `NG` (not greater, → `LE`) and `NL` (not less, → `GE`) operators are accepted (since 2026-09-28; they used to make the result `None`). When evaluating, `step_results` maps an uppercase step name to `(rc, abended)`, or to `condition_parser.NOT_RUN` for a step known not to have executed: `STEP.RC op n`, `STEP.ABEND` and `STEP.RUN` on a `NOT_RUN` step are `False` (IBM), whereas a step absent from the mapping is unknown and its `RC`/`ABEND`/`RUN` tests give `None` (`RC`/`ABEND` since 2026-09-28; `STEP.RUN` returned `False` for an absent step until 2026-10-04, issue #61). `NOT`/`AND`/`OR` combine `None` with Kleene three-valued logic (`None AND False` = `False`, `None OR True` = `True`, otherwise `None`). A condition with no step name follows IBM semantics: `RC` is the **highest** RC of the steps that ran, and `ABEND` is true if **any** of them abended (`NOT_RUN` steps are ignored). `NOT_RUN` is not re-exported from `jclparser`; import it from `jclparser.condition_parser`.
 
 # Key Field Notes
 

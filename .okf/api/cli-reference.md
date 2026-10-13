@@ -41,7 +41,7 @@ These are not argparse subcommands — they are matched case-insensitively again
 
 A bare step name (`jcl-parser FILE PAYSTEP`) or `STEP.DDNAME` falls through to step/DD lookup: the whole token is tried as a step name first (so exploded names like `CALL.PS` work with `--explode`), then — if it contains a dot — split on the **last** dot into step and DD (`CALL.PS.SYSIN`), else searched as a DD name across all steps. (Fixed 2026-09-27: it split on the first dot, so no exploded step or its DDs could be queried.)
 
-`paths` prints `compute_feasible_paths` findings (unreachable / always skipped / contradictory / duplicate IF branches), then a `Not analysed:` section listing any IF whose search exceeded `rc_analysis.MAX_COMBINATIONS` (also printed after `(no feasibility issues found)`, since an unanalysed condition is not a finding). `--json` adds an `unanalysed_conditions` list of `[condition, reason]` pairs (since 2026-10-04, issue #65).
+`paths` prints `compute_feasible_paths` findings (unreachable / always skipped / contradictory / duplicate IF branches), then a `Not analysed:` section listing any IF whose search exceeded `rc_analysis.MAX_COMBINATIONS` (or, from the API with `include_abends=False`, that tests `RUN` / `ABEND`) (also printed after `(no feasibility issues found)`, since an unanalysed condition is not a finding). `--json` adds an `unanalysed_conditions` list of `[condition, reason]` pairs (since 2026-10-04, issue #65).
 
 Flags may appear anywhere, including between `FILE` and the query (`jcl-parser FILE --json steps`); `main()` uses `parse_intermixed_args` (fixed 2026-09-27: that ordering used to exit 2 with `unrecognized arguments`).
 

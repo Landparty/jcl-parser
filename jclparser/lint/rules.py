@@ -74,10 +74,16 @@ class LiteralSysdaUnitRule(LintRule):
 class CriticalDatasetDeleteRule(LintRule):
     code = "JCL-LINT-003"
     description = (
-        "Critical dataset allocated DISP=(NEW,CATLG,DELETE) — normal CATLG but "
-        "abnormal DELETE may discard data on failure."
+        "Critical dataset allocated DISP=(NEW,CATLG,DELETE) or "
+        "DISP=(NEW,KEEP,DELETE) — a successful run keeps it, but the abnormal "
+        "DELETE discards the data if the step fails."
     )
     default_severity = ErrorSeverity.WARNING
+
+    #: Normal dispositions that retain a new dataset after a successful run.
+    #: An omitted one defaults to DELETE (and PASS hands the dataset on), so
+    #: an abnormal DELETE then loses nothing a successful run would keep.
+    _RETAINING = frozenset({"CATLG", "KEEP"})
 
     def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
         patterns = [p.upper() for p in config.critical_dataset_patterns]
@@ -91,10 +97,15 @@ class CriticalDatasetDeleteRule(LintRule):
                 if not any(p in upper for p in patterns):
                     continue
                 tokens = dd._disp_tokens() if dd.disposition else []
-                if len(tokens) >= 3 and tokens[0] == "NEW" and tokens[2] == "DELETE":
+                if (
+                    len(tokens) >= 3
+                    and tokens[0] == "NEW"
+                    and tokens[1] in self._RETAINING
+                    and tokens[2] == "DELETE"
+                ):
                     yield self._err(
                         f"Critical dataset '{dd.dataset_name}' has "
-                        f"DISP=(NEW,{tokens[1] or 'CATLG'},DELETE)",
+                        f"DISP=({','.join(tokens)})",
                         line_number=dd.line_number,
                         config=config,
                     )

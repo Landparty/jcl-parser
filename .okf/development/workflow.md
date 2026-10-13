@@ -110,9 +110,9 @@ Line counts as of 2026-10-08 (`wc -l`).
 | `parameter_ast.py` | 397 | Typed parameter AST (`DCBParameter`, `SPACEParameter`, …) |
 | `parameter_validators.py` | 262 | Parameter value validators |
 | `validators.py` | 439 | Structural validation |
-| `condition_parser.py` | 554 | `// IF` condition AST, `NOT_RUN` |
-| `dataset_lifecycle.py` | 407 | Cross-step dataset lifecycle analysis |
-| `rc_analysis.py` | 376 | RC feasibility (`compute_feasible_paths`) |
+| `condition_parser.py` | 562 | `// IF` condition AST, `NOT_RUN` |
+| `dataset_lifecycle.py` | 558 | Cross-step dataset lifecycle analysis |
+| `rc_analysis.py` | 502 | RC feasibility (`compute_feasible_paths`) |
 | `metrics.py` | 167 | `compute_metrics` |
 | `sql_detector.py` | 232 | SQL / DB2 detection |
 | `jes_statements.py` | 382 | Typed JES2/JES3 control statements |
@@ -124,7 +124,7 @@ Line counts as of 2026-10-08 (`wc -l`).
 | `cli.py` | 966 | `jcl-parser` CLI |
 | `lint/` (5 files) | 467 | `LintRule`, built-in rules, runner, SARIF |
 | `plugins/` (2 files) | 248 | `ParserConfig`, `ValidationLevel`, plugin registry |
-| `program_profiles/` (26 files) | 2012 | Known-program profiles (SORT, ICETOOL, IDCAMS, IEBGENER, DFSRRC00, …) and registry |
+| `program_profiles/` (27 files) | 2411 | Known-program profiles (SORT, ICETOOL, IDCAMS, IEBGENER, DFSRRC00, …) and registry |
 
 # Common Task → File Map
 

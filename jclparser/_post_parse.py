@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from ._model_factories import _has_unresolved_symbol_ref
 from .errors import JCLStructureError, JCLSyntaxError
-from .model import Job, Step, iter_execution_steps
+from .model import Job, OutputStatement, Step, iter_execution_steps
 from .utils import split_source_lines
 
 if TYPE_CHECKING:
@@ -48,64 +48,124 @@ def _extract_output_ref_names(value: Any) -> list[str]:
     Values that do not start with ``*.`` (e.g. a bare nodename, a qualified
     ``STEP.PROCSTEP.N`` form without the leading ``*.``, or ``None``) yield
     an empty list.  Callers rely on this to distinguish output-statement
-    references from other uses of the OUTPUT= parameter.
+    references from other uses of the OUTPUT= parameter.  The step
+    qualifiers are kept by :func:`_extract_output_refs`.
     """
-    names: list[str] = []
+    return [ref[-1] for ref in _extract_output_refs(value)]
+
+
+def _extract_output_refs(value: Any) -> list[tuple[str, ...]]:
+    """Return the ``*.`` OUTPUT references of a DD ``OUTPUT=`` value, qualified.
+
+    Each reference is the tuple of its uppercased segments::
+
+        OUTPUT=*.NAME                -> [("NAME",)]
+        OUTPUT=(*.STEP.NAME,*.N2)    -> [("STEP", "NAME"), ("N2",)]
+        OUTPUT=*.STEP.PROCSTEP.NAME  -> [("STEP", "PROCSTEP", "NAME")]
+    """
     items: list[str]
     if isinstance(value, list):
         items = [str(v) for v in value]
     elif isinstance(value, str):
         items = [value]
     else:
-        return names
+        return []
 
+    refs: list[tuple[str, ...]] = []
     for item in items:
         token = item.strip().strip("()")
         if not token.startswith("*."):
-            # Qualified form step.procstep.name uses ".name" — last segment after *
-            if ".*" in token:
-                # Not a back-reference either
-                continue
             continue
-        ref = token[2:].strip()
-        if not ref:
-            continue
-        # If qualified like STEP.PROCSTEP.NAME, take the final segment.
-        if "." in ref:
-            ref = ref.split(".")[-1]
-        names.append(ref.upper())
-    return names
+        segments = tuple(seg.strip().upper() for seg in token[2:].split("."))
+        if segments[-1]:
+            refs.append(segments)
+    return refs
+
+
+#: Key of an OUTPUT statement in :class:`_OutputScopes`:
+#: ``(procedure_name, step_name, name)``, uppercased; ``None`` for a level
+#: the statement is not coded in.
+_OutputKey = tuple[str | None, str | None, str]
+
+
+def _upper(name: str | None) -> str | None:
+    return name.upper() if name is not None else None
+
+
+class _OutputScopes:
+    """The job's OUTPUT statements, by the step (and PROC) they are coded in."""
+
+    def __init__(self, job: Job) -> None:
+        self.by_key: dict[_OutputKey, OutputStatement] = {}
+        for out in job.output_statements:
+            if out.name:
+                key = (
+                    _upper(out.procedure_name),
+                    _upper(out.step_name),
+                    out.name.upper(),
+                )
+                self.by_key[key] = out  # last wins if duplicated
+        self.instream_procs = {p.name.upper() for p in job.procedures}
+        self.step_procs = {
+            step.name.upper(): (step.procedure or "").upper()
+            for step in iter_execution_steps(job.steps)
+            if step.name
+        }
+
+    def checkable(self, ref: tuple[str, ...]) -> bool:
+        """False for ``*.step.procstep.name`` into a PROC that is not in-stream.
+
+        Its OUTPUT statements are not part of the job, so whether the
+        reference resolves cannot be told.
+        """
+        return len(ref) != 3 or self.step_procs.get(ref[0]) in self.instream_procs
+
+    def resolve(self, ref: tuple[str, ...], step_name: str) -> OutputStatement | None:
+        """The OUTPUT statement *ref* names from a DD in job step *step_name*.
+
+        ``*.name`` is the one in the DD's own step, else the job-level one;
+        ``*.step.name`` the one in job step *step*; ``*.step.procstep.name``
+        the one in step *procstep* of the in-stream PROC job step *step*
+        calls.
+        """
+        name = ref[-1]
+        if len(ref) == 1:
+            own = self.by_key.get((None, step_name.upper(), name))
+            return own if own is not None else self.by_key.get((None, None, name))
+        if len(ref) == 2:
+            return self.by_key.get((None, ref[0], name))
+        if len(ref) == 3:
+            return self.by_key.get((self.step_procs.get(ref[0]), ref[1], name))
+        return None
 
 
 def _resolve_output_refs(job: Job) -> None:
     """Populate ``DDStatement.output_refs`` for every DD that uses ``OUTPUT=*.X``.
 
-    Unresolved references (no matching :class:`OutputStatement`) are recorded
-    on ``job.unresolved_output_refs`` as ``(step_name, ref_name, line_number)``
-    tuples so :func:`jclparser.validators.validate_job_structure` can emit
-    warnings without re-scanning the parameter string.
+    A reference resolves by scope, not by name alone (#85): see
+    :meth:`_OutputScopes.resolve`. Unresolved references (no matching
+    :class:`OutputStatement`) are recorded on ``job.unresolved_output_refs``
+    as ``(step_name, ref, line_number)`` tuples, *ref* as coded after ``*.``
+    (``"NAME"``, ``"STEP.NAME"``), so
+    :func:`jclparser.validators.validate_job_structure` can emit warnings
+    without re-scanning the parameter string. A reference into a PROC that
+    is not in-stream cannot be checked and is neither.
     """
     if not job:
         return
-    # Index OUTPUT statements by uppercased name (last wins if duplicated).
-    output_by_name: dict[str, Any] = {
-        out.name.upper(): out for out in job.output_statements if out.name
-    }
-
-    from .model import iter_execution_steps
-
+    scopes = _OutputScopes(job)
     for step in iter_execution_steps(job.steps):
         for dd in step.dd_statements:
             value = dd.parameters.get("OUTPUT")
             if value is None:
                 continue
-            for ref in _extract_output_ref_names(value):
-                target = output_by_name.get(ref)
+            for ref in _extract_output_refs(value):
+                target = scopes.resolve(ref, step.name or "")
                 if target is not None:
                     dd.output_refs.append(target)
-                else:
+                elif scopes.checkable(ref):
                     job.unresolved_output_refs.append(
-                        (step.name or "", ref, dd.line_number)
+                        (step.name or "", ".".join(ref), dd.line_number)
                     )
 
 

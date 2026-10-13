@@ -363,6 +363,20 @@ def _tokenize(text: str) -> list[str]:  # noqa: C901 -- complexity baseline, spl
 # ---------------------------------------------------------------------------
 
 
+def _split_step_ref(token: str) -> tuple[str | None, str]:
+    """Split ``[STEP.[INNER.]]ATTR`` into ``(step_name, ATTR)`` (uppercased).
+
+    The three-level form ``OUTERST.INNERST.ATTR`` (a step of an exploded
+    PROC) yields the step name ``OUTERST.INNERST``.
+    """
+    if "." not in token:
+        return None, token.upper()
+    parts = token.split(".", 2)  # at most 3 parts
+    if len(parts) == 3:
+        return f"{parts[0]}.{parts[1]}".upper(), parts[2].upper()
+    return parts[0].upper(), parts[1].upper()
+
+
 class _Parser:
     """Internal recursive-descent parser for condition expressions."""
 
@@ -419,7 +433,7 @@ class _Parser:
             return NotCondition(self._parse_not())
         return self._parse_primary()
 
-    def _parse_primary(self) -> ConditionNode:  # noqa: C901 -- complexity baseline, split when touched
+    def _parse_primary(self) -> ConditionNode:
         tok = self._peek()
         if tok is None:
             raise ValueError("Unexpected end of condition expression")
@@ -439,74 +453,63 @@ class _Parser:
         # produced after PROC explosion; "PROCSTEP.INNERSTEP" is used as the
         # step-name key in step_results).
         token = self._consume()
-        step_name: str | None = None
-        attr: str
-
-        if "." in token:
-            parts = token.split(".", 2)  # at most 3 parts
-            if len(parts) == 3:
-                # Three-level: OUTERST.INNERST.ATTR
-                step_name = f"{parts[0]}.{parts[1]}".upper()
-                attr = parts[2].upper()
-            else:
-                step_name = parts[0].upper()
-                attr = parts[1].upper()
-        else:
-            attr = token.upper()
+        step_name, attr = _split_step_ref(token)
 
         if attr == "ABEND":
             return self._boolean_test(AbendCondition(step_name=step_name))
-
         if attr == "RUN":
             return self._boolean_test(RunCondition(step_name=step_name))
-
         if attr == "RC":
-            op_tok = self._peek()
-            op = _OP_MAP.get(op_tok.upper()) if op_tok else None
-            if op is None:
-                # ``RC`` is not a Boolean: without a comparison it tests
-                # nothing, and reading it as ``RC EQ 0`` invents one.
-                raise ValueError(f"Expected an operator after RC, got {op_tok!r}")
-
-            self._consume()  # consume operator
-
-            val_tok = self._peek()
-            if val_tok is not None and _RE_DIGITS.match(val_tok):
-                self._consume()
-                return ReturnCodeCondition(
-                    step_name=step_name, operator=op, value=int(val_tok)
-                )
-
-            # A non-numeric value (e.g. an unresolved &SYMBOL) cannot be
-            # compared; reading it as 0 would invent a different condition.
-            raise ValueError(f"Expected a numeric RC value, got {val_tok!r}")
-
-        # Bare number first: ``value op [STEP.]RC`` (rare).  The operands are
-        # the other way round, so the operator is mirrored -- ``4 LT RC``
-        # holds when RC is greater than 4, i.e. ``RC GT 4``.
-        if _RE_DIGITS.match(attr):
-            op_tok = self._peek()
-            op = _OP_MAP.get(op_tok.upper()) if op_tok else None
-            if op:
-                self._consume()
-                # After the operator the user may have written "RC" or a step ref
-                next_tok = self._peek()
-                ref = next_tok.upper() if next_tok else ""
-                if ref == "RC" or ref.endswith(".RC"):
-                    self._consume()
-                    ref_step = ref[: -len(".RC")] if ref != "RC" else None
-                    return ReturnCodeCondition(
-                        step_name=ref_step or None,
-                        operator=_MIRRORED_OP[op],
-                        value=int(attr),
-                    )
-                raise ValueError(f"Expected RC after {attr} {op_tok}, got {next_tok!r}")
-            # Fallback: single number, treat as RC EQ value
-            return ReturnCodeCondition(
-                step_name=step_name, operator="EQ", value=int(attr)
-            )
-
+            return self._rc_comparison(step_name)
+        if _RE_DIGITS.match(attr) and step_name is None:
+            return self._value_first_comparison(attr)
         raise ValueError(f"Unrecognised condition atom: {token!r}")
+
+    def _rc_comparison(self, step_name: str | None) -> ConditionNode:
+        """Parse ``op value`` after ``[STEP.]RC``."""
+        op_tok = self._peek()
+        op = _OP_MAP.get(op_tok.upper()) if op_tok else None
+        if op is None:
+            # ``RC`` is not a Boolean: without a comparison it tests
+            # nothing, and reading it as ``RC EQ 0`` invents one.
+            raise ValueError(f"Expected an operator after RC, got {op_tok!r}")
+        self._consume()  # consume operator
+
+        val_tok = self._peek()
+        if val_tok is not None and _RE_DIGITS.match(val_tok):
+            self._consume()
+            return ReturnCodeCondition(
+                step_name=step_name, operator=op, value=int(val_tok)
+            )
+        # A non-numeric value (e.g. an unresolved &SYMBOL) cannot be
+        # compared; reading it as 0 would invent a different condition.
+        raise ValueError(f"Expected a numeric RC value, got {val_tok!r}")
+
+    def _value_first_comparison(self, value: str) -> ConditionNode:
+        """Parse ``op [STEP.]RC`` after a leading number (rare).
+
+        The operands are the other way round, so the operator is mirrored --
+        ``4 LT RC`` holds when RC is greater than 4, i.e. ``RC GT 4``.  A
+        bare number with no comparison tests nothing; reading it as
+        ``RC EQ n`` would invent a condition (issue #86, like the bare
+        ``RC`` of issue #63), so it is rejected.
+        """
+        op_tok = self._peek()
+        op = _OP_MAP.get(op_tok.upper()) if op_tok else None
+        if op is None:
+            raise ValueError(f"Expected an operator after {value}, got {op_tok!r}")
+        self._consume()
+        next_tok = self._peek()
+        ref = next_tok.upper() if next_tok else ""
+        if ref != "RC" and not ref.endswith(".RC"):
+            raise ValueError(f"Expected RC after {value} {op_tok}, got {next_tok!r}")
+        self._consume()
+        ref_step = ref[: -len(".RC")] if ref != "RC" else None
+        return ReturnCodeCondition(
+            step_name=ref_step or None,
+            operator=_MIRRORED_OP[op],
+            value=int(value),
+        )
 
     def _boolean_test(self, node: ConditionNode) -> ConditionNode:
         """Consume an optional ``= TRUE`` / ``= FALSE`` after ABEND or RUN."""

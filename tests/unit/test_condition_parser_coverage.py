@@ -224,10 +224,8 @@ class TestParserEdgeCases:
         assert parse_condition("STEP1.RC STEP2.ABEND") is None
 
     def test_bare_number_condition(self):
-        """Bare number like '0' treated as RC EQ 0 (lines 392-407)."""
-        node = parse_condition("0")
-        assert isinstance(node, ReturnCodeCondition)
-        assert node.value == 0
+        """A bare number like '0' is unparseable; it used to become RC EQ 0."""
+        assert parse_condition("0") is None
 
     def test_bare_number_with_operator_and_rc(self):
         """Reversed form: '4 GT RC' means RC LT 4 (operator mirrored)."""

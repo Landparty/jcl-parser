@@ -74,6 +74,41 @@ def lint_job(job: Job, config: LintConfig | None = None) -> list[ValidationError
     return findings
 
 
+#: Descriptions of the pseudo-codes that no registered rule carries.
+_PSEUDO_RULE_DESCRIPTIONS = {
+    _RULE_CRASH_CODE: "A lint rule raised an exception while checking the job.",
+    "JCL-GEN-000": "Finding reported without a rule code.",
+}
+
+
+def _rule_descriptions() -> dict[str, str]:
+    """Each registered rule's ``description`` by code (first rule wins)."""
+    descriptions = dict(_PSEUDO_RULE_DESCRIPTIONS)
+    for rule in _RULES:
+        if rule.code and rule.description:
+            descriptions.setdefault(rule.code, rule.description)
+    return descriptions
+
+
+def _sarif_rule(code: str, description: str | None) -> dict[str, object]:
+    """SARIF ``reportingDescriptor`` for *code*.
+
+    The descriptions come from the rule itself, not from one of its
+    findings (whose message describes that one finding, issue #88).  Rules
+    carry no separate short title, so ``shortDescription`` repeats the
+    description.  A code no registered rule carries (a finding from
+    elsewhere) gets its code as ``shortDescription`` and no
+    ``fullDescription``, rather than an invented one.
+    """
+    descriptor: dict[str, object] = {"id": code, "name": code}
+    if description is None:
+        descriptor["shortDescription"] = {"text": code}
+        return descriptor
+    descriptor["shortDescription"] = {"text": description}
+    descriptor["fullDescription"] = {"text": description}
+    return descriptor
+
+
 def to_sarif(
     errors: list[ValidationError],
     tool_name: str = "jclparser",
@@ -82,7 +117,8 @@ def to_sarif(
     """Render a minimal SARIF 2.1.0 report for *errors*.
 
     Produces a single-run document with every distinct ``error_code`` as a
-    rule.  Findings without a code are mapped to rule ``JCL-GEN-000``.
+    rule, described by the registered rule's ``description``.  Findings
+    without a code are mapped to rule ``JCL-GEN-000``.
 
     SARIF 2.1.0 requires every ``physicalLocation`` to carry an
     ``artifactLocation`` (or an ``address``), so one is always emitted;
@@ -96,17 +132,13 @@ def to_sarif(
         "warning": "warning",
         "info": "note",
     }
+    descriptions = _rule_descriptions()
     rules: dict[str, dict] = {}
     results: list[dict] = []
     for err in errors:
         code = err.error_code or "JCL-GEN-000"
         if code not in rules:
-            rules[code] = {
-                "id": code,
-                "name": code,
-                "shortDescription": {"text": code},
-                "fullDescription": {"text": err.message[:120]},
-            }
+            rules[code] = _sarif_rule(code, descriptions.get(code))
         results.append(
             {
                 "ruleId": code,

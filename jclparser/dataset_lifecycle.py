@@ -34,7 +34,8 @@ Usage::
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import re
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
 from .errors import ErrorSeverity, ErrorType, ValidationError
@@ -302,7 +303,222 @@ def _merge_states(
     return merged
 
 
-def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:  # noqa: C901 -- complexity baseline, split when touched
+#: A parenthesised suffix at the end of a dataset name: a PDS member
+#: (``LIB(MEM)``) or a relative GDG generation (``GDG(+1)``).
+_RE_PAREN_SUFFIX = re.compile(r"^(?P<base>[^()]*)\((?P<inner>[^()]*)\)$")
+#: A relative generation number: a signed or unsigned integer.
+_RE_GENERATION = re.compile(r"^(?P<sign>[+-]?)(?P<number>\d+)$")
+
+
+def _library_key(dsn: str) -> str:
+    """The dataset *dsn* allocates, for catalog-state purposes.
+
+    A DISP applies to a whole library, not to the member named with it, so
+    ``P.L(M1)`` and ``P.L(M2)`` are both ``P.L`` (a temporary
+    ``&&TEMP(MEM)`` is ``&&TEMP``).  A relative GDG generation names a
+    dataset of its own and is kept, with its number spelled one way:
+    ``G.H(+01)`` is ``G.H(+1)`` and ``G.H(00)`` / ``G.H(-0)`` are
+    ``G.H(0)``.  What is in the parentheses decides which it is: an integer
+    is a generation, anything else (a member name, a symbol) a member.
+    """
+    match = _RE_PAREN_SUFFIX.match(dsn)
+    if match is None:
+        return dsn
+    base = match.group("base")
+    generation = _RE_GENERATION.match(match.group("inner").strip())
+    if generation is None:
+        return base
+    number = int(generation.group("number"))
+    if number == 0:
+        return f"{base}(0)"
+    return f"{base}({generation.group('sign')}{number})"
+
+
+def _group_by_library(nodes: list[_Node], counts: dict[str, int]) -> list[_Node]:
+    """*nodes* with every event keyed by :func:`_library_key`.
+
+    Events of the names that share a key are renumbered in flattened order
+    (the order :func:`_collect_events` recorded them in), so positions stay
+    comparable within the merged group.  *counts* collects the number of
+    events per key, in order of first appearance.
+    """
+    grouped: list[_Node] = []
+    for node in nodes:
+        if isinstance(node, _Branch):
+            grouped.append(
+                _Branch(
+                    _group_by_library(node.then_nodes, counts),
+                    _group_by_library(node.else_nodes, counts),
+                )
+            )
+            continue
+        events: list[_Event] = []
+        for dsn, _pos, evt in node.events:
+            key = _library_key(dsn)
+            pos = counts.get(key, 0)
+            counts[key] = pos + 1
+            events.append((key, pos, evt))
+        grouped.append(_StepEvents(events, node.path))
+    return grouped
+
+
+class _LifecycleChecker:
+    """Runs the catalog state of every dataset through a job's events."""
+
+    def __init__(self, nodes: list[_Node]) -> None:
+        self.nodes = nodes
+        # Each dataset's allocations (position in flattened order, IF
+        # branches), for the forward-reference heuristic.
+        self.allocations: dict[str, list[tuple[int, _Path]]] = {}
+        for step in _iter_step_events(nodes):
+            for dsn, pos, evt in step.events:
+                if evt.action == "ALLOCATE":
+                    self.allocations.setdefault(dsn, []).append((pos, step.path))
+        # Errors per dataset, keyed by event position, so they come out
+        # grouped by dataset in event order however the branches are walked.
+        self.found: dict[str, list[tuple[int, ValidationError]]] = {}
+
+    def errors(self, order: Iterable[str]) -> list[ValidationError]:
+        """Run the job and return its findings, grouped by dataset in *order*."""
+        self._run(self.nodes, {})
+        errors: list[ValidationError] = []
+        for dsn in order:
+            errors.extend(
+                err for _pos, err in sorted(self.found.get(dsn, []), key=lambda f: f[0])
+            )
+        return errors
+
+    def _allocated_only_later(self, dsn: str, pos: int, path: _Path) -> bool:
+        """True when *dsn* is allocated after *pos*, and not before it, on a
+        path through the job that also runs the event at *pos*: the THEN
+        and ELSE branches of one IF never both run."""
+        on_path = [
+            p for p, alloc in self.allocations.get(dsn, []) if _on_one_path(path, alloc)
+        ]
+        return bool(on_path) and min(on_path) > pos
+
+    def _report(self, dsn: str, pos: int, message: str, evt: DatasetEvent) -> None:
+        self.found.setdefault(dsn, []).append(
+            (
+                pos,
+                ValidationError(
+                    message,
+                    ErrorType.VALIDATION_ERROR,
+                    severity=ErrorSeverity.WARNING,
+                    line_number=evt.line_number,
+                ),
+            )
+        )
+
+    def _check(
+        self, dsn: str, pos: int, evt: DatasetEvent, state: _CatalogState, path: _Path
+    ) -> _CatalogState:
+        cataloged_by = state[0]
+        is_catlg = (
+            evt.disp_normal in _CATLG_VALUES or evt.disp_abnormal in _CATLG_VALUES
+        )
+        if evt.action == "ALLOCATE" and is_catlg and cataloged_by is not None:
+            # Already cataloged and not subsequently deleted/uncataloged.
+            self._report(
+                dsn,
+                pos,
+                f"Dataset '{dsn}' allocated with DISP=NEW,CATLG in step "
+                f"'{evt.step_name}' (DD {evt.dd_name}) but was already "
+                f"cataloged in step '{cataloged_by.step_name}' without "
+                f"an intervening DELETE or UNCATLG",
+                evt,
+            )
+
+        if evt.action in ("OPEN_EXCLUSIVE", "OPEN_SHARED"):
+            self._check_open(dsn, pos, evt, state, path)
+
+        # Only a normal-termination CATLG leaves the dataset cataloged for
+        # the steps that follow: an abnormal one (DISP=(NEW,PASS,CATLG),
+        # DISP=(NEW,KEEP,CATLG)) takes effect only if the step abends, and
+        # the later steps are then normally bypassed with it.  A cataloging
+        # allocation counts at once, so a second NEW,CATLG of the dataset
+        # later in the same step is still a duplicate; the full disposition
+        # is applied at step end by _dispose.
+        if evt.disp_normal in _CATLG_VALUES and cataloged_by is None:
+            return (evt, None)
+        return state
+
+    def _check_open(
+        self, dsn: str, pos: int, evt: DatasetEvent, state: _CatalogState, path: _Path
+    ) -> None:
+        """Checks for an OLD / SHR open.  Not for MOD (EXTEND): it creates the
+        dataset when it is not there, as in the IEFBR14
+        delete-then-DISP=(MOD,CATLG) idiom."""
+        cataloged_by, uncataloged_by = state
+        if uncataloged_by is not None and cataloged_by is None:
+            self._report(
+                dsn,
+                pos,
+                f"Dataset '{dsn}' opened in step '{evt.step_name}' "
+                f"(DD {evt.dd_name}) after being uncataloged in step "
+                f"'{uncataloged_by.step_name}'",
+                evt,
+            )
+
+        # Forward-reference check: dataset opened (OLD or SHR) before it is
+        # allocated anywhere in the job — heuristic warning because the
+        # dataset may already exist in the catalog from a prior run.
+        if self._allocated_only_later(dsn, pos, path):
+            disp_label = "DISP=OLD" if evt.action == "OPEN_EXCLUSIVE" else "DISP=SHR"
+            self._report(
+                dsn,
+                pos,
+                f"Dataset '{dsn}' opened {disp_label} in step "
+                f"'{evt.step_name}' (DD {evt.dd_name}) before it "
+                f"is allocated in a later step — verify the dataset "
+                f"exists in the catalog",
+                evt,
+            )
+
+    @staticmethod
+    def _dispose(evt: DatasetEvent, state: _CatalogState) -> _CatalogState:
+        """Apply *evt*'s normal disposition: the catalog state after the step."""
+        # Track uncatalog dispositions.  Only the normal disposition counts:
+        # an abnormal one (DISP=(OLD,KEEP,UNCATLG)) takes effect only if the
+        # step abends, and the later steps that would then see the dataset
+        # uncataloged are normally bypassed with it.  DELETE removes the
+        # catalog entry along with the dataset.
+        if evt.disp_normal in _UNCATLG_VALUES or evt.disp_normal in _DELETE_VALUES:
+            return (None, evt)
+        # Any disposition that catalogs -- DISP=(NEW,CATLG), but also
+        # DISP=(MOD,CATLG) creating the dataset afresh -- leaves it cataloged.
+        if evt.disp_normal in _CATLG_VALUES and state[0] is None:
+            return (evt, None)
+        return state
+
+    def _run(
+        self, seq: list[_Node], state: dict[str, _CatalogState]
+    ) -> dict[str, _CatalogState]:
+        for node in seq:
+            if isinstance(node, _Branch):
+                # THEN and ELSE never both run: each starts from the state
+                # before the IF, and they meet again at ENDIF.
+                state = _merge_states(
+                    self._run(node.then_nodes, dict(state)),
+                    self._run(node.else_nodes, dict(state)),
+                )
+                continue
+            # Skip temporary datasets — handled by validate_data_dependencies
+            events = [e for e in node.events if not e[0].startswith("&&")]
+            # Dispositions take effect when the step ends, so a DD that
+            # follows DISP=(OLD,DELETE) of the same dataset in the same step
+            # still finds it there: check every DD first ...
+            for dsn, pos, evt in events:
+                state[dsn] = self._check(
+                    dsn, pos, evt, state.get(dsn, (None, None)), node.path
+                )
+            # ... then apply the dispositions, in DD order.
+            for dsn, _pos, evt in events:
+                state[dsn] = self._dispose(evt, state[dsn])
+        return state
+
+
+def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:
     """Validate cross-step dataset lifecycle consistency.
 
     Checks for:
@@ -320,6 +536,13 @@ def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:  # noqa: C901
       step (heuristic; reported as WARNING because the dataset may be
       pre-existing).
 
+    A DISP applies to a whole library, so the members of one PDS
+    (``P.L(M1)``, ``P.L(M2)``) and the library itself are checked as one
+    dataset, reported under the library name; relative GDG generations
+    (``G.H(0)``, ``G.H(+1)``) stay separate datasets, ``G.H(+01)`` being the
+    same as ``G.H(+1)``.  :func:`analyze_dataset_lifecycle` still keys its
+    log by the name as coded.
+
     Temporary datasets (``&&name``) are handled by the existing check in
     :func:`~jclparser.validators.validate_data_dependencies`; this function
     focuses on permanent (cataloged) datasets only.
@@ -330,153 +553,6 @@ def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:  # noqa: C901
     Returns:
         List of :class:`~jclparser.errors.ValidationError` objects.
     """
-    lifecycle: dict[str, list[DatasetEvent]] = {}
-    nodes = _collect_events(job.steps, lifecycle, {})
-    # Each dataset's allocations (position in flattened order, IF branches),
-    # for the forward-reference heuristic.
-    allocations: dict[str, list[tuple[int, _Path]]] = {}
-    for step in _iter_step_events(nodes):
-        for dsn, pos, evt in step.events:
-            if evt.action == "ALLOCATE":
-                allocations.setdefault(dsn, []).append((pos, step.path))
-
-    def _allocated_only_later(dsn: str, pos: int, path: _Path) -> bool:
-        """True when *dsn* is allocated after *pos*, and not before it, on a
-        path through the job that also runs the event at *pos*: the THEN
-        and ELSE branches of one IF never both run."""
-        on_path = [
-            p for p, alloc in allocations.get(dsn, []) if _on_one_path(path, alloc)
-        ]
-        return bool(on_path) and min(on_path) > pos
-
-    # Errors per dataset, keyed by event position, so they come out grouped by
-    # dataset in event order however the branches are walked.
-    found: dict[str, list[tuple[int, ValidationError]]] = {}
-
-    def _report(dsn: str, pos: int, message: str, evt: DatasetEvent) -> None:
-        found.setdefault(dsn, []).append(
-            (
-                pos,
-                ValidationError(
-                    message,
-                    ErrorType.VALIDATION_ERROR,
-                    severity=ErrorSeverity.WARNING,
-                    line_number=evt.line_number,
-                ),
-            )
-        )
-
-    def _check(
-        dsn: str, pos: int, evt: DatasetEvent, state: _CatalogState, path: _Path
-    ) -> _CatalogState:
-        cataloged_by, uncataloged_by = state
-        is_catlg = (
-            evt.disp_normal in _CATLG_VALUES or evt.disp_abnormal in _CATLG_VALUES
-        )
-        # Only a normal-termination CATLG leaves the dataset cataloged for
-        # the steps that follow: an abnormal one (DISP=(NEW,PASS,CATLG),
-        # DISP=(NEW,KEEP,CATLG)) takes effect only if the step abends, and
-        # the later steps are then normally bypassed with it.
-        catalogs_for_later_steps = evt.disp_normal in _CATLG_VALUES
-
-        if evt.action == "ALLOCATE" and is_catlg and cataloged_by is not None:
-            # Already cataloged and not subsequently deleted/uncataloged.
-            _report(
-                dsn,
-                pos,
-                f"Dataset '{dsn}' allocated with DISP=NEW,CATLG in step "
-                f"'{evt.step_name}' (DD {evt.dd_name}) but was already "
-                f"cataloged in step '{cataloged_by.step_name}' without "
-                f"an intervening DELETE or UNCATLG",
-                evt,
-            )
-
-        if evt.action in ("OPEN_EXCLUSIVE", "OPEN_SHARED"):
-            # Use after uncatalog.  Not for MOD (EXTEND): it creates the
-            # dataset when it is not there, as in the IEFBR14
-            # delete-then-DISP=(MOD,CATLG) idiom.
-            if uncataloged_by is not None and cataloged_by is None:
-                _report(
-                    dsn,
-                    pos,
-                    f"Dataset '{dsn}' opened in step '{evt.step_name}' "
-                    f"(DD {evt.dd_name}) after being uncataloged in step "
-                    f"'{uncataloged_by.step_name}'",
-                    evt,
-                )
-
-            # Forward-reference check: dataset opened (OLD or SHR) before it
-            # is allocated anywhere in the job — heuristic warning because
-            # the dataset may already exist in the catalog from a prior run.
-            if _allocated_only_later(dsn, pos, path):
-                disp_label = (
-                    "DISP=OLD" if evt.action == "OPEN_EXCLUSIVE" else "DISP=SHR"
-                )
-                _report(
-                    dsn,
-                    pos,
-                    f"Dataset '{dsn}' opened {disp_label} in step "
-                    f"'{evt.step_name}' (DD {evt.dd_name}) before it "
-                    f"is allocated in a later step — verify the dataset "
-                    f"exists in the catalog",
-                    evt,
-                )
-
-        # A cataloging allocation counts at once, so a second NEW,CATLG of
-        # the dataset later in the same step is still a duplicate; the full
-        # disposition is applied at step end by _dispose.
-        if catalogs_for_later_steps and cataloged_by is None:
-            cataloged_by, uncataloged_by = evt, None
-        return (cataloged_by, uncataloged_by)
-
-    def _dispose(evt: DatasetEvent, state: _CatalogState) -> _CatalogState:
-        """Apply *evt*'s normal disposition: the catalog state after the step."""
-        cataloged_by, uncataloged_by = state
-        # Any disposition that catalogs -- DISP=(NEW,CATLG), but also
-        # DISP=(MOD,CATLG) creating the dataset afresh -- leaves it cataloged.
-        if evt.disp_normal in _CATLG_VALUES and cataloged_by is None:
-            cataloged_by, uncataloged_by = evt, None
-
-        # Track uncatalog dispositions.  Only the normal disposition counts:
-        # an abnormal one (DISP=(OLD,KEEP,UNCATLG)) takes effect only if the
-        # step abends, and the later steps that would then see the dataset
-        # uncataloged are normally bypassed with it.
-        if evt.disp_normal in _UNCATLG_VALUES or evt.disp_normal in _DELETE_VALUES:
-            # DELETE removes the catalog entry along with the dataset.
-            cataloged_by, uncataloged_by = None, evt
-        return (cataloged_by, uncataloged_by)
-
-    def _run(
-        seq: list[_Node], state: dict[str, _CatalogState]
-    ) -> dict[str, _CatalogState]:
-        for node in seq:
-            if isinstance(node, _Branch):
-                # THEN and ELSE never both run: each starts from the state
-                # before the IF, and they meet again at ENDIF.
-                state = _merge_states(
-                    _run(node.then_nodes, dict(state)),
-                    _run(node.else_nodes, dict(state)),
-                )
-                continue
-            # Skip temporary datasets — handled by validate_data_dependencies
-            events = [e for e in node.events if not e[0].startswith("&&")]
-            # Dispositions take effect when the step ends, so a DD that
-            # follows DISP=(OLD,DELETE) of the same dataset in the same step
-            # still finds it there: check every DD first ...
-            for dsn, pos, evt in events:
-                state[dsn] = _check(
-                    dsn, pos, evt, state.get(dsn, (None, None)), node.path
-                )
-            # ... then apply the dispositions, in DD order.
-            for dsn, _pos, evt in events:
-                state[dsn] = _dispose(evt, state[dsn])
-        return state
-
-    _run(nodes, {})
-
-    errors: list[ValidationError] = []
-    for dsn in lifecycle:
-        errors.extend(
-            err for _pos, err in sorted(found.get(dsn, []), key=lambda f: f[0])
-        )
-    return errors
+    counts: dict[str, int] = {}
+    nodes = _group_by_library(_collect_events(job.steps, {}, {}), counts)
+    return _LifecycleChecker(nodes).errors(counts)

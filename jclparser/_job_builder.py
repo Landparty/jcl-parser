@@ -611,9 +611,19 @@ class JobBuilder:
                 self.pending_jes_typed.append(typed)
 
     def _on_output(self, stmt: Statement, line_num: int) -> None:
-        # OUTPUT statement - JES output descriptor; promote to typed model
+        # OUTPUT statement - JES output descriptor; promote to typed model.
+        # Coded after an EXEC it is step-level, before the first EXEC
+        # job-level (or, in a PROC body, procedure-level): DD OUTPUT=*.name
+        # resolution depends on which (#85).
+        step = self.current_step
+        procedure = self.current_procedure
+        output = OutputStatement.from_statement(
+            stmt,
+            step_name=(step.name or "") if step is not None else None,
+            procedure_name=procedure.name if procedure is not None else None,
+        )
         sink = self.job.output_statements if self.job else self.pending_outputs
-        sink.append(OutputStatement.from_statement(stmt))
+        sink.append(output)
 
     def _on_null(self, stmt: Statement, line_num: int) -> None:
         # NULL statement (//) - just ignore, used as delimiter

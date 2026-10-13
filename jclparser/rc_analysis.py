@@ -9,17 +9,20 @@ compares it against (preferring values of the ``{0, 4, 8, 12, 16}`` default
 domain), so the search is exact over 0..4095 -- a range such as
 ``RC GT 4 AND RC LT 8`` is explored.  The predecessors of an
 ``IF`` are the steps that precede it in execution order; a step that may not
-run (it sits inside an ``IF`` branch or carries ``COND=``) is also explored as
-"not run" (:data:`~jclparser.condition_parser.NOT_RUN`), so ``STEP.RUN`` /
-``NOT STEP.RUN`` and tests of a skipped step's RC are judged correctly.  Step-level ``COND=``
-guards themselves are not analysed.
+run (it sits inside an ``IF`` branch or carries ``COND=``, or -- when abends
+are explored -- follows a step that may abend, i.e. any step but the first) is
+also explored as "not run" (:data:`~jclparser.condition_parser.NOT_RUN`), so
+``STEP.RUN`` / ``NOT STEP.RUN`` and tests of a skipped step's RC are judged
+correctly.  Step-level ``COND=`` guards themselves are not analysed.
 
 The analysis is conservative: it reports a step as *unreachable* only when
 the guard evaluates to ``False`` for every combination in the domain.  A
 condition whose search would exceed :data:`MAX_COMBINATIONS` is not analysed
-and is listed in :attr:`FeasibilityReport.unanalysed_conditions` instead.  It
-does not attempt to prove the guard satisfiable under runtime-only state
-like dynamic ABENDs or external system conditions.
+and is listed in :attr:`FeasibilityReport.unanalysed_conditions` instead; so
+is, with ``include_abends=False``, a condition testing ``RUN`` or ``ABEND``,
+whose outcome depends on the abends that mode does not model.  It does not
+attempt to prove the guard satisfiable under runtime-only state like external
+system conditions.
 
 Usage::
 
@@ -41,6 +44,7 @@ from .condition_parser import (
     AbendCondition,
     ConditionNode,
     ReturnCodeCondition,
+    RunCondition,
     StepResult,
 )
 from .model import ConditionalBlock, Step, iter_execution_steps
@@ -75,8 +79,9 @@ class FeasibilityReport:
     always_skipped: list[str] = field(default_factory=list)
     contradictory_conditions: list[tuple[str, str]] = field(default_factory=list)
     duplicate_if_branches: list[tuple[int, str]] = field(default_factory=list)
-    #: ``(condition, reason)`` for each IF whose search was too large to run.
-    #: Nothing is claimed about those branches; they are not findings, so
+    #: ``(condition, reason)`` for each IF that was not judged: its search
+    #: was too large to run, or (with ``include_abends=False``) it tests
+    #: ``RUN`` / ``ABEND``.  Nothing is claimed about those branches; they are not findings, so
     #: :meth:`is_empty` ignores them.
     unanalysed_conditions: list[tuple[str, str]] = field(default_factory=list)
 
@@ -94,8 +99,13 @@ class FeasibilityReport:
 _ANY_PROCSTEP = ".*"
 
 
-def _collect_optional_steps(job: Job) -> frozenset[str]:
+def _collect_optional_steps(job: Job, after_abends: bool = False) -> frozenset[str]:
     """Names of steps that may not run: inside an IF branch, or with ``COND=``.
+
+    With *after_abends*, every step after the first in execution order may
+    not run as well: any predecessor may abend, and z/OS then bypasses the
+    following steps, so ``NOT S1.RUN`` is the classic abend-recovery test
+    (issue #86).  Only the first step of the job is certain to run.
 
     A step that calls a PROC (on a job not yet exploded) is entered as
     ``NAME.*``: the PROC's own steps are not in the job, so whether one of
@@ -116,6 +126,12 @@ def _collect_optional_steps(job: Job) -> frozenset[str]:
                     names.add(item.name.upper() + _ANY_PROCSTEP)
 
     _walk(job.steps, False)
+    if after_abends:
+        names.update(
+            step.name.upper()
+            for step in itertools.islice(iter_execution_steps(job.steps), 1, None)
+            if step.name
+        )
     return frozenset(names)
 
 
@@ -300,7 +316,153 @@ def _evaluate_over_domain(
     return (ever_true, ever_false, ever_unknown)
 
 
-def compute_feasible_paths(  # noqa: C901 -- complexity baseline, split when touched
+def _tests_run_or_abend(ast: ConditionNode) -> bool:
+    """True when *ast* contains a ``RUN`` or ``ABEND`` test (any polarity)."""
+    if isinstance(ast, (RunCondition, AbendCondition)):
+        return True
+    return any(
+        isinstance(child, ConditionNode) and _tests_run_or_abend(child)
+        for child in (getattr(ast, attr, None) for attr in ("operand", "left", "right"))
+    )
+
+
+#: Why an IF testing ``RUN`` / ``ABEND`` is not judged without abends.
+_ABENDS_NOT_MODELLED = (
+    "not analysed: the condition tests RUN or ABEND, which depend on step "
+    "abends, and include_abends=False does not model them"
+)
+
+
+class _FeasibilityWalker:
+    """Walks a job's steps in execution order and judges each IF."""
+
+    def __init__(
+        self,
+        report: FeasibilityReport,
+        rc_domain: tuple[int, ...],
+        include_abends: bool,
+        optional_steps: frozenset[str],
+    ) -> None:
+        self.report = report
+        self.rc_domain = rc_domain
+        self.include_abends = include_abends
+        self.optional_steps = optional_steps
+        # Not a ternary: Cython's type inference rejects unifying two
+        # differently-sized tuple literals in one conditional expression.
+        self.abend_values: tuple[bool, ...]
+        if include_abends:
+            self.abend_values = (False, True)
+        else:
+            self.abend_values = (False,)
+
+    def walk(
+        self,
+        steps: list[Step | ConditionalBlock],
+        signatures: list[str],
+        preds_before: list[str],
+    ) -> list[str]:
+        """Walk *steps*; return the predecessor list after the last of them.
+
+        *preds_before* are the steps that precede *steps* in execution order
+        (for a THEN/ELSE branch: everything before the IF), so an IF is never
+        evaluated against a step that runs after it.
+        """
+        running_preds = list(preds_before)
+        for item in steps:
+            if isinstance(item, ConditionalBlock):
+                # An un-parsed condition can't be analysed, but its branches
+                # are still walked for duplicate IF signatures.
+                if item.condition_ast is not None:
+                    self._judge(item, item.condition_ast, running_preds)
+                    # Look for duplicate IF signatures across siblings.
+                    if item.condition in signatures:
+                        self.report.duplicate_if_branches.append(
+                            (item.line_number, item.condition)
+                        )
+                running_preds = self._walk_branches(item, signatures, running_preds)
+            elif isinstance(item, Step) and item.name:
+                running_preds.append(item.name.upper())
+        return running_preds
+
+    def _walk_branches(
+        self, block: ConditionalBlock, signatures: list[str], preds_before: list[str]
+    ) -> list[str]:
+        then_preds = self.walk(
+            block.then_steps, signatures + [block.condition], preds_before
+        )
+        else_preds = self.walk(
+            block.else_steps, signatures + [f"NOT({block.condition})"], preds_before
+        )
+        # After ENDIF, a step of either branch may have run.
+        return list(dict.fromkeys(then_preds + else_preds[len(preds_before) :]))
+
+    def _outcome(
+        self, block: ConditionalBlock, ast: ConditionNode, preds: list[str]
+    ) -> tuple[bool, bool, bool] | None:
+        """``(ever_true, ever_false, ever_unknown)`` for *block*, or ``None``
+        (recorded as unanalysed) when nothing may be claimed about it."""
+        if not self.include_abends and _tests_run_or_abend(ast):
+            # Whether a step ran, or abended, depends on predecessor abends,
+            # which are not explored here: ``NOT S1.RUN`` is true when an
+            # earlier step abends (issue #86), so judge nothing.
+            self.report.unanalysed_conditions.append(
+                (block.condition, _ABENDS_NOT_MODELLED)
+            )
+            return None
+        outcome = _evaluate_over_domain(
+            ast,
+            predecessors=preds,
+            rc_domain=self.rc_domain,
+            abend_values=self.abend_values,
+            optional_steps=self.optional_steps,
+        )
+        if isinstance(outcome, int):
+            # Too many combinations to search: claim nothing.
+            self.report.unanalysed_conditions.append(
+                (
+                    block.condition,
+                    (
+                        f"not analysed: {outcome} outcome combinations "
+                        f"exceed the limit of {MAX_COMBINATIONS}"
+                    ),
+                )
+            )
+            return None
+        return outcome
+
+    def _judge(
+        self, block: ConditionalBlock, ast: ConditionNode, preds: list[str]
+    ) -> None:
+        outcome = self._outcome(block, ast, preds)
+        if outcome is None:
+            return
+        ever_true, ever_false, ever_unknown = outcome
+        # Only mark THEN as unreachable / ELSE as dead code when every
+        # evaluation was concrete and *none* of them produced the relevant
+        # outcome.  An unknown (None) evaluation could be either outcome --
+        # typically a named step left out of the bounded search -- so any
+        # unknown means "say nothing"; treating it as false reported
+        # reachable branches as dead (issue #61).
+        if ever_unknown or not (ever_true or ever_false):
+            return
+        if not ever_true:
+            self.report.unreachable_steps.extend(
+                step.name
+                for step in iter_execution_steps(block.then_steps)
+                if step.name
+            )
+            self.report.contradictory_conditions.append(
+                (block.condition, "never true over RC domain")
+            )
+        if not ever_false:
+            self.report.always_skipped.extend(
+                step.name
+                for step in iter_execution_steps(block.else_steps)
+                if step.name
+            )
+
+
+def compute_feasible_paths(
     job: Job,
     rc_domain: tuple[int, ...] = DEFAULT_RC_DOMAIN,
     include_abends: bool = True,
@@ -316,113 +478,19 @@ def compute_feasible_paths(  # noqa: C901 -- complexity baseline, split when tou
             tested uses its first value.  Default covers the canonical JCL
             "success / warning / error / severe / fatal" set.
         include_abends: When True, also explore the ``abended`` flag per
-            predecessor to exercise ``ABEND`` / ``NOT ABEND`` atoms.
+            predecessor to exercise ``ABEND`` / ``NOT ABEND`` atoms, and
+            explore every step after the first as possibly not run (an
+            abend bypasses the steps after it).  When False, abends are not
+            modelled, so an IF testing ``RUN`` or ``ABEND`` is not judged:
+            it goes to :attr:`FeasibilityReport.unanalysed_conditions`.
 
     Returns:
         :class:`FeasibilityReport` aggregating the findings.
     """
     report = FeasibilityReport()
-    optional_steps = _collect_optional_steps(job)
-    # Not a ternary: Cython's type inference rejects unifying two
-    # differently-sized tuple literals in one conditional expression, and
-    # this keeps the module compilable.
-    abend_values: tuple[bool, ...]
-    if include_abends:
-        abend_values = (False, True)
-    else:
-        abend_values = (False,)
-
-    def _walk(  # noqa: C901 -- complexity baseline, split when touched
-        steps: list[Step | ConditionalBlock],
-        enclosing_condition_signatures: list[str],
-        preds_before: list[str],
-    ) -> list[str]:
-        """Walk *steps*; return the predecessor list after the last of them.
-
-        *preds_before* are the steps that precede *steps* in execution order
-        (for a THEN/ELSE branch: everything before the IF), so an IF is never
-        evaluated against a step that runs after it.
-        """
-        running_preds = list(preds_before)
-        for item in steps:
-            if isinstance(item, ConditionalBlock):
-                ast = item.condition_ast
-                if ast is None:
-                    # Can't analyse un-parsed conditions — still recurse to
-                    # catch duplicate THEN/ELSE textual signatures below.
-                    running_preds = _walk_branches(
-                        item, enclosing_condition_signatures, running_preds
-                    )
-                    continue
-
-                outcome = _evaluate_over_domain(
-                    ast,
-                    predecessors=running_preds,
-                    rc_domain=rc_domain,
-                    abend_values=abend_values,
-                    optional_steps=optional_steps,
-                )
-                if isinstance(outcome, int):
-                    # Too many combinations to search: claim nothing.
-                    report.unanalysed_conditions.append(
-                        (
-                            item.condition,
-                            (
-                                f"not analysed: {outcome} outcome combinations "
-                                f"exceed the limit of {MAX_COMBINATIONS}"
-                            ),
-                        )
-                    )
-                    ever_true, ever_false, ever_unknown = False, False, True
-                else:
-                    ever_true, ever_false, ever_unknown = outcome
-                # Only mark THEN as unreachable / ELSE as dead code when
-                # every evaluation was concrete and *none* of them produced
-                # the relevant outcome.  An unknown (None) evaluation could
-                # be either outcome -- typically a named step left out of
-                # the bounded search -- so any unknown means "say nothing";
-                # treating it as false reported reachable branches as dead
-                # (issue #61).
-                has_concrete = (ever_true or ever_false) and not ever_unknown
-                if has_concrete and not ever_true:
-                    for step in iter_execution_steps(item.then_steps):
-                        if step.name:
-                            report.unreachable_steps.append(step.name)
-                    report.contradictory_conditions.append(
-                        (item.condition, "never true over RC domain")
-                    )
-                if has_concrete and not ever_false and item.else_steps:
-                    for step in iter_execution_steps(item.else_steps):
-                        if step.name:
-                            report.always_skipped.append(step.name)
-
-                # Look for duplicate IF signatures across siblings.
-                if item.condition in enclosing_condition_signatures:
-                    report.duplicate_if_branches.append(
-                        (item.line_number, item.condition)
-                    )
-
-                running_preds = _walk_branches(
-                    item, enclosing_condition_signatures, running_preds
-                )
-            elif isinstance(item, Step):
-                if item.name:
-                    running_preds.append(item.name.upper())
-        return running_preds
-
-    def _walk_branches(
-        block: ConditionalBlock, signatures: list[str], preds_before: list[str]
-    ) -> list[str]:
-        then_preds = _walk(
-            block.then_steps, signatures + [block.condition], preds_before
-        )
-        else_preds = _walk(
-            block.else_steps, signatures + [f"NOT({block.condition})"], preds_before
-        )
-        # After ENDIF, a step of either branch may have run.
-        return list(dict.fromkeys(then_preds + else_preds[len(preds_before) :]))
-
-    _walk(job.steps, [], [])
+    optional_steps = _collect_optional_steps(job, after_abends=include_abends)
+    walker = _FeasibilityWalker(report, rc_domain, include_abends, optional_steps)
+    walker.walk(job.steps, [], [])
     return report
 
 
