@@ -118,7 +118,7 @@ Line counts as of 2026-10-08 (`wc -l`).
 | `jes_statements.py` | 382 | Typed JES2/JES3 control statements |
 | `jcl_file_type.py` | 279 | JCL vs PROC detection |
 | `system_symbols.py` | 253 | System symbol providers |
-| `utils.py` | 228 | `read_source()`, `normalize_jcl_line()`, `instream_delimiter()`, `MAX_LIBRARY_MEMBER_BYTES` |
+| `utils.py` | 228 | `read_source()`, `normalize_jcl_line()` / `normalize_jcl_lines()`, `instream_delimiter()`, `MAX_LIBRARY_MEMBER_BYTES`, `MAX_SYMBOL_VALUE_LENGTH` |
 | `errors.py` | 173 | Exception hierarchy |
 | `profiling.py` | 147 | `FunctionProfile`, `ProfilingResult` |
 | `cli.py` | 966 | `jcl-parser` CLI |

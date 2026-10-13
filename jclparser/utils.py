@@ -10,6 +10,7 @@ from __future__ import annotations
 import builtins
 import errno
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -94,21 +95,56 @@ def jcl_value_text(value: Any) -> str:
     return str(value)
 
 
-def is_continued_card_image(line: str) -> bool:
+def _continues_on_next_record(line: str) -> bool:
+    """True if a 72-character ``//`` statement record leaves its operand open
+    at column 71: a trailing comma, or an unclosed quoted string."""
+    if not line.startswith("//") or line.startswith("//*"):
+        return False
+    return line[70] == "," or line[:71].count("'") % 2 == 1
+
+
+def _is_continuation_record(line: str) -> bool:
+    """True if *line* is a ``//`` record with a blank name field and operands."""
+    return line.startswith("// ") and bool(line[3:].strip())
+
+
+def _has_column_72_indicator(line: str, next_line: str | None) -> bool:
+    """True if column 72 of a 72-character record is a continuation indicator.
+
+    Such a record is a fixed-format card whose sequence field was trimmed.
+    A blank column 71 says so on its own. With column 71 non-blank, the
+    record could equally be an editor line whose last character is content,
+    so column 72 counts as the indicator only when the operand is left open
+    at column 71 (trailing comma or unclosed quote) *and* the next record,
+    *next_line*, is a continuation (issue #80).
+    """
+    if len(line) != 72 or line[71].isspace():
+        return False
+    if line[70] == " ":
+        return True
+    return (
+        next_line is not None
+        and _continues_on_next_record(line)
+        and _is_continuation_record(next_line)
+    )
+
+
+def is_continued_card_image(line: str, next_line: str | None = None) -> bool:
     """Return ``True`` if raw record *line* is a card image continued in column 72.
 
     Exactly the records :func:`normalize_jcl_line` takes a non-blank column-72
-    continuation indicator off. For such a record the statement text fills
-    columns 1-71, so blanks up to column 71 are known to be coded -- which
-    matters when a quoted string is continued: it runs through column 71
-    and its trailing blanks are part of the value (issue #65).
+    continuation indicator off (*next_line* is the raw record after *line*,
+    as there). For such a record the statement text fills columns 1-71, so
+    blanks up to column 71 are known to be coded -- which matters when a
+    quoted string is continued: it runs through column 71 and its trailing
+    blanks are part of the value (issue #65).
     """
-    if len(line) >= 80 or (len(line) == 72 and line[70] == " "):
+    if len(line) >= 80:
         return not line[71].isspace()
-    return False
+    return _has_column_72_indicator(line, next_line)
 
 
-def normalize_jcl_line(line: str) -> str:
+def normalize_jcl_line(line: str, next_line: str | None = None) -> str:
     """
     Normalize JCL line by removing extra whitespace and handling continuations.
 
@@ -123,13 +159,18 @@ def normalize_jcl_line(line: str) -> str:
     indicating a true mainframe fixed-width record.  Lines shorter than 80
     characters are assumed to come from a modern text editor where all
     characters are actual JCL content and must not be truncated — with one
-    exception: a record of exactly 72 characters whose column 71 is blank and
-    whose column 72 is not is a fixed-format record that had its trailing
-    sequence field trimmed, so its column-72 character is a continuation
-    indicator rather than content.
+    exception: a record of exactly 72 characters whose column 72 is a
+    continuation indicator is a fixed-format record that had its trailing
+    sequence field trimmed. That is the case when column 71 is blank, or when
+    column 71 leaves the operand open (a trailing comma or an unclosed quoted
+    string) and *next_line*, the raw record after *line*, is a continuation
+    record (``//`` and a blank name field). Without *next_line* only the
+    blank-column-71 case applies. Use :func:`normalize_jcl_lines` for a whole
+    source.
 
     Args:
         line: Raw JCL line
+        next_line: The raw record after *line*, if any
 
     Returns:
         Normalized line
@@ -138,10 +179,7 @@ def normalize_jcl_line(line: str) -> str:
     # column-72 continuation indicator (0-indexed 71).  Only do this for full
     # 80-column mainframe records; shorter lines are modern text-editor JCL
     # where every character is content.
-    if len(line) >= 80:
-        line = line[:71]
-    elif len(line) == 72 and line[70] == " " and not line[71].isspace():
-        # Sequence field trimmed away, continuation indicator left behind.
+    if len(line) >= 80 or _has_column_72_indicator(line, next_line):
         line = line[:71]
 
     # Remove trailing whitespace but preserve leading spaces for continuation detection
@@ -151,6 +189,14 @@ def normalize_jcl_line(line: str) -> str:
     line = line.expandtabs(4)
 
     return line
+
+
+def normalize_jcl_lines(raw_lines: Sequence[str]) -> list[str]:
+    """:func:`normalize_jcl_line` every record of *raw_lines*, with lookahead."""
+    return [
+        normalize_jcl_line(line, raw_lines[i + 1] if i + 1 < len(raw_lines) else None)
+        for i, line in enumerate(raw_lines)
+    ]
 
 
 #: Longest value a symbol substitution may produce: a resolved SET value, a
