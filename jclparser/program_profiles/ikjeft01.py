@@ -13,7 +13,11 @@ from __future__ import annotations
 
 import re
 
-from ._invoked import collect_control_text, invoked_and_sql_notes
+from ._invoked import (
+    _normalize_control_text,
+    collect_control_text,
+    invoked_and_sql_notes,
+)
 from .base import ProgramAnalysis, ProgramProfile
 
 _RE_DSN = re.compile(r"\bDSN\s+SYSTEM\s*\(\s*([A-Z0-9]+)\s*\)", re.IGNORECASE)
@@ -25,11 +29,15 @@ class IKJEFT01Profile(ProgramProfile):
 
     def analyze(self, step) -> ProgramAnalysis:
         combined = collect_control_text(step)
+        # Scan the commands, not the text as coded: a comment is not a
+        # command, and ``DSN -`` continued onto ``SYSTEM(DB2P)`` is one.
+        # extract_invoked_programs reads RUN PROGRAM / CALL the same way.
+        commands = _normalize_control_text(combined)
 
         notes: list[str] = []
-        for m in _RE_DSN.finditer(combined):
+        for m in _RE_DSN.finditer(commands):
             notes.append(f"DSN SYSTEM({m.group(1).upper()})")
-        if _RE_BIND.search(combined):
+        if _RE_BIND.search(commands):
             notes.append("BIND PACKAGE/PLAN")
 
         # Application programs invoked from the control stream (RUN PROGRAM /

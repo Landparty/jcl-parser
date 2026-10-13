@@ -719,6 +719,30 @@ class TestIDCAMSContinuedCommands:
         ]
 
 
+class TestIKJEFT01ReadsCommandsNotComments:
+    """DSN SYSTEM / BIND notes come from the commands, as RUN PROGRAM does."""
+
+    def _notes(self, systsin: str) -> list[str]:
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IKJEFT01\n"
+            "//SYSTSIN  DD *\n" + systsin + "/*\n"
+        )
+        return analyze_job(jp.parse_jcl(src))[0].notes
+
+    def test_continued_dsn_command(self):
+        notes = self._notes(
+            " DSN -\n   SYSTEM(DB2P)\n RUN -\n   PROGRAM(PAYROLL) PLAN(PAYPLAN)\n END\n"
+        )
+        assert notes == ["DSN SYSTEM(DB2P)", "RUN PROGRAM(PAYROLL)"]
+
+    def test_commented_out_commands_are_not_notes(self):
+        notes = self._notes(
+            " /* DSN SYSTEM(DB2T) BIND PLAN(OLDPLAN) */\n DSN SYSTEM(DB2P)\n END\n"
+        )
+        assert notes == ["DSN SYSTEM(DB2P)"]
+
+
 class TestIDCAMSCommandBoundaries:
     """A command after THEN / ELSE or a ``;`` is a command too."""
 
