@@ -128,7 +128,7 @@ EXEC keyword parameters coded on an `EXEC procname` statement (`ACCT`, `ADDRSPC`
 | `CircularProcedureError` | PROC A calls PROC B which calls PROC A |
 | `ExplosionDepthError` | Nesting deeper than `max_depth` |
 | `UndefinedSymbolError` | `&SYMBOL` undefined (only with `strict_symbols=True`; applies to plain steps' EXEC parameters as well as PROC steps) |
-| `JCLStructureError` | A symbol's nested values expand to more than `_MAX_NESTED_EXPANSION_CHARS` (1,000,000) characters in one substitution |
+| `JCLStructureError` | A substitution would splice in more than `utils.MAX_SYMBOL_VALUE_LENGTH` (65,536) characters of symbol values (only with `strict_symbols=True`; otherwise the text is left unresolved with a warning on `exploded_job.warnings`, #70) |
 
 **Expansion bounds.** A symbol whose value refers back to itself (`A='&A'`, directly or via other
 symbols) is a cycle: the reference is left as written instead of being re-expanded. Fan-out over

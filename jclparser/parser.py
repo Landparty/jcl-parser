@@ -137,7 +137,7 @@ def _parse_jcl_core(
     )
 
     scanned = _merge_source_lines(content)
-    job = _build_job(scanned, config)
+    job = _build_job(scanned, config, strict=strict_mode)
 
     # Anything the line-classification pass discarded or repaired (a comment
     # field that looked like operands, an unterminated CNTL block) is reported
@@ -156,7 +156,7 @@ def _parse_jcl_core(
     if strict_mode and not job.steps:
         enforce_strict_dd_structure(content)
 
-    _resolve_references(job, expanded_includes)
+    _resolve_references(job, expanded_includes, strict=strict_mode)
 
     if strict_mode and validate_job:
         _raise_on_fatal_findings(job)
@@ -208,13 +208,17 @@ def _expand_includes(
     return content, expanded
 
 
-def _build_job(scanned: ScannedSource, config: ParserConfig | None) -> Job:
+def _build_job(
+    scanned: ScannedSource, config: ParserConfig | None, *, strict: bool = False
+) -> Job:
     """Run the parse loop over the scanned source lines.
 
     The builder holds all loop state and has one handler per statement type
     (see jclparser/_job_builder.py).
     """
-    builder = JobBuilder(dialect=config.dialect if config is not None else "standard")
+    builder = JobBuilder(
+        dialect=config.dialect if config is not None else "standard", strict=strict
+    )
     for line, line_num in scanned.merged_lines:
         # Handle inline data continuation
         if builder.consume_inline_data(line):
@@ -250,7 +254,9 @@ def _build_job(scanned: ScannedSource, config: ParserConfig | None) -> Job:
     return builder.finish()
 
 
-def _resolve_references(job: Job, expanded_includes: list[str]) -> None:
+def _resolve_references(
+    job: Job, expanded_includes: list[str], *, strict: bool = False
+) -> None:
     """Post-parse passes that need the whole job: INCLUDEs, OUTPUT=, SET."""
     # Record any INCLUDE members that were expanded during pre-processing.
     # Members resolved before the main parse loop never reach the INCLUDE
@@ -271,7 +277,7 @@ def _resolve_references(job: Job, expanded_includes: list[str]) -> None:
             "resolving %d SET symbol(s) across DD statements",
             len(job.set_statements),
         )
-        resolve_set_symbols(job)
+        resolve_set_symbols(job, strict=strict)
 
 
 def _raise_on_fatal_findings(job: Job) -> None:

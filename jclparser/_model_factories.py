@@ -21,13 +21,22 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from .errors import JCLSyntaxError
 from .model import DDStatement, Job, Statement, Step
-from .utils import POSITIONAL_PARAM_PREFIX, is_positional_key
+from .utils import MAX_SYMBOL_VALUE_LENGTH, POSITIONAL_PARAM_PREFIX, is_positional_key
 
 _SET_SYMBOL_PATTERN = re.compile(r"&&|&([A-Z0-9@#$]+)\.?")
 
 
-def _resolve_set_value(value: str, known_symbols: dict[str, str]) -> str:
+def _resolve_set_value(
+    value: str,
+    known_symbols: dict[str, str],
+    *,
+    symbol: str = "",
+    line_number: int = 0,
+    strict: bool = False,
+    warnings: list[str] | None = None,
+) -> str:
     """Resolve &SYMBOL references in a SET value using already-accumulated SET symbols.
 
     Mirrors the mainframe rule: SET values are evaluated left-to-right so a
@@ -36,15 +45,56 @@ def _resolve_set_value(value: str, known_symbols: dict[str, str]) -> str:
     itself holds a "&&NAME" temporary-dataset marker (e.g. ``SET
     MYTEMP=&&WORK``) before it ever reaches a DD statement. That collapse is
     explode_job()'s job (Tier 2), not this Tier-1 SET-value resolution.
-    """
 
-    def _replacer(m: re.Match[str]) -> str:
+    A resolved value longer than :data:`~jclparser.utils.MAX_SYMBOL_VALUE_LENGTH`
+    is never built (#70): its length is computed first, and the value is
+    returned unresolved with a message on *warnings* -- or, when *strict*,
+    :class:`~jclparser.errors.JCLSyntaxError` is raised. *symbol* and
+    *line_number* only label that message.
+    """
+    matches = list(_SET_SYMBOL_PATTERN.finditer(value))
+    if not matches:
+        return value
+
+    def _replacement(m: re.Match[str]) -> str:
         if m.group(0) == "&&":
             return "&&"
-        sym = m.group(1).upper()
-        return known_symbols.get(sym, m.group(0))
+        return known_symbols.get(m.group(1).upper(), m.group(0))
 
-    return _SET_SYMBOL_PATTERN.sub(_replacer, value)
+    replacements = [_replacement(m) for m in matches]
+    length = len(value) + sum(
+        len(r) - len(m.group(0)) for m, r in zip(matches, replacements)
+    )
+    if length > MAX_SYMBOL_VALUE_LENGTH:
+        _report_set_overflow(symbol, length, line_number, strict, warnings)
+        return value
+    parts: list[str] = []
+    pos = 0
+    for m, r in zip(matches, replacements):
+        parts.append(value[pos : m.start()])
+        parts.append(r)
+        pos = m.end()
+    parts.append(value[pos:])
+    return "".join(parts)
+
+
+def _report_set_overflow(
+    symbol: str,
+    length: int,
+    line_number: int,
+    strict: bool,
+    warnings: list[str] | None,
+) -> None:
+    """Raise (strict) or warn that SET *symbol* would resolve to *length* chars."""
+    message = (
+        f"SET symbol &{symbol or '?'} would resolve to {length:,} characters, "
+        f"more than the {MAX_SYMBOL_VALUE_LENGTH:,}-character limit"
+    )
+    if strict:
+        raise JCLSyntaxError(message, line_number)
+    if warnings is not None:
+        prefix = f"Line {line_number}: " if line_number else ""
+        warnings.append(f"{prefix}{message}; value left unresolved")
 
 
 def _has_unresolved_symbol_ref(

@@ -31,7 +31,7 @@ from .errors import JCLSyntaxError
 from .utils import (
     instream_delimiter,
     is_continued_card_image,
-    normalize_jcl_line,
+    normalize_jcl_lines,
     split_source_lines,
 )
 
@@ -60,7 +60,7 @@ def _merge_source_lines(content: str) -> ScannedSource:
     or garbled records).
     """
     raw_lines = split_source_lines(content)
-    lines = [normalize_jcl_line(line) for line in raw_lines]
+    lines = normalize_jcl_lines(raw_lines)
 
     classifier = _RecordClassifier(lines)
     jcl_indices = classifier.run()
@@ -116,7 +116,10 @@ def merge_continuations(
         card_images={
             n
             for n, orig in enumerate(indices)
-            if is_continued_card_image(raw_lines[orig])
+            if is_continued_card_image(
+                raw_lines[orig],
+                raw_lines[orig + 1] if orig + 1 < len(raw_lines) else None,
+            )
         },
     )
 
