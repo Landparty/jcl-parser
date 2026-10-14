@@ -174,6 +174,10 @@ class JobBuilder:
         #: only if some SET symbol is redefined after it was first set.
         self.job_level_steps: list[Step] = []
         self.set_redefined = False
+        #: Steps of in-stream / cataloged procedures with the procedure they
+        #: belong to; finish() prunes their ``set_symbols`` snapshot the same
+        #: way (against the procedure's own final SET table).
+        self.procedure_steps: list[tuple[Procedure, Step]] = []
         self.pending_exported: set[str] = set()
         self.pending_jcllib: list[str] = []
         self.pending_includes: list[str] = []
@@ -315,6 +319,11 @@ class JobBuilder:
                 **self.job.set_statements,
             }
             self.job_level_steps.append(self.current_step)
+        elif self.current_procedure is not None:
+            # A SET inside the procedure is in effect from where it is coded,
+            # so this step sees the procedure's SET values as they stand now.
+            self.current_step.set_symbols = dict(self.current_procedure.set_statements)
+            self.procedure_steps.append((self.current_procedure, self.current_step))
         self.in_joblib_concat = False  # JOBLIB concatenation ends at first EXEC
         self.concat_override_key = None
 
@@ -817,6 +826,12 @@ class JobBuilder:
         for step in self.job_level_steps:
             if not self.set_redefined or all(
                 job.set_statements.get(k) == v
+                for k, v in (step.set_symbols or {}).items()
+            ):
+                step.set_symbols = None
+        for procedure, step in self.procedure_steps:
+            if all(
+                procedure.set_statements.get(k) == v
                 for k, v in (step.set_symbols or {}).items()
             ):
                 step.set_symbols = None
