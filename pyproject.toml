@@ -7,7 +7,7 @@ name = "jcl-parser"
 version = "2.0.2"
 description = "Parse IBM JCL (Job Control Language) scripts into Python objects"
 authors = [
-    {name = "JCL Parser Team", email = "team@jclparser.dev"}
+    {name = "Samuel Dion", email = "sam94dion@gmail.com"}
 ]
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}

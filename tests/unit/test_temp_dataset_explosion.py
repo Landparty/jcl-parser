@@ -96,3 +96,26 @@ class TestNestedProcTempDatasetValue:
 
     def test_nested_exec_override_still_collapses(self, nested_steps):
         assert nested_steps["S1.PS1.QS1"].parameters["PARM"] == "A&B"
+
+    def test_nested_call_uses_set_value_in_effect_at_each_step(self):
+        jcl = NESTED_JCL.replace(
+            "//PS1      EXEC INNER,TT='&&TMP2',PARM.QS1='A&&B'\n",
+            "//         SET TT='&&TMP2',ARG=A\n"
+            "//PS1      EXEC INNER,TT=&TT,PARM.QS1='&ARG&&B'\n"
+            "//         SET TT='&&TMP3',ARG=C\n"
+            "//PS2      EXEC INNER,TT=&TT,PARM.QS1='&ARG&&D'\n",
+        )
+        job = parse_jcl(jcl).explode()
+        steps = {s.name: s for s in iter_execution_steps(job.steps)}
+
+        for name, dataset, parm in (
+            ("S1.PS1.QS1", "&&TMP2", "A&B"),
+            ("S1.PS2.QS1", "&&TMP3", "C&D"),
+        ):
+            step = steps[name]
+            assert step.parameters["PARM"] == parm
+            assert [dd.dataset_name for dd in step.dd_statements] == [
+                dataset,
+                f"{dataset}.A",
+            ]
+            assert all(dd.is_temporary() for dd in step.dd_statements)

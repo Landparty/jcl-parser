@@ -114,7 +114,7 @@ Line counts as of 2026-10-08 (`wc -l`).
 | `dataset_lifecycle.py` | 558 | Cross-step dataset lifecycle analysis |
 | `rc_analysis.py` | 502 | RC feasibility (`compute_feasible_paths`) |
 | `metrics.py` | 167 | `compute_metrics` |
-| `sql_detector.py` | 232 | SQL / DB2 detection |
+| `sql_detector.py` | 285 | SQL / DB2 detection |
 | `jes_statements.py` | 382 | Typed JES2/JES3 control statements |
 | `jcl_file_type.py` | 279 | JCL vs PROC detection |
 | `system_symbols.py` | 253 | System symbol providers |

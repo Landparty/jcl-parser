@@ -78,6 +78,15 @@ NON_SQL_CONTROL_PROGRAMS: frozenset[str] = frozenset(
     }
 )
 
+# DB2 online-utility programs.  Their in-stream data is utility control
+# statements (``RUNSTATS ... UPDATE ALL``, ``MODIFY RECOVERY ... DELETE AGE(n)``)
+# whose options reuse SQL verbs; only the SQL inside an ``EXEC SQL ...
+# ENDEXEC`` utility statement is SQL.
+DB2_UTILITY_CONTROL_PROGRAMS: frozenset[str] = frozenset({"DSNUTILB"})
+
+_EXEC_SQL_RE = re.compile(r"\bEXEC\s+SQL\b", re.IGNORECASE)
+_ENDEXEC_RE = re.compile(r"\bENDEXEC\b", re.IGNORECASE)
+
 # SYSTSIN holds TSO commands (``DELETE``, ``RENAME`` and ``ALTER`` are TSO
 # commands too); only the DB2 DSN subcommands in it are SQL-related.
 _TSO_COMMAND_DD = "SYSTSIN"
@@ -178,6 +187,39 @@ def detect_sql_in_text(text: str) -> list[tuple[str, str]]:
     return results
 
 
+def detect_sql_in_utility_statements(text: str) -> list[tuple[str, str]]:
+    """Scan DB2 utility control statements for SQL.
+
+    Only ``EXEC SQL ... ENDEXEC`` utility statements contribute: the
+    ``EXEC SQL`` marker itself (``EMBEDDED``) and the SQL statement keywords
+    between it and ``ENDEXEC``, which may share a line with either.  Every
+    other utility statement (``RUNSTATS``, ``REORG``, ``MODIFY RECOVERY``, ...)
+    is skipped, so options such as ``UPDATE ALL`` or ``DELETE AGE(90)`` are
+    not reported as DML.
+    """
+    results: list[tuple[str, str]] = []
+    in_exec_sql = False
+    for raw_line in split_source_lines(text):
+        rest = raw_line.strip()
+        while rest:
+            if not in_exec_sql:
+                start = _EXEC_SQL_RE.search(rest)
+                if start is None:
+                    break
+                results.append(("EXEC SQL", _KW_CATEGORY["EXEC SQL"]))
+                in_exec_sql = True
+                rest = rest[start.end() :]
+                continue
+            end = _ENDEXEC_RE.search(rest)
+            body = rest if end is None else rest[: end.start()]
+            results.extend(detect_sql_in_text(body))
+            if end is None:
+                break
+            in_exec_sql = False
+            rest = rest[end.end() :]
+    return results
+
+
 def detect_sql_in_dd(dd: DDStatement) -> list[tuple[str, str]]:
     """Scan a single DD statement's inline data for SQL.
 
@@ -196,7 +238,10 @@ def detect_sql_in_step(step: Step) -> SQLDetectionResult:
     the inline data of every DD statement.
     In-stream data of a program in :data:`NON_SQL_CONTROL_PROGRAMS` is not
     scanned, and in a ``SYSTSIN`` DD (TSO commands) only DB2 subcommands such
-    as ``BIND`` count.
+    as ``BIND`` count.  For a program in
+    :data:`DB2_UTILITY_CONTROL_PROGRAMS` only ``EXEC SQL ... ENDEXEC``
+    utility statements are scanned
+    (:func:`detect_sql_in_utility_statements`).
     """
     result = SQLDetectionResult(
         step_name=step.name,
@@ -204,15 +249,21 @@ def detect_sql_in_step(step: Step) -> SQLDetectionResult:
         is_db2_program=is_db2_program(step.program)
         or bool(step.procedure and step.procedure.upper() in DB2_PROCEDURES),
     )
-    if step.program and step.program.upper() in NON_SQL_CONTROL_PROGRAMS:
+    program = step.program.upper() if step.program else ""
+    if program in NON_SQL_CONTROL_PROGRAMS:
         return result
+    utility_control = program in DB2_UTILITY_CONTROL_PROGRAMS
     is_tso_input = False
     for dd in step.dd_statements:
         # An unnamed DD is a concatenation member of the last named one, so
         # ``//  DD *`` after ``//SYSTSIN DD ...`` is TSO input too.
         if dd.name:
             is_tso_input = dd.name.upper() == _TSO_COMMAND_DD
-        for kw, cat in detect_sql_in_dd(dd):
+        if utility_control:
+            found = detect_sql_in_utility_statements(dd.inline_data or "")
+        else:
+            found = detect_sql_in_dd(dd)
+        for kw, cat in found:
             if is_tso_input and cat not in _TSO_SQL_CATEGORIES:
                 continue
             result.sql_statements.append((kw, cat, dd.name))

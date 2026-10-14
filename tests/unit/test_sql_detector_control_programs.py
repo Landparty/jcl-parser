@@ -71,3 +71,55 @@ class TestSqlDetectorControlPrograms:
             dd_statements=[DDStatement(name="SYSIN", inline_data="DELETE X")],
         )
         assert detect_sql_in_step(step).sql_statements == []
+
+
+def _utility_step(data: str) -> Step:
+    return Step(
+        name="DSNUPROC",
+        program="DSNUTILB",
+        dd_statements=[DDStatement(name="SYSIN", inline_data=data)],
+    )
+
+
+@pytest.mark.unit
+class TestDb2UtilityControlStatements:
+    """DSNUTILB control statements reuse SQL verbs as options."""
+
+    def test_runstats_update_all_is_not_dml(self):
+        step = _utility_step(
+            "  RUNSTATS TABLESPACE BANKDB.TXNHIST\n"
+            "    TABLE(BANK.TRANSACTION_HIST)\n"
+            "    INDEX(ALL)\n"
+            "    REPORT YES\n"
+            "    UPDATE ALL\n"
+        )
+        result = detect_sql_in_step(step)
+        assert result.sql_statements == []
+        assert result.is_db2_program
+
+    def test_modify_recovery_delete_age_is_not_dml(self):
+        step = _utility_step(
+            "  MODIFY RECOVERY TABLESPACE BANKDB.TXNHIST\n    DELETE AGE(90)\n"
+        )
+        assert detect_sql_in_step(step).sql_statements == []
+
+    def test_sql_inside_exec_sql_utility_statement_still_reported(self):
+        step = _utility_step(
+            "  EXEC SQL\n"
+            "    DELETE FROM BANK.TXN_STAGE\n"
+            "  ENDEXEC\n"
+            "  RUNSTATS TABLESPACE BANKDB.TXNHIST\n"
+        )
+        assert detect_sql_in_step(step).sql_statements == [
+            ("EXEC SQL", "EMBEDDED", "SYSIN"),
+            ("DELETE", "DML", "SYSIN"),
+        ]
+
+    def test_one_line_exec_sql_utility_statement(self):
+        step = _utility_step(
+            "  EXEC SQL CREATE TABLE BANK.T2 (C INT) ENDEXEC\n    UPDATE ALL\n"
+        )
+        assert detect_sql_in_step(step).sql_statements == [
+            ("EXEC SQL", "EMBEDDED", "SYSIN"),
+            ("CREATE", "DDL", "SYSIN"),
+        ]

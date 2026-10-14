@@ -569,6 +569,8 @@ def expand_proc_invocation(
             else:
                 # Clone the step
                 new_step = _clone_step_for_explosion(proc_step)
+                step_scope = _proc_step_scope(expansion_scope, proc_step)
+                new_step.set_symbols = None
 
                 # Generate qualified step name
                 if new_step.name:
@@ -584,7 +586,7 @@ def expand_proc_invocation(
                 if new_step.program:
                     new_step.program = substitute_symbols(
                         new_step.program,
-                        expansion_scope,
+                        step_scope,
                         strict=strict,
                         warnings=warnings,
                     )
@@ -595,14 +597,14 @@ def expand_proc_invocation(
                 if new_step.is_procedure:
                     new_step.parameters = _substitute_proc_call_parameters(
                         new_step.parameters,
-                        expansion_scope,
+                        step_scope,
                         strict=strict,
                         warnings=warnings,
                     )
                 else:
                     new_step.parameters = substitute_parameters_dict(
                         new_step.parameters,
-                        expansion_scope,
+                        step_scope,
                         strict=strict,
                         warnings=warnings,
                     )
@@ -615,7 +617,7 @@ def expand_proc_invocation(
                 # for a nested ``EXEC procname``, its PROCSTEP.DDNAME overrides
                 for dd in _step_dds_and_overrides(new_step):
                     substitute_dd_statement(
-                        dd, expansion_scope, strict=strict, warnings=warnings
+                        dd, step_scope, strict=strict, warnings=warnings
                     )
 
                 result.append(new_step)
@@ -624,6 +626,24 @@ def expand_proc_invocation(
     expanded_steps = _process_proc_steps(procedure.steps)
 
     return expanded_steps
+
+
+def _proc_step_scope(expansion_scope: SymbolScope, proc_step: Step) -> SymbolScope:
+    """Return *expansion_scope* with the PROC SETs in effect at *proc_step*.
+
+    A SET inside a procedure is in effect from where it is coded: a step read
+    before a later SET redefined a symbol keeps the earlier value
+    (``Step.set_symbols``). Symbols it has no snapshot for still resolve
+    against the procedure's final SET table.
+    """
+    if proc_step.set_symbols is None:
+        return expansion_scope
+    return SymbolScope(
+        set_symbols={**expansion_scope.set_symbols, **proc_step.set_symbols},
+        proc_params=expansion_scope.proc_params,
+        exec_overrides=expansion_scope.exec_overrides,
+        system_provider=expansion_scope.system_provider,
+    )
 
 
 _WHOLE_SYMBOL_RE = re.compile(r"&([A-Z0-9@#$]+)\.?")

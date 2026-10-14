@@ -80,6 +80,34 @@ class TestSetInsideProc:
         # Inside the procedure its own SET is in effect.
         assert _dd(exploded, "S1.PS1", "D1").dataset_name == "PROC.LIB"
 
+    # A SET inside a PROC takes effect from where it is coded, as at job
+    # level: a step coded before a later SET redefined a symbol still sees
+    # the earlier value. Every PROC step used to see the last value.
+    PROC_BODY = (
+        "// SET A=ONE\n"
+        "//PS1 EXEC PGM=X,PARM='&A'\n//D1 DD DSN=&A..DATA,DISP=SHR\n"
+        "// SET A=TWO\n"
+        "//PS2 EXEC PGM=Y,PARM='&A'\n//D1 DD DSN=&A..DATA,DISP=SHR\n"
+    )
+    PROC_SET_REDEFINED = "//J JOB\n//P PROC\n" + PROC_BODY + "// PEND\n//S1 EXEC P\n"
+
+    def test_set_redefined_inside_proc_applies_from_that_point(self) -> None:
+        exploded = explode_job(parse_jcl(self.PROC_SET_REDEFINED))
+        steps = _steps(exploded)
+        assert steps["S1.PS1"].parameters["PARM"] == "ONE"
+        assert _dd(exploded, "S1.PS1", "D1").dataset_name == "ONE.DATA"
+        assert steps["S1.PS2"].parameters["PARM"] == "TWO"
+        assert _dd(exploded, "S1.PS2", "D1").dataset_name == "TWO.DATA"
+
+    def test_set_redefined_inside_cataloged_proc(self) -> None:
+        loader = DictProcedureLoader(
+            {"EXT": "//EXT PROC\n" + self.PROC_BODY + "// PEND\n"}
+        )
+        job = explode_job(parse_jcl("//J JOB\n//S1 EXEC EXT\n"), proc_loader=loader)
+        assert _dd(job, "S1.PS1", "D1").dataset_name == "ONE.DATA"
+        assert _dd(job, "S1.PS2", "D1").dataset_name == "TWO.DATA"
+        assert _steps(job)["S1.PS1"].parameters["PARM"] == "ONE"
+
 
 def test_symbols_in_exec_overrides_of_proc_call_are_substituted() -> None:
     jcl = (

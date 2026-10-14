@@ -542,10 +542,11 @@ class Step:
     dd_override_concatenations: dict[str, list[DDStatement]] = field(
         default_factory=dict
     )
-    #: The job's SET symbols as they stood when this step's EXEC was read,
-    #: kept only when a later ``SET`` redefines one of them (``None``
-    #: otherwise): a SET value is in effect from the SET statement onward, so
-    #: this step's ``&SYM`` references must not see the redefinition.
+    #: The job's SET symbols as they stood when this step's EXEC was read
+    #: (for a step inside a PROC body, the procedure's own SETs), kept only
+    #: when a later ``SET`` redefines one of them (``None`` otherwise): a SET
+    #: value is in effect from the SET statement onward, so this step's
+    #: ``&SYM`` references must not see the redefinition.
     set_symbols: dict[str, str] | None = field(default=None, repr=False, compare=False)
 
     @property
