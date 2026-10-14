@@ -182,6 +182,49 @@ class TestIEHLIST:
         assert "LISTVTOC" in notes
         assert "LISTPDS DSNAME=PROD.LOADLIB" in notes
 
+    @staticmethod
+    def _analyze(sysin: str):
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEHLIST\n"
+            "//SYSIN    DD *\n" + sysin + "/*\n"
+        )
+        return analyze_job(jp.parse_jcl(src))[0]
+
+    def test_listpds_dsname_list_reports_every_dataset(self):
+        """``DSNAME=(A,B)`` is the documented LISTPDS list form; the statement
+        used to be dropped entirely because the name could not start with
+        ``(`` (nightly 2026-10-14)."""
+        result = self._analyze(
+            "  LISTPDS DSNAME=(D42.PDSONE,'D42.PDSTWO'),VOL=3390=SYS001\n"
+        )
+        assert result.notes == [
+            "LISTPDS DSNAME=D42.PDSONE",
+            "LISTPDS DSNAME=D42.PDSTWO",
+        ]
+        assert result.summary == "IEHLIST: 1 listing command(s)"
+
+    def test_statements_reported_in_coded_order_with_their_own_operands(self):
+        """A labelled statement, a quoted name and a continued statement are
+        read; LISTVTOC's VOL= stops at the next operand; notes keep the
+        order of the statements (they were grouped by command)."""
+        result = self._analyze(
+            "  LISTPDS DSNAME=A.ONE,VOL=3390=SYS001\n"
+            "  LISTVTOC DATE=2026.100,VOL=3390=SYS001,DSNAME=(A.B)\n"
+            "LBL      LISTPDS DSNAME='A.TWO',VOL=3390=SYS001\n"
+            + "  LISTPDS VOL=3390=SYS001,".ljust(71)
+            + "C\n"
+            + " " * 15
+            + "DSNAME=A.THREE\n"
+        )
+        assert result.notes == [
+            "LISTPDS DSNAME=A.ONE",
+            "LISTVTOC VOL=3390=SYS001",
+            "LISTPDS DSNAME=A.TWO",
+            "LISTPDS DSNAME=A.THREE",
+        ]
+        assert result.summary == "IEHLIST: 4 listing command(s)"
+
 
 class TestIEHPROGM:
     def test_scratch_catlg_uncatlg(self):
