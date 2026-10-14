@@ -591,13 +591,23 @@ def expand_proc_invocation(
                         warnings=warnings,
                     )
 
-                # Substitute symbols in step parameters
-                new_step.parameters = substitute_parameters_dict(
-                    new_step.parameters,
-                    step_scope,
-                    strict=strict,
-                    warnings=warnings,
-                )
+                # Substitute symbols in step parameters. A nested
+                # ``EXEC procname`` keeps "&&" in its symbolic values, as a
+                # top-level one does (TMP='&&WORK' is a temporary dataset).
+                if new_step.is_procedure:
+                    new_step.parameters = _substitute_proc_call_parameters(
+                        new_step.parameters,
+                        step_scope,
+                        strict=strict,
+                        warnings=warnings,
+                    )
+                else:
+                    new_step.parameters = substitute_parameters_dict(
+                        new_step.parameters,
+                        step_scope,
+                        strict=strict,
+                        warnings=warnings,
+                    )
                 if "COND" in new_step.parameters:
                     new_step.parameters["COND"] = _qualify_cond_parameter(
                         new_step.parameters["COND"], proc_steps, prefix
@@ -1034,6 +1044,33 @@ _EXEC_OVERRIDE_KEYWORDS = frozenset(
 _PARM_KEYWORDS = frozenset({"PARM", "PARMDD"})
 
 
+def _substitute_proc_call_parameters(
+    parameters: dict[str, Any],
+    scope: SymbolScope,
+    strict: bool = False,
+    allow_undefined: bool = False,
+    warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    """Substitute symbols in the parameters of an ``EXEC procname`` statement.
+
+    EXEC keyword overrides (``PARM.PS1='A&&B'``) collapse "&&" to "&" like any
+    other step parameter; a symbolic value keeps it, because it may carry a
+    temporary dataset name (``TMP='&&WORK'``) into the procedure's DDs.
+    """
+    return {
+        key: substitute_parameters_dict(
+            {key: value},
+            scope,
+            strict=strict,
+            allow_undefined=allow_undefined,
+            warnings=warnings,
+            collapse_double_amp=key.upper().partition(".")[0]
+            in _EXEC_OVERRIDE_KEYWORDS,
+        )[key]
+        for key, value in parameters.items()
+    }
+
+
 def _set_exec_keyword(step: Step, keyword: str, value: Any) -> None:
     """Override (or, for an empty value, nullify) *keyword* on *step*."""
     if keyword in _PARM_KEYWORDS:
@@ -1407,16 +1444,9 @@ def explode_job(  # noqa: C901 -- complexity baseline, split when touched
                 # So are its EXEC keyword overrides (PARM.PS1='&SYSUID') and
                 # symbolic values (HLQ=&SYSUID). A symbolic value keeps "&&":
                 # it may carry a temporary dataset name (TMP='&&WORK').
-                step.parameters = {
-                    key: substitute_parameters_dict(
-                        {key: value},
-                        step_scope,
-                        allow_undefined=True,
-                        collapse_double_amp=key.upper().partition(".")[0]
-                        in _EXEC_OVERRIDE_KEYWORDS,
-                    )[key]
-                    for key, value in step.parameters.items()
-                }
+                step.parameters = _substitute_proc_call_parameters(
+                    step.parameters, step_scope, allow_undefined=True
+                )
                 # Expand procedure
                 expanded = _explode_step(
                     step=step,
