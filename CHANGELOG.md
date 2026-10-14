@@ -7,6 +7,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.0.3](https://github.com/Landparty/jcl-parser/compare/v2.0.2...v2.0.3) (2026-10-14)
+
+
+### Bug Fixes
+
+* **explosion:** a SET inside a PROC applies from where it is coded ([b64c0ab](https://github.com/Landparty/jcl-parser/commit/b64c0abebbe37185df55b6d64f5b69cf079db1e0))
+* **explosion:** a SET inside a PROC applies from where it is coded ([086508d](https://github.com/Landparty/jcl-parser/commit/086508d7bd2eac8b1707dc9ee0b0fe0914f9f252))
+* **explosion:** nested EXEC procname keeps && in symbolic values ([b1f16bd](https://github.com/Landparty/jcl-parser/commit/b1f16bdced312315726cda0b256e422404e63c59))
+* **explosion:** nested EXEC procname keeps && in symbolic values ([61ea3c4](https://github.com/Landparty/jcl-parser/commit/61ea3c45e31ae131dc87f7477a20b6889daaf795))
+* **sql:** only EXEC SQL utility statements are SQL in DSNUTILB input ([45bf2b2](https://github.com/Landparty/jcl-parser/commit/45bf2b2851b0980070007468e601f9c7b7d1487d))
+* **sql:** only EXEC SQL utility statements are SQL in DSNUTILB input ([20c5623](https://github.com/Landparty/jcl-parser/commit/20c5623383695c23e9e54326ec3af5a7a09b9721))
+* update author information in pyproject.toml ([35317e8](https://github.com/Landparty/jcl-parser/commit/35317e8e2738c3dfd1375a14ae2108dc486286e1))
+
 ## [2.0.2](https://github.com/Landparty/jcl-parser/compare/v2.0.1...v2.0.2) (2026-10-13)
 
 
