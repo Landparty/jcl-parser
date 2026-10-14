@@ -832,3 +832,28 @@ class TestIDCAMSCommandBoundaries:
         assert self._notes("  DELETE &HLQ..WORK.FILE PURGE\n") == [
             "IDCAMS DELETE &HLQ..WORK.FILE"
         ]
+
+
+class TestIEFBR14DeleteNotes:
+    def test_mod_and_shr_delete_are_reported_as_deletes(self):
+        """``DISP=(MOD,DELETE)`` is the "delete if it exists" idiom, and a
+        normal DELETE with SHR deletes too; only ``OLD`` got a ``deletes``
+        note (nightly 2026-10-14).  ``(NEW,DELETE)`` deletes nothing that
+        existed, so it still gets none."""
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=IEFBR14\n"
+            "//D1       DD DSN=PROD.A,DISP=(MOD,DELETE,DELETE),\n"
+            "//            UNIT=SYSDA,SPACE=(TRK,0)\n"
+            "//D2       DD DSN=PROD.B,DISP=(OLD,DELETE)\n"
+            "//D3       DD DSN=PROD.C,DISP=(SHR,DELETE)\n"
+            "//D4       DD DSN=PROD.D,DISP=(NEW,DELETE),UNIT=SYSDA\n"
+            "//D5       DD DSN=PROD.E,DISP=(MOD,CATLG),UNIT=SYSDA\n"
+        )
+        result = analyze_job(jp.parse_jcl(src))[0]
+        assert result.notes == [
+            "deletes PROD.A",
+            "deletes PROD.B",
+            "deletes PROD.C",
+        ]
+        assert result.summary == "IEFBR14: 5 DD dispositions applied"
