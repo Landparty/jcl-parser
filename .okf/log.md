@@ -1,5 +1,8 @@
 # Update Log
 
+## 2026-10-15 (nightly bug hunt)
+* **Fix**: the `ADRDSSU` profile matched each SYSIN *line* that began with a command name, so a DUMP keyword continued onto its own line (`DUMP ... -` then `COMPRESS`) was reported as a second command, a hyphen continuation inside an include list became a name (`INCLUDE(A.B, -` / `C.D)` noted as `A.B, - C.D`), `DATASET( -` / `INCLUDE(...)` lost its list, and the abbreviated `DS(INCL(...))` was not read. It now joins continuations first (`-`, or `+` which also drops the next line's leading blanks, so a split name is rejoined), ignores `/* ... */` comments, takes the command from a statement's first word only, and finds `INCLUDE`/`INCL` inside the statement's `DATASET`/`DS` parentheses. Include names are listed blank-separated (a comma-separated list was echoed with its commas). See [api/public-api](api/public-api.md#tier-2--advanced). Regression tests: `tests/unit/test_program_profiles_catalogue.py::TestADRDSSU`.
+
 ## 2026-10-15 (severity:medium issues)
 * **Fix (#122)**: a backslash before a quote no longer escapes it (JCL has none), so `// SET DIR='C:\'` no longer swallows the next statement. AUDIT M1 resolved. See [core/parsing-pipeline](core/parsing-pipeline.md).
 * **Fix (#120)**: a `(...)` or `'...'` comment after a trailing comma is a comment unless a `,` or the end of the record follows it (a paren group must also have no unquoted blank); `JOB (ACCT), 'PGMR'` still tolerated. See [development/invariants](development/invariants.md) #17.

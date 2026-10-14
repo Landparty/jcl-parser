@@ -125,6 +125,45 @@ class TestADRDSSU:
             "COPY DATASET(INCLUDE(PROD.A PROD.B))",
         ]
 
+    @staticmethod
+    def _notes(sysin: str) -> list[str]:
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=ADRDSSU\n"
+            "//SYSIN    DD *\n" + sysin + "/*\n"
+        )
+        return analyze_job(jp.parse_jcl(src))[0].notes
+
+    def test_keyword_on_continuation_line_is_not_a_command(self):
+        """``COMPRESS`` is a DUMP keyword as well as a command: on a
+        continuation line it is part of the DUMP, not a second command
+        (it was reported as one, nightly 2026-10-14)."""
+        notes = self._notes(
+            " DUMP DATASET(INCLUDE(PROD.**)) -\n"
+            "      OUTDDNAME(TAPE1) -\n"
+            "      COMPRESS\n"
+        )
+        assert notes == ["DUMP DATASET(INCLUDE(PROD.**))"]
+
+    def test_continued_include_list_comments_and_abbreviations(self):
+        """A hyphen continuation inside the INCLUDE list is not a name, a
+        plus continuation rejoins a split name, ``DS(INCL(...))`` is the
+        abbreviated form, and a commented-out command is ignored."""
+        notes = self._notes(
+            " /* DUMP DATASET(INCLUDE(OLD.**)) */\n"
+            " DUMP DATASET(INCLUDE(PROD.A, -\n"
+            "      PROD.B)) OUTDDNAME(TAPE1)\n"
+            " DUMP DS(INCL(PROD.LONG+\n"
+            "      NAME)) OUTDD(TAPE2)\n"
+            " COPY DATASET( -\n"
+            "      INCLUDE(TEST.A)) RENAMEU((TEST.A,TEST.B))\n"
+        )
+        assert notes == [
+            "DUMP DATASET(INCLUDE(PROD.A PROD.B))",
+            "DUMP DATASET(INCLUDE(PROD.LONGNAME))",
+            "COPY DATASET(INCLUDE(TEST.A))",
+        ]
+
 
 class TestIEHLIST:
     def test_listvtoc_and_listpds(self):
