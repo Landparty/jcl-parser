@@ -1,5 +1,8 @@
 # Update Log
 
+## 2026-10-30 (bug-hunt carry-over)
+* **Fix**: a complete statement whose card is continued in column 72 continues its comment field on the next record (IBM "Continuing the comment field"); that record was reported as a stray continuation ("missing comma?"). See [development/invariants](development/invariants.md) #16. Tests: `tests/unit/test_medium_continuation_fixes.py::TestMissingCommaDoesNotMerge`.
+
 ## 2026-10-29 (docs review and cleanup)
 * **Docs**: the reference pages (`core/`, `api/`, `advanced/`, `integration/`, `development/invariants.md`) now describe current behaviour only; the "fixed on DATE, used to ..." history they had accumulated stays in this log and `CHANGELOG.md`. New "Documentation Conventions" section in [development/workflow](development/workflow.md).
 * **Correction**: [api/cli-reference](api/cli-reference.md) said `lineage` was the only directory query and that `DIR --validate` is an error; `DIR lint` and `DIR --validate` exist since the lint-in-CI entry below. [development/invariants](development/invariants.md) #19 said any JOB-less member parses; only one with a `PROC` statement does (anything else is "No JOB statement found"). [core/parsing-pipeline](core/parsing-pipeline.md) named only `//*ROUTE XEQ` as the kept JES3 comment card; every `//*COMMAND` card in `JES3_COMMANDS` is kept (invariant 8). The invariant count is 20 everywhere; module line counts refreshed; this log's 2026-10-15 nightly entry moved back into date order.

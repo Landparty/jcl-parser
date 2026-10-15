@@ -242,6 +242,10 @@ class ContinuationLineHandler:
         self.suspect_comments = []
         self.stray_continuations = []
         i = 0
+        # Whether the statement just merged ended on a card image continued
+        # in column 72: a complete statement coded that way continues its
+        # *comment field* on the next record.
+        comment_continued = False
 
         while i < len(lines):
             line = lines[i]
@@ -250,15 +254,18 @@ class ContinuationLineHandler:
             if not line.strip() or line.strip().startswith("//*"):
                 merged.append((line, i + 1))
                 i += 1
+                comment_continued = False
                 continue
 
             # Check if this is a JCL statement
             if not line.startswith("//"):
                 merged.append((line, i + 1))
                 i += 1
+                comment_continued = False
                 continue
 
-            i = self._merge_statement(lines, i, card_images, merged)
+            i = self._merge_statement(lines, i, card_images, merged, comment_continued)
+            comment_continued = i - 1 in card_images
 
         return merged
 
@@ -268,12 +275,16 @@ class ContinuationLineHandler:
         i: int,
         card_images: Collection[int],
         merged: list[tuple[str, int]],
+        comment_continued: bool = False,
     ) -> int:
         """Merge the JCL statement starting at ``lines[i]`` with its continuations.
 
         Appends the merged statement (followed by any comments interspersed
         within it) to *merged* and returns the index of the first record
-        after the statement.
+        after the statement.  *comment_continued* says the statement before
+        ended on a card image continued in column 72; a continuation-like
+        record after it continues that statement's comment field, so it is
+        not reported as a stray continuation.
         """
         original_line_num = i + 1
         # Strip the statement's comment field before anything else: a
@@ -281,7 +292,10 @@ class ContinuationLineHandler:
         # continued operands are lost (see split_comment_field).
         group_operation = statement_operation(lines[i])
         line = self._strip_comment(lines[i], group_operation, original_line_num)
-        if self.is_stray_continuation_record(line):
+        # A complete statement whose card is continued in column 72 continues
+        # its comment field on the next record (IBM: "Continuing the comment
+        # field"), so that record is a comment, not a missing comma.
+        if not comment_continued and self.is_stray_continuation_record(line):
             self.stray_continuations.append((original_line_num, line.strip()))
 
         # Start building merged line
