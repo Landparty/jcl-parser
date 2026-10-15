@@ -1,5 +1,13 @@
 # Update Log
 
+## 2026-10-15 (bundle freshness audit)
+* **Correction**: [core/parsing-pipeline](core/parsing-pipeline.md) had stages 2 and 3 swapped: `// INCLUDE` expansion runs before continuation merging (`merge_continuation_lines()`; `ContinuationLineHandler.process()` does not exist). Typed DCB/SPACE ASTs are built lazily; `validate_jcl` lives in `parser.py`; a SET forward reference resolves (invariant #10). The `CLAUDE.md` diagram had the same errors.
+* **Correction**: [core/data-model](core/data-model.md), [integration/backend-contract](integration/backend-contract.md) and `interface-contract.md`: `ConditionalBlock` is re-exported; `Job.is_procedure_member` added; an unnamed step is `""`; `dd.disposition` may be a list; `step.line_number` is `int`; `job.validate()` also returns WARNINGs; `explosion_audit`/`explosion_map` live on the exploded job.
+* **Correction**: [api/public-api](api/public-api.md) and [api/cli-reference](api/cli-reference.md): `validate_jcl(level=None, ...)` takes a `ValidationLevel` or case-insensitive string; `parse_statement` takes `config`; `ParseError`/`ValidationError` are records, not exceptions; CLI exit codes, missing-file message, `--profile` and `--proc-path` behaviour.
+* **Correction**: [advanced/validation](advanced/validation.md) claimed RECFM/DSORG/TIME/REGION/MSGLEVEL checks that `validate_jcl` never runs; listed the 7 built-in lint rules; fixed error field names (`error_type`) and exception types (a missing JOB card is `JCLSyntaxError`). [advanced/proc-expansion](advanced/proc-expansion.md): `explosion_map` shape and `audit=False` behaviour, JCLLIB strict-parse ERROR, parse-time self-referencing SET.
+* **Correction**: [development/workflow](development/workflow.md) line counts, 119 unit test files, 24 mypy-baseline modules, profiles register in `registry._register_builtins()`; [development/invariants](development/invariants.md) #8 keeps every JES3 `//*` command card.
+* **Fix**: `.githooks/pre-commit` was tracked `100644`, so git ignored it and the staleness check never ran; `pyproject.toml` `Documentation` URL pointed at a non-existent `docs/`.
+
 ## 2026-10-15 (severity:medium issues)
 * **Fix (#122)**: a backslash before a quote no longer escapes it (JCL has none), so `// SET DIR='C:\'` no longer swallows the next statement. AUDIT M1 resolved. See [core/parsing-pipeline](core/parsing-pipeline.md).
 * **Fix (#120)**: a `(...)` or `'...'` comment after a trailing comma is a comment unless a `,` or the end of the record follows it (a paren group must also have no unquoted blank); `JOB (ACCT), 'PGMR'` still tolerated. See [development/invariants](development/invariants.md) #17.
