@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from jclparser import explode_job, parse_jcl
+from jclparser import explode_job, parse_jcl, validate_jcl
+from jclparser.explosion import (
+    SymbolScope,
+    _dsn_keep_undefined,
+    substitute_dd_statement,
+)
+from jclparser.model import DDStatement
 
 pytestmark = pytest.mark.unit
 
@@ -91,3 +97,48 @@ class TestDoubleAmpersandInSymbolValues:
         }
         assert step.get_dd("D1").is_temporary()
         assert step.get_dd("D2").is_temporary()
+
+
+class TestParenthesisedDsn:
+    """#121: ``DSN=(A.B)`` with a SET in the job no longer crashes."""
+
+    @pytest.mark.parametrize("keyword", ["DSN", "DSNAME"])
+    @pytest.mark.parametrize("set_line", ["// SET HLQ=PROD\n", ""])
+    def test_dataset_name_is_text(self, keyword: str, set_line: str) -> None:
+        src = (
+            "//J1 JOB (A),'X'\n"
+            f"{set_line}"
+            "//S1 EXEC PGM=X\n"
+            f"//DD1 DD {keyword}=(A.B),DISP=SHR\n"
+        )
+        job = parse_jcl(src)
+        dd = job.steps[0].dd_statements[0]
+        assert dd.dataset_name == "(A.B)"
+        assert dd.parameters[keyword] == ["A.B"]
+        assert explode_job(job).steps[0].dd_statements[0].dataset_name == "(A.B)"
+        errors = validate_jcl(src)
+        assert any("Invalid dataset name '(A.B)'" in e.message for e in errors)
+
+    def test_symbol_inside_parenthesised_dsn_resolves(self) -> None:
+        src = (
+            "//J1 JOB (A),'X'\n"
+            "// SET HLQ=PROD\n"
+            "//S1 EXEC PGM=X\n"
+            "//DD1 DD DSN=(&HLQ..X),DISP=SHR\n"
+        )
+        dd = parse_jcl(src).steps[0].dd_statements[0]
+        assert dd.dataset_name == "(PROD.X)"
+
+    def test_list_dataset_name_left_alone_by_substitution(self) -> None:
+        dd = DDStatement(name="DD1", dataset_name=["&HLQ"])  # type: ignore[arg-type]
+        scope = SymbolScope(set_symbols={"HLQ": "PROD"})
+        substitute_dd_statement(dd, scope)
+        assert dd.dataset_name == ["&HLQ"]
+
+    def test_dsn_keep_undefined_ignores_non_text(self) -> None:
+        def keep(name: str) -> bool:
+            return False
+
+        assert _dsn_keep_undefined(["&T"], keep, strict=False) is keep  # type: ignore[arg-type]
+        kept = _dsn_keep_undefined("&T", None, strict=False)
+        assert kept is not None and kept("T")

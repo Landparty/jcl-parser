@@ -23,7 +23,12 @@ from typing import Any
 
 from .errors import JCLSyntaxError
 from .model import DDStatement, Job, Statement, Step
-from .utils import MAX_SYMBOL_VALUE_LENGTH, POSITIONAL_PARAM_PREFIX, is_positional_key
+from .utils import (
+    MAX_SYMBOL_VALUE_LENGTH,
+    POSITIONAL_PARAM_PREFIX,
+    is_positional_key,
+    jcl_value_text,
+)
 
 _SET_SYMBOL_PATTERN = re.compile(r"&&|&([A-Z0-9@#$]+)\.?")
 
@@ -215,6 +220,11 @@ def _create_dd_from_statement(stmt: Statement) -> DDStatement:
     dataset_name = stmt.parameters.get("DSN")
     if dataset_name is None:
         dataset_name = stmt.parameters.get("DSNAME")
+    if isinstance(dataset_name, list):
+        # ``DSN=(A.B)`` tokenizes to a list; dataset_name is always text, so
+        # keep it as coded ("(A.B)") for validate_jcl() to report as an
+        # invalid dataset name instead of crashing on it (#121).
+        dataset_name = jcl_value_text(dataset_name)
     disposition = stmt.parameters.get("DISP")
 
     return DDStatement(

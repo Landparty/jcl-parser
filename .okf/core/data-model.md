@@ -82,7 +82,7 @@ the codebase; use `step.procedure` / `step.is_procedure`.
 | Field | Type | Notes |
 |-------|------|-------|
 | `name` | `str` | DD name, max 8 chars |
-| `dataset_name` | `str \| None` | `DSN=` value, or `DSNAME=` (its long form) when no `DSN=` is coded |
+| `dataset_name` | `str \| None` | `DSN=` value, or `DSNAME=` (its long form) when no `DSN=` is coded. Always text: a parenthesised `DSN=(A.B)` (tokenized to a list in `parameters`) is rendered back as coded, `"(A.B)"`, so `validate_jcl()` reports it as an invalid dataset name (fixed 2026-10-15, #121; with a `// SET` in the job it used to crash `parse_jcl`/`validate_jcl` with a `TypeError`) |
 | `coded_dataset_name` | `str \| None` | The dataset name as coded, before SET / PROC symbol substitution (`&HLQ..DATA` while `dataset_name` reads `PROD.DATA`); `None` when the coded name had no symbols. Not part of `==` or `repr` |
 | `disposition` | `str \| None` | `DISP=` raw string |
 | `parameters` | `dict[str, Any]` | DSN, DISP, SPACE, DCB, SYSOUT… |
