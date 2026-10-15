@@ -3,7 +3,7 @@ type: Development Workflow
 title: Development Workflow
 description: Install, test, lint, mypy ratchet, CI, vendor sync, version bump, release, module inventory and task-to-file map for jcl-parser contributors.
 tags: [development, workflow, testing, tooling]
-timestamp: 2026-10-04T00:00:00Z
+timestamp: 2026-10-15T00:00:00Z
 ---
 
 # Overview
@@ -41,14 +41,14 @@ pytest tests/unit/test_parser_api.py::Class::method # single test
 
 Coverage: minimum 90% (`--cov-fail-under=90`), branch coverage enabled, HTML to `htmlcov/`, XML to `coverage.xml`. Benchmarks excluded via `norecursedirs`.
 
-Layout: `tests/unit/` (95 `test_*.py` files), `tests/integration/` (15), `tests/benchmarks/` (pytest-benchmark, not collected by default), `tests/fixtures/`. Markers (strict): `unit`, `integration`, `contract`, `performance`, `slow`, `benchmark`.
+Layout: `tests/unit/` (119 `test_*.py` files), `tests/integration/` (15), `tests/benchmarks/` (pytest-benchmark, not collected by default), `tests/fixtures/`. Markers (strict): `unit`, `integration`, `contract`, `performance`, `slow`, `benchmark`.
 
 # Lint / Format / Type-check
 
 ```bash
 ruff check .      # lint (line-length=88, target=py310, McCabe complexity <= 12 via C901)
 ruff format .     # format (do not use black)
-mypy jclparser/   # strict mode — not yet clean (82 known errors across ~25 modules, recorded in mypy-baseline.txt)
+mypy jclparser/   # strict mode — not yet clean (82 known errors across 24 modules, recorded in mypy-baseline.txt)
 python scripts/mypy_ratchet.py           # what CI runs: fails only on errors missing from mypy-baseline.txt
 python scripts/mypy_ratchet.py --update  # after fixing errors, shrink the baseline (use mypy 2.4.0, as pinned in CI)
 ```
@@ -89,43 +89,43 @@ CLI `--version` reads from `__init__.py`, not package metadata.
 
 # Module Inventory
 
-Line counts as of 2026-10-08 (`wc -l`).
+Line counts as of 2026-10-15 (`wc -l`).
 
 | Module | Lines | Role |
 |--------|------:|------|
-| `__init__.py` | 279 | Public API re-exports, `parse()` alias, `__version__` |
+| `__init__.py` | 294 | Public API re-exports, `parse()` alias, `__version__` |
 | `__main__.py` | 5 | `python -m jclparser` |
-| `parser.py` | 633 | `parse_jcl()`, `validate_jcl()`, parse loop and its phases (`_expand_includes`, `_build_job`, `_resolve_references`, …), line-by-line validation fallback |
-| `_source_scanner.py` | 367 | `_merge_source_lines()` (`_RecordClassifier` marks in-stream data / CNTL records, then continuation merge), `_instream_delimiter`, `_expects_continuation` |
-| `_statement_parser.py` | 817 | Single-statement parsing, `_STATEMENT_TYPES`, `split_comment_field()`, INCLUDE/JCLLIB pre-scans |
-| `_job_builder.py` | 824 | `JobBuilder` per-statement-type dispatch (`JobBuilder._HANDLERS` table) |
-| `_model_factories.py` | 176 | `Statement` → `Job`/`Step`/`DDStatement` factories, SET-value helpers |
-| `_post_parse.py` | 386 | External PROC loading, `OUTPUT=*.name` refs, SET substitution, strict DD structure |
-| `model.py` | 985 | `Job`, `Step`, `DDStatement`, `ConditionalBlock`, `Procedure`, `Statement`, `OutputStatement`, `Parameter` |
-| `explosion.py` | 1604 | `explode_job()`, `SymbolScope`, DD/EXEC overrides, `DEFAULT_MAX_STEPS` |
-| `proc_loader.py` | 427 | Loader chain, `create_default_loader()` |
+| `parser.py` | 781 | `parse_jcl()`, `validate_jcl()`, parse loop and its phases (`_expand_includes`, `_build_job`, `_resolve_references`, …), line-by-line validation fallback |
+| `_source_scanner.py` | 441 | `_merge_source_lines()` (`_RecordClassifier` marks in-stream data / CNTL records, then continuation merge), `_instream_delimiter`, `_expects_continuation` |
+| `_statement_parser.py` | 913 | Single-statement parsing, `_STATEMENT_TYPES`, `split_comment_field()`, INCLUDE/JCLLIB pre-scans |
+| `_job_builder.py` | 971 | `JobBuilder` per-statement-type dispatch (`JobBuilder._HANDLERS` table) |
+| `_model_factories.py` | 253 | `Statement` → `Job`/`Step`/`DDStatement` factories, SET-value helpers |
+| `_post_parse.py` | 567 | External PROC loading, `OUTPUT=*.name` refs, SET substitution, strict DD structure |
+| `model.py` | 1037 | `Job`, `Step`, `DDStatement`, `ConditionalBlock`, `Procedure`, `Statement`, `OutputStatement`, `Parameter` |
+| `explosion.py` | 1951 | `explode_job()`, `SymbolScope`, DD/EXEC overrides, `DEFAULT_MAX_STEPS` |
+| `proc_loader.py` | 439 | Loader chain, `create_default_loader()` |
 | `builtin_procs.py` | 246 | `BUILTIN_UTILITY_PROCS` last-resort templates |
 | `include_loader.py` | 518 | `resolve_includes()`, `resolve_includes_with_origins()` / `LineOrigin`, member loaders |
 | `_include_origins.py` | 126 | `IncludeLineMap` — translates INCLUDE-expanded line numbers back to the main source (#118) |
-| `continuation_handler.py` | 478 | `ContinuationLineHandler` |
-| `parameter_ast.py` | 397 | Typed parameter AST (`DCBParameter`, `SPACEParameter`, …) |
+| `continuation_handler.py` | 503 | `ContinuationLineHandler` |
+| `parameter_ast.py` | 398 | Typed parameter AST (`DCBParameter`, `SPACEParameter`, …) |
 | `parameter_validators.py` | 262 | Parameter value validators |
-| `validators.py` | 439 | Structural validation |
-| `condition_parser.py` | 562 | `// IF` condition AST, `NOT_RUN` |
-| `dataset_lifecycle.py` | 558 | Cross-step dataset lifecycle analysis |
-| `rc_analysis.py` | 502 | RC feasibility (`compute_feasible_paths`) |
-| `metrics.py` | 167 | `compute_metrics` |
-| `sql_detector.py` | 285 | SQL / DB2 detection |
+| `validators.py` | 525 | Structural validation |
+| `condition_parser.py` | 568 | `// IF` condition AST, `NOT_RUN` |
+| `dataset_lifecycle.py` | 595 | Cross-step dataset lifecycle analysis |
+| `rc_analysis.py` | 555 | RC feasibility (`compute_feasible_paths`) |
+| `metrics.py` | 170 | `compute_metrics` |
+| `sql_detector.py` | 324 | SQL / DB2 detection |
 | `jes_statements.py` | 382 | Typed JES2/JES3 control statements |
 | `jcl_file_type.py` | 279 | JCL vs PROC detection |
 | `system_symbols.py` | 253 | System symbol providers |
-| `utils.py` | 228 | `read_source()`, `normalize_jcl_line()` / `normalize_jcl_lines()`, `instream_delimiter()`, `MAX_LIBRARY_MEMBER_BYTES`, `MAX_SYMBOL_VALUE_LENGTH` |
-| `errors.py` | 173 | Exception hierarchy |
+| `utils.py` | 396 | `read_source()`, `split_source_lines()`, `normalize_jcl_line()` / `normalize_jcl_lines()`, `is_card_image()` / `control_card_text()`, `instream_delimiter()`, `MAX_LIBRARY_MEMBER_BYTES`, `MAX_SYMBOL_VALUE_LENGTH` |
+| `errors.py` | 179 | Exception hierarchy |
 | `profiling.py` | 147 | `FunctionProfile`, `ProfilingResult` |
-| `cli.py` | 966 | `jcl-parser` CLI |
-| `lint/` (5 files) | 467 | `LintRule`, built-in rules, runner, SARIF |
-| `plugins/` (2 files) | 248 | `ParserConfig`, `ValidationLevel`, plugin registry |
-| `program_profiles/` (27 files) | 2411 | Known-program profiles (SORT, ICETOOL, IDCAMS, IEBGENER, DFSRRC00, …) and registry |
+| `cli.py` | 1019 | `jcl-parser` CLI |
+| `lint/` (5 files) | 510 | `LintRule`, built-in rules, runner, SARIF |
+| `plugins/` (2 files) | 320 | `ParserConfig`, `ValidationLevel`, plugin registry |
+| `program_profiles/` (27 files) | 2606 | Known-program profiles (SORT, ICETOOL, IDCAMS, IEBGENER, DFSRRC00, …) and registry |
 
 # Common Task → File Map
 
@@ -140,7 +140,7 @@ Line counts as of 2026-10-08 (`wc -l`).
 | New validation rule | `validators.py` or `parameter_validators.py` |
 | New lint rule | `lint/rules.py`, `lint/runner.py` |
 | New builtin PROC template | `builtin_procs.py:BUILTIN_UTILITY_PROCS` |
-| New program profile | new file in `program_profiles/`, register in `__init__.py` |
+| New program profile | new file in `program_profiles/`, register in `program_profiles/registry.py:_register_builtins()` |
 | New CLI subcommand | `cli.py` |
 | PROC expansion bug | `explosion.py`, `proc_loader.py` |
 | Continuation line bug | `continuation_handler.py` |
