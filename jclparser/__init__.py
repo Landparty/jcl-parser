@@ -100,7 +100,16 @@ from .lint import (
     to_sarif as lint_to_sarif,
 )
 from .metrics import JobMetrics, compute_metrics
-from .model import DDStatement, Job, OutputStatement, Parameter, Statement, Step
+from .model import (
+    ConditionalBlock,
+    DDStatement,
+    Job,
+    OutputStatement,
+    Parameter,
+    Statement,
+    Step,
+    iter_execution_steps,
+)
 from .parser import parse_jcl, parse_statement, validate_jcl
 from .plugins import (
     ParserConfig,
@@ -172,6 +181,8 @@ __all__ = [  # noqa: RUF022 — grouped by API tier, not alphabetically
     "Parameter",
     "Statement",
     "OutputStatement",
+    "ConditionalBlock",
+    "iter_execution_steps",
     "JCLParseError",
     "JCLSyntaxError",
     "JCLValidationError",

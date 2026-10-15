@@ -25,10 +25,17 @@ Will not be removed or signature-broken without a major version bump.
 
 ## Model Classes
 
-`Job`, `Step`, `DDStatement`, `Parameter`, `Statement`, `OutputStatement`
+`Job`, `Step`, `DDStatement`, `Parameter`, `Statement`, `OutputStatement`, `ConditionalBlock`
 
-`ConditionalBlock` and `Procedure` are part of the model but are **not** re-exported from
-`jclparser` — import them from `jclparser.model`.
+`iter_execution_steps(job.steps)` yields every `Step`, flattening `// IF` blocks: `job.steps`
+is `list[Step | ConditionalBlock]`, so code that needs every execution step must use it
+(re-exported with `ConditionalBlock` since 2026-10-15, issue #99).
+`Job.is_procedure_member` is `True` for the synthetic `Job(name="")` returned for a JOB-less
+PROC member; `job.validate()` and the JOB-card lint rules skip the JOB-statement checks for it
+(issue #98).
+
+`Procedure` is part of the model but is **not** re-exported from `jclparser` — import it from
+`jclparser.model`.
 
 ## Error / Enum Types
 
