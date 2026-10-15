@@ -51,7 +51,7 @@ jcl-parser = "jclparser.cli:main"
 [project.urls]
 Homepage = "https://github.com/landparty/jcl-parser"
 Repository = "https://github.com/landparty/jcl-parser"
-Documentation = "https://github.com/landparty/jcl-parser/tree/main/docs"
+Documentation = "https://github.com/landparty/jcl-parser/tree/main/.okf"
 "Bug Reports" = "https://github.com/landparty/jcl-parser/issues"
 
 [tool.setuptools.packages.find]
