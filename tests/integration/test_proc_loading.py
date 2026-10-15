@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from jclparser import parse_jcl
+from jclparser import explode_job, parse_jcl
 from jclparser.errors import JCLSyntaxError
 
 # Get path to test fixtures
@@ -63,14 +63,23 @@ class TestBasicExternalProcLoading:
         assert job.get_procedure("TESTPROC") is not None
         assert job.get_procedure("MYPROC") is not None
 
-    def test_no_jcllib_no_external_loading(self):
-        """Test that without JCLLIB, external PROCs aren't loaded."""
+    def test_no_jcllib_searches_system_proclib(self):
+        """Without JCLLIB, <base>/SYS1.PROCLIB is searched (issue #116)."""
         jcl = """//TESTJOB JOB (ACCT),'TEST'
 //STEP1 EXEC TESTPROC"""
 
-        # Without JCLLIB, should not find external PROC
-        with pytest.raises(JCLSyntaxError, match="not found"):
-            parse_jcl(jcl, strict_mode=True, proc_base_path=FIXTURES_DIR)
+        job = parse_jcl(jcl, strict_mode=True, proc_base_path=FIXTURES_DIR)
+        assert job.get_procedure("TESTPROC") is not None
+        assert explode_job(job).steps[0].name.startswith("STEP1.")
+
+    def test_no_jcllib_unknown_proc_is_a_warning(self):
+        """Without JCLLIB a PROC not found may be in the JES PROCLIB (#116)."""
+        jcl = """//TESTJOB JOB (ACCT),'TEST'
+//STEP1 EXEC NOSUCHP"""
+
+        job = parse_jcl(jcl, strict_mode=True, proc_base_path=FIXTURES_DIR)
+        (finding,) = job.validate()
+        assert finding.message.startswith("Procedure 'NOSUCHP' not found")
 
 
 class TestLibrarySearchOrder:
@@ -193,9 +202,10 @@ class TestErrorHandling:
 
     def test_library_not_found(self):
         """Test handling when library directory doesn't exist."""
+        # MYPROC is only in USER.PROCLIB, which is not searched.
         jcl = """//TESTJOB JOB (ACCT),'TEST'
 // JCLLIB ORDER=NONEXISTENT.PROCLIB
-//STEP1 EXEC TESTPROC"""
+//STEP1 EXEC MYPROC"""
 
         # Should handle gracefully (library just skipped)
         with pytest.raises(JCLSyntaxError):

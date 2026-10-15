@@ -23,6 +23,7 @@ from ..dataset_lifecycle import (
     _action_from_disp,
     _parse_disp_tokens,
 )
+from ..utils import control_card_text
 
 if TYPE_CHECKING:
     from ..model import DDStatement, Step
@@ -127,12 +128,16 @@ def _concatenation(step: Step, dd_name: str) -> list[DDStatement]:
     return members
 
 
-def _sysin_text(step: Step) -> str | None:
-    """Return the inline data from the step's SYSIN DD, or None if absent."""
+def _sysin_text(step: Step, *, card_images: bool = False) -> str | None:
+    """Return the inline data from the step's SYSIN DD, or None if absent.
+
+    The records are cut to columns 1-71 (:func:`control_card_text`) unless
+    *card_images* is set, for a reader that handles columns 72-80 itself.
+    """
     dd = step.get_dd("SYSIN")
     if dd is None or not dd.inline_data:
         return None
-    return dd.inline_data
+    return dd.inline_data if card_images else control_card_text(dd.inline_data)
 
 
 __all__ = [

@@ -123,3 +123,70 @@ class TestDb2UtilityControlStatements:
             ("EXEC SQL", "EMBEDDED", "SYSIN"),
             ("CREATE", "DDL", "SYSIN"),
         ]
+
+
+_DSNUPROC_JOB = """//J JOB
+//STEP1 EXEC DSNUPROC,SYSTEM=DB2P,UID='RUNST'
+//SYSIN DD *
+  RUNSTATS TABLESPACE DBX.TSX
+     UPDATE ALL
+  MODIFY RECOVERY TABLESPACE DBX.TSX
+     DELETE AGE(90)
+/*
+"""
+
+
+@pytest.mark.unit
+class TestDb2UtilityProcCall:
+    """Issue #106: ``EXEC DSNUPROC`` runs DSNUTILB even when unexploded."""
+
+    def test_unexploded_dsnuproc_options_are_not_dml(self):
+        results = detect_sql_in_job(parse_jcl(_DSNUPROC_JOB))
+        assert [r.sql_statements for r in results] == [[]]
+
+    def test_exploded_dsnuproc_agrees(self):
+        from jclparser import explode_job
+
+        results = detect_sql_in_job(explode_job(parse_jcl(_DSNUPROC_JOB)))
+        assert [r.sql_statements for r in results] == [[]]
+
+    def test_sql_in_exec_sql_under_dsnuproc_still_reported(self):
+        step = Step(
+            name="S",
+            procedure="DSNUPROC",
+            dd_statements=[
+                DDStatement(
+                    name="SYSIN",
+                    inline_data="  EXEC SQL\n    DELETE FROM T\n  ENDEXEC\n",
+                )
+            ],
+        )
+        result = detect_sql_in_step(step)
+        assert ("DELETE", "DML", "SYSIN") in result.sql_statements
+        assert result.is_db2_program
+
+
+@pytest.mark.unit
+class TestProcCallOverrideDds:
+    """Issue #94 / review of #137: //PROCSTEP.DD overrides are scanned."""
+
+    def test_dsnuproc_sysin_override_scanned_as_utility_input(self):
+        jcl = (
+            "//J JOB\n//S1 EXEC DSNUPROC,SYSTEM=DB2P\n//DSNUPROC.SYSIN DD *\n"
+            "  EXEC SQL DELETE FROM T ENDEXEC\n  RUNSTATS TABLESPACE A.B UPDATE ALL\n/*\n"
+        )
+        (result,) = detect_sql_in_job(parse_jcl(jcl))
+        assert result.sql_statements == [
+            ("EXEC SQL", "EMBEDDED", "DSNUPROC.SYSIN"),
+            ("DELETE", "DML", "DSNUPROC.SYSIN"),
+        ]
+
+    def test_override_read_as_input_to_its_procstep_program(self):
+        jcl = (
+            "//J JOB\n//P PROC\n//PS EXEC PGM=IDCAMS\n//SYSIN DD DUMMY\n"
+            "//PT EXEC PGM=DSNTEP2\n//SYSIN DD DUMMY\n// PEND\n//S1 EXEC P\n"
+            "//PS.SYSIN DD *\n  DELETE A.B PURGE\n/*\n"
+            "//PT.SYSIN DD *\n  SELECT A FROM T;\n/*\n"
+        )
+        (result,) = detect_sql_in_job(parse_jcl(jcl))
+        assert result.sql_statements == [("SELECT", "DML", "PT.SYSIN")]

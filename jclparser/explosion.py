@@ -507,6 +507,11 @@ def detect_circular_refs(
         else frozenset(p.upper() for p in call_chain)
     )
     if proc_upper in chain_set:
+        logger.debug(
+            "circular PROC reference detected: %s already in chain %s",
+            proc_name,
+            call_chain,
+        )
         raise CircularProcedureError(proc_name, call_chain + [proc_name])
 
 
@@ -518,6 +523,7 @@ def expand_proc_invocation(
     step_prefix: str | None = None,
     strict: bool = False,
     warnings: list[str] | None = None,
+    nested_call_scopes: dict[int, SymbolScope] | None = None,
 ) -> list[Step]:
     """
     Expand a single procedure invocation into steps.
@@ -533,20 +539,17 @@ def expand_proc_invocation(
                   undefined &SYMBOL only resolvable against PROC defaults /
                   EXEC overrides / system symbols, inside the PROC body).
                   None means diagnostics are discarded.
+        nested_call_scopes: When given, an ``EXEC procname`` inside the
+                  procedure only has its symbolic values substituted; its
+                  keyword overrides and DDs are left for the called PROC's
+                  scope (:func:`_resolve_call_in_proc_scope`) and the scope
+                  in effect at it is recorded here, keyed by ``id()`` of the
+                  expanded step.
 
     Returns:
         List of expanded steps with substituted parameters
     """
-    # Create new scope with overrides. SETs coded inside the procedure body
-    # apply to this expansion only, overriding same-named job-level SETs; they
-    # rank as SET symbols, so -- as for job-level SETs -- EXEC-statement
-    # overrides and PROC-statement defaults still take precedence over them.
-    expansion_scope = SymbolScope(
-        set_symbols={**scope.set_symbols, **procedure.set_statements},
-        proc_params=procedure.parameters.copy(),
-        exec_overrides=overrides.copy(),
-        system_provider=scope.system_provider,
-    )
+    expansion_scope = _expansion_scope(procedure, overrides, scope)
 
     # Generate step name prefix
     prefix = step_prefix or step.name or "PROC"
@@ -591,33 +594,12 @@ def expand_proc_invocation(
                         warnings=warnings,
                     )
 
-                # Substitute symbols in step parameters. A nested
-                # ``EXEC procname`` keeps "&&" in its symbolic values, as a
-                # top-level one does (TMP='&&WORK' is a temporary dataset).
-                if new_step.is_procedure:
-                    new_step.parameters = _substitute_proc_call_parameters(
-                        new_step.parameters,
-                        step_scope,
-                        strict=strict,
-                        warnings=warnings,
-                    )
-                else:
-                    new_step.parameters = substitute_parameters_dict(
-                        new_step.parameters,
-                        step_scope,
-                        strict=strict,
-                        warnings=warnings,
-                    )
+                _substitute_proc_body_step(
+                    new_step, step_scope, strict, warnings, nested_call_scopes
+                )
                 if "COND" in new_step.parameters:
                     new_step.parameters["COND"] = _qualify_cond_parameter(
                         new_step.parameters["COND"], proc_steps, prefix
-                    )
-
-                # Substitute symbols in DD statements -- the step's own and,
-                # for a nested ``EXEC procname``, its PROCSTEP.DDNAME overrides
-                for dd in _step_dds_and_overrides(new_step):
-                    substitute_dd_statement(
-                        dd, step_scope, strict=strict, warnings=warnings
                     )
 
                 result.append(new_step)
@@ -626,6 +608,156 @@ def expand_proc_invocation(
     expanded_steps = _process_proc_steps(procedure.steps)
 
     return expanded_steps
+
+
+def _substitute_proc_body_step(
+    step: Step,
+    scope: SymbolScope,
+    strict: bool,
+    warnings: list[str] | None,
+    nested_call_scopes: dict[int, SymbolScope] | None,
+) -> None:
+    """Substitute *scope*'s symbols into the expanded PROC step *step*.
+
+    A nested ``EXEC procname`` keeps "&&" in its symbolic values, as a
+    job-level one does (``TMP='&&WORK'`` is a temporary dataset).  With
+    *nested_call_scopes*, its keyword overrides and DDs are left for the
+    called PROC's scope and *scope* is recorded for them (issue #126).
+    """
+    if step.is_procedure and nested_call_scopes is not None:
+        _resolve_symbolic_values(
+            step, scope, allow_undefined=False, strict=strict, warnings=warnings
+        )
+        nested_call_scopes[id(step)] = scope
+        return
+    if step.is_procedure:
+        step.parameters = _substitute_proc_call_parameters(
+            step.parameters, scope, strict=strict, warnings=warnings
+        )
+    else:
+        step.parameters = substitute_parameters_dict(
+            step.parameters, scope, strict=strict, warnings=warnings
+        )
+    # The step's own DDs and, for a nested ``EXEC procname``, its
+    # PROCSTEP.DDNAME overrides.
+    for dd in _step_dds_and_overrides(step):
+        substitute_dd_statement(dd, scope, strict=strict, warnings=warnings)
+
+
+def _flattened_caller_scope(scope: SymbolScope) -> SymbolScope:
+    """*scope* of a PROC step as the fallback for a call coded in it.
+
+    The overrides of an ``EXEC procname`` coded inside a procedure are that
+    procedure's text, so the calling procedure's symbols (EXEC values, PROC
+    defaults, SETs) back up the called PROC's own, ranked below them.
+    """
+
+    def _texts(values: dict[str, Any]) -> dict[str, str]:
+        return {
+            k: jcl_value_text(v)
+            for k, v in values.items()
+            if v is not None and not is_exec_override_keyword(k)
+        }
+
+    return SymbolScope(
+        set_symbols={
+            **scope.set_symbols,
+            **_texts(scope.proc_params),
+            **_texts(scope.exec_overrides),
+        },
+        system_provider=scope.system_provider,
+    )
+
+
+def _expansion_scope(
+    procedure: Procedure, overrides: dict[str, Any], scope: SymbolScope
+) -> SymbolScope:
+    """The symbol scope of one expansion of *procedure* called from *scope*.
+
+    SETs coded inside the procedure body apply to this expansion only,
+    overriding same-named job-level SETs; they rank as SET symbols, so -- as
+    for job-level SETs -- EXEC-statement overrides and PROC-statement
+    defaults still take precedence over them.
+    """
+    return SymbolScope(
+        set_symbols={**scope.set_symbols, **procedure.set_statements},
+        proc_params=procedure.parameters.copy(),
+        exec_overrides=overrides.copy(),
+        system_provider=scope.system_provider,
+    )
+
+
+def _resolve_call_in_proc_scope(
+    step: Step,
+    procedure: Procedure,
+    caller_scope: SymbolScope,
+    strict: bool,
+    warnings: list[str] | None,
+) -> None:
+    """Resolve the keyword overrides and DDs of a PROC call in its scope.
+
+    ``PARM.PS1='&HLQ'`` and ``//PS1.IN DD DSN=&HLQ..X`` coded under
+    ``EXEC procname,HLQ=TEST`` are merged into the procedure, so their
+    symbols resolve in its scope -- EXEC values, PROC defaults, the PROC's
+    SETs in effect at the procstep they override (``Step.set_symbols``),
+    then *caller_scope* -- like that procstep's own statements (issue
+    #126).  An unqualified override and an added DD go to the first
+    procstep.  A symbol undefined there raises with *strict*; otherwise it
+    is left as written, with a warning, rather than blanked: an emptied
+    ``PARM.PS1=`` would nullify the procedure's PARM.
+    """
+    expansion = _expansion_scope(procedure, step.parameters, caller_scope)
+    proc_steps = list(iter_execution_steps(procedure.steps))
+    by_name = {s.name.upper(): s for s in proc_steps if s.name}
+
+    def _scope_for(procstep: str) -> SymbolScope:
+        target = by_name.get(procstep.upper()) or (
+            proc_steps[0] if proc_steps else None
+        )
+        return _proc_step_scope(expansion, target) if target else expansion
+
+    undefined: list[str] = []
+
+    def _keep(name: str) -> bool:
+        if name not in undefined:
+            undefined.append(name)
+        return True
+
+    keep = None if strict else _keep
+    for key, dd in _qualified_call_dds(step):
+        substitute_dd_statement(
+            dd, _scope_for(key.partition(".")[0]), strict=strict, keep_undefined=keep
+        )
+    for key, value in list(step.parameters.items()):
+        if is_exec_override_keyword(key):
+            step.parameters[key] = substitute_parameters_dict(
+                {key: value},
+                _scope_for(key.partition(".")[2]),
+                strict=strict,
+                keep_undefined=keep,
+            )[key]
+    if undefined and warnings is not None:
+        names = ", ".join(f"&{name}" for name in undefined)
+        warnings.append(
+            f"EXEC {step.name or 'PROC'}: undefined symbol(s) {names} in its "
+            f"overrides of PROC {procedure.name} left as written"
+        )
+
+
+def _qualified_call_dds(step: Step) -> list[tuple[str, DDStatement]]:
+    """Every DD coded under PROC call *step*, keyed ``PROCSTEP.DDNAME``.
+
+    Unqualified DDs (added to the first procstep) get an empty procstep.
+    """
+    return [
+        *((f".{dd.name or ''}", dd) for dd in step.dd_statements),
+        *step.dd_overrides.items(),
+        *(
+            (key, dd)
+            for key, dds in step.dd_override_concatenations.items()
+            for dd in dds
+        ),
+    ]
 
 
 def _proc_step_scope(expansion_scope: SymbolScope, proc_step: Step) -> SymbolScope:
@@ -1044,6 +1176,15 @@ _EXEC_OVERRIDE_KEYWORDS = frozenset(
 _PARM_KEYWORDS = frozenset({"PARM", "PARMDD"})
 
 
+def is_exec_override_keyword(key: str) -> bool:
+    """Whether *key* of an ``EXEC procname`` statement is a keyword override.
+
+    ``PARM``, ``PARM.PS1``, ``COND.PS2``, ... override the procedure's steps;
+    any other key (``HLQ``) assigns a symbolic parameter.
+    """
+    return key.upper().partition(".")[0] in _EXEC_OVERRIDE_KEYWORDS
+
+
 def _substitute_proc_call_parameters(
     parameters: dict[str, Any],
     scope: SymbolScope,
@@ -1329,7 +1470,7 @@ def apply_unqualified_dd_overrides(
             dd_statements.extend(deepcopy(members))
 
 
-def explode_job(  # noqa: C901 -- complexity baseline, split when touched
+def explode_job(
     job: Job,
     proc_loader: ProcedureLoader | None = None,
     max_depth: int = 10,
@@ -1371,17 +1512,10 @@ def explode_job(  # noqa: C901 -- complexity baseline, split when touched
     # another PROC or an IF block is found where the top-level ones were),
     # else the default chain. Inline procedures always win.
     if proc_loader is None:
-        job_loader: ProcedureLoader | None = getattr(job, "_proc_loader", None)
-        if job_loader is not None:
-            proc_loader = CompositeProcedureLoader(
-                [InlineProcedureLoader(job.procedures), job_loader]
-            )
-        else:
-            proc_loader = create_default_loader(job.procedures)
+        proc_loader = _job_proc_loader(job)
 
     # Get system provider
-    if system_provider is None:
-        system_provider = get_default_provider()
+    system_provider = system_provider or get_default_provider()
 
     # Create base symbol scope
     base_scope = SymbolScope(
@@ -1416,37 +1550,23 @@ def explode_job(  # noqa: C901 -- complexity baseline, split when touched
         _check_step_limit(1)
 
     # Process steps
-    def _step_scope(step: Step) -> SymbolScope:
-        # A step read before a later SET redefined a symbol resolves it to the
-        # value in effect at that step (Step.set_symbols).
-        if step.set_symbols is None:
-            return base_scope
-        return SymbolScope(
-            set_symbols={**job.set_statements, **step.set_symbols},
-            system_provider=system_provider,
-        )
-
     def _process_steps(steps_list):
         result = []
         for step in steps_list:
             if isinstance(step, ConditionalBlock):
                 result.append(_clone_conditional(step, _process_steps))
                 continue
-            step_scope = _step_scope(step)
+            step_scope = _job_step_scope(job, step, base_scope)
             if step.is_procedure:
-                # The DDs coded under an ``EXEC procname`` (overrides and
-                # additions) are job-level JCL: resolve the job's SET and
-                # system symbols in them like in any other step's DDs. Any
-                # other symbol is left as written rather than blanked.
+                # The symbolic values of an ``EXEC procname`` (HLQ=&SYSUID)
+                # belong to the job: resolve the job's SET and system symbols
+                # in them, leaving any other symbol as written. A symbolic
+                # value keeps "&&": it may carry a temporary dataset name
+                # (TMP='&&WORK'). Its keyword overrides (PARM.PS1='&HLQ') and
+                # DDs are merged into the procedure and resolved in its scope
+                # by _explode_step (issue #126).
                 step = _clone_step_for_explosion(step)
-                for dd in _step_dds_and_overrides(step):
-                    substitute_dd_statement(dd, step_scope, allow_undefined=True)
-                # So are its EXEC keyword overrides (PARM.PS1='&SYSUID') and
-                # symbolic values (HLQ=&SYSUID). A symbolic value keeps "&&":
-                # it may carry a temporary dataset name (TMP='&&WORK').
-                step.parameters = _substitute_proc_call_parameters(
-                    step.parameters, step_scope, allow_undefined=True
-                )
+                _resolve_symbolic_values(step, step_scope)
                 # Expand procedure
                 expanded = _explode_step(
                     step=step,
@@ -1462,42 +1582,113 @@ def explode_job(  # noqa: C901 -- complexity baseline, split when touched
                     jcllib_order=job.jcllib_order or None,
                     warnings=explosion_warnings,
                     on_step=_count_one_step,
+                    call_scope=step_scope,
                 )
                 result.extend(expanded)
             else:
                 # Regular step - just substitute symbols
-                substituted_step = _clone_step_for_explosion(step)
-
-                if substituted_step.program:
-                    substituted_step.program = substitute_symbols(
-                        substituted_step.program,
-                        step_scope,
-                        strict=strict_symbols,
-                        warnings=explosion_warnings,
-                    )
-
-                substituted_step.parameters = substitute_parameters_dict(
-                    substituted_step.parameters,
-                    step_scope,
-                    strict=strict_symbols,
-                    warnings=explosion_warnings,
-                )
-
-                for dd in substituted_step.dd_statements:
-                    substitute_dd_statement(
-                        dd,
-                        step_scope,
-                        strict=strict_symbols,
-                        warnings=explosion_warnings,
-                    )
-
                 _check_step_limit(1)
-                result.append(substituted_step)
+                result.append(
+                    _substituted_plain_step(
+                        step, step_scope, strict_symbols, explosion_warnings
+                    )
+                )
         return result
 
     exploded_steps = _process_steps(job.steps)
 
-    # Create new job with exploded steps
+    exploded_job = _exploded_job(job, exploded_steps)
+
+    # Diagnostics raised while substituting symbols during explosion itself
+    # (as opposed to during parse_jcl(), already covered by the warnings
+    # copy in _exploded_job) -- e.g. an undefined &SYMBOL only resolvable
+    # inside a PROC body.
+    exploded_job.warnings.extend(explosion_warnings)
+
+    # Attach audit metadata
+    if audit:
+        exploded_job.explosion_audit = explosion_audit
+    exploded_job.explosion_map = explosion_map
+
+    logger.info(
+        "exploded job %s: %d steps expanded from %d PROC invocation(s)",
+        exploded_job.name or "(unnamed)",
+        len(exploded_steps),
+        len(explosion_map),
+    )
+
+    return exploded_job
+
+
+def _job_step_scope(job: Job, step: Step, base_scope: SymbolScope) -> SymbolScope:
+    """The scope of job-level *step*: *base_scope* or the SETs in effect at it.
+
+    A step read before a later SET redefined a symbol resolves it to the
+    value in effect at that step (``Step.set_symbols``).
+    """
+    if step.set_symbols is None:
+        return base_scope
+    return SymbolScope(
+        set_symbols={**job.set_statements, **step.set_symbols},
+        system_provider=base_scope.system_provider,
+    )
+
+
+def _job_proc_loader(job: Job) -> ProcedureLoader:
+    """The loader :func:`explode_job` uses when the caller passes none."""
+    job_loader: ProcedureLoader | None = getattr(job, "_proc_loader", None)
+    if job_loader is None:
+        return create_default_loader(job.procedures)
+    return CompositeProcedureLoader([InlineProcedureLoader(job.procedures), job_loader])
+
+
+def _resolve_symbolic_values(
+    step: Step,
+    scope: SymbolScope,
+    allow_undefined: bool = True,
+    strict: bool = False,
+    warnings: list[str] | None = None,
+) -> None:
+    """Resolve the caller's symbols in the symbolic values of PROC call *step*.
+
+    ``HLQ=&SYSUID`` belongs to the caller (the job, or the procedure the
+    call is coded in): its symbols resolve against *scope*.  With
+    *allow_undefined* an undefined symbol is left as written (a job-level
+    call: it may be resolved later); without, it is blanked and reported on
+    *warnings*, or raises with *strict* (a call inside a procedure, like the
+    rest of that procedure's text).  A symbolic value keeps "&&": it may
+    carry a temporary dataset name (``TMP='&&WORK'``).  Keyword overrides
+    are left for :func:`_resolve_call_in_proc_scope`.
+    """
+    symbolic = _substitute_proc_call_parameters(
+        {k: v for k, v in step.parameters.items() if not is_exec_override_keyword(k)},
+        scope,
+        strict=strict,
+        allow_undefined=allow_undefined,
+        warnings=warnings,
+    )
+    step.parameters = {k: symbolic.get(k, v) for k, v in step.parameters.items()}
+
+
+def _substituted_plain_step(
+    step: Step, scope: SymbolScope, strict: bool, warnings: list[str]
+) -> Step:
+    """A copy of the ``EXEC PGM=`` *step* with its symbols substituted."""
+    substituted_step = _clone_step_for_explosion(step)
+    if substituted_step.program:
+        substituted_step.program = substitute_symbols(
+            substituted_step.program, scope, strict=strict, warnings=warnings
+        )
+    substituted_step.parameters = substitute_parameters_dict(
+        substituted_step.parameters, scope, strict=strict, warnings=warnings
+    )
+    for dd in substituted_step.dd_statements:
+        substitute_dd_statement(dd, scope, strict=strict, warnings=warnings)
+    return substituted_step
+
+
+def _exploded_job(job: Job, exploded_steps: list[Step | ConditionalBlock]) -> Job:
+    """A copy of *job* with *exploded_steps*, keeping its post-parse metadata."""
     exploded_job = Job(
         name=job.name,
         parameters=job.parameters,
@@ -1511,6 +1702,7 @@ def explode_job(  # noqa: C901 -- complexity baseline, split when touched
         comments=job.comments,
         line_number=job.line_number,
         exported_symbols=set(job.exported_symbols),
+        is_procedure_member=job.is_procedure_member,
     )
 
     # Preserve post-parse analysis metadata so consumers of the exploded job
@@ -1529,29 +1721,76 @@ def explode_job(  # noqa: C901 -- complexity baseline, split when touched
         src_val = getattr(job, _attr, None)
         if src_val is not None:
             setattr(exploded_job, _attr, deepcopy(src_val))
-
-    # Diagnostics raised while substituting symbols during explosion itself
-    # (as opposed to during parse_jcl(), already covered by the warnings
-    # copy above) -- e.g. an undefined &SYMBOL only resolvable inside a
-    # PROC body.
-    exploded_job.warnings.extend(explosion_warnings)
-
-    # Attach audit metadata
-    if audit:
-        exploded_job.explosion_audit = explosion_audit
-    exploded_job.explosion_map = explosion_map
-
-    logger.info(
-        "exploded job %s: %d steps expanded from %d PROC invocation(s)",
-        exploded_job.name or "(unnamed)",
-        len(exploded_steps),
-        len(explosion_map),
-    )
-
     return exploded_job
 
 
-def _explode_step(  # noqa: C901 -- complexity baseline, split when touched
+def _apply_call_overrides(
+    expanded: list[Step],
+    step: Step,
+    proc_name: str,
+    warnings: list[str] | None,
+) -> None:
+    """Apply what the ``EXEC procname`` *step* overrides to its *expanded* steps."""
+    # EXEC keyword overrides (PARM.PROCSTEP=, COND=, ...).
+    apply_exec_parameter_overrides(
+        expanded, step.parameters, step.name or "PROC", warnings
+    )
+
+    # Qualified DD overrides (PROCSTEP.DDNAME).
+    if step.dd_overrides:
+        apply_dd_overrides(
+            expanded,
+            step.dd_overrides,
+            step.name or "PROC",
+            step.dd_override_concatenations,
+            proc_name=proc_name,
+            warnings=warnings,
+        )
+
+    # Unqualified DD overrides/additions (coded directly under EXEC PROC=,
+    # stored on the step's own dd_statements) go onto the procedure's first
+    # step.
+    if step.dd_statements:
+        apply_unqualified_dd_overrides(expanded, step.dd_statements)
+
+
+def _record_expansion(
+    step: Step,
+    procedure: Procedure,
+    overrides: dict[str, Any],
+    expanded: list[Step],
+    depth: int,
+    audit_records: list[ExplosionRecord] | None,
+    expansion_map: dict[str, ProcExpansionInfo],
+) -> None:
+    """Record the audit entry and expansion-map entry of one PROC expansion."""
+    proc_name = step.procedure or procedure.name
+    expanded_names = [s.name for s in expanded if hasattr(s, "name") and s.name]
+    if audit_records is not None:
+        audit_records.append(
+            ExplosionRecord(
+                step_name=step.name or "UNNAMED",
+                proc_name=proc_name,
+                parameters=overrides,
+                depth=depth,
+                timestamp=datetime.now(),  # local time, matches SYSTIME
+                expanded_steps=list(expanded_names),
+            )
+        )
+
+    # resolved_parameters is PROC defaults merged with EXEC overrides
+    # (overrides win), giving the full effective parameter set.
+    if step.name:
+        expansion_map[step.name] = ProcExpansionInfo(
+            original_statement=f"EXEC {proc_name}",
+            proc_definition=procedure.name,
+            resolved_parameters={**procedure.parameters, **overrides},
+            source_line_numbers=[step.line_number],
+            expanded_step_names=list(expanded_names),
+        )
+
+
+def _explode_step(
     step: Step,
     proc_loader: ProcedureLoader,
     base_scope: SymbolScope,
@@ -1565,6 +1804,7 @@ def _explode_step(  # noqa: C901 -- complexity baseline, split when touched
     call_chain_upper: frozenset | None = None,
     warnings: list[str] | None = None,
     on_step: Callable[[], None] | None = None,
+    call_scope: SymbolScope | None = None,
 ) -> list[Step]:
     """
     Recursively explode a single step.
@@ -1589,6 +1829,11 @@ def _explode_step(  # noqa: C901 -- complexity baseline, split when touched
                  before it is added, at every nesting level -- the hook
                  ``explode_job`` enforces ``max_steps`` through, so a fan-out
                  is stopped while it is being built.
+        call_scope: When given, *step*'s keyword overrides and DDs are
+                 still unresolved: resolve them in the called procedure's
+                 scope first, with *call_scope* -- the scope of the code
+                 that calls it -- as the fallback
+                 (:func:`_resolve_call_in_proc_scope`).
 
     Returns:
         List of exploded steps
@@ -1616,12 +1861,6 @@ def _explode_step(  # noqa: C901 -- complexity baseline, split when touched
     logger.debug("expanding PROC %s at depth %d", proc_name, depth)
 
     # Check for circular references (O(1) with frozenset)
-    if proc_name.upper() in call_chain_upper:
-        logger.debug(
-            "circular PROC reference detected: %s already in chain %s",
-            proc_name,
-            call_chain,
-        )
     detect_circular_refs(proc_name, call_chain, call_chain_upper)
 
     # Load procedure definition. The same JCLLIB ORDER is threaded through every
@@ -1634,10 +1873,17 @@ def _explode_step(  # noqa: C901 -- complexity baseline, split when touched
     if procedure is None:
         raise ProcedureNotFoundError(proc_name, step.line_number)
 
+    if call_scope is not None:
+        _resolve_call_in_proc_scope(
+            step, procedure, call_scope, strict_symbols, warnings
+        )
+
     # Extract parameter overrides from step
     overrides = step.parameters.copy()
 
-    # Expand this procedure
+    # Expand this procedure. The overrides of a call nested in it are
+    # resolved below, in the PROC that call names (nested_call_scopes).
+    nested_call_scopes: dict[int, SymbolScope] = {}
     expanded = expand_proc_invocation(
         step=step,
         procedure=procedure,
@@ -1646,53 +1892,13 @@ def _explode_step(  # noqa: C901 -- complexity baseline, split when touched
         step_prefix=step.name,
         strict=strict_symbols,
         warnings=warnings,
+        nested_call_scopes=nested_call_scopes,
     )
 
-    # Apply EXEC keyword overrides (PARM.PROCSTEP=, COND=, ...) to the steps.
-    apply_exec_parameter_overrides(
-        expanded, step.parameters, step.name or "PROC", warnings
+    _apply_call_overrides(expanded, step, procedure.name or proc_name, warnings)
+    _record_expansion(
+        step, procedure, overrides, expanded, depth, audit_records, expansion_map
     )
-
-    # Apply qualified DD overrides (PROCSTEP.DDNAME) if present
-    if step.dd_overrides:
-        apply_dd_overrides(
-            expanded,
-            step.dd_overrides,
-            step.name or "PROC",
-            step.dd_override_concatenations,
-            proc_name=procedure.name or proc_name,
-            warnings=warnings,
-        )
-
-    # Merge unqualified DD overrides/additions (coded directly under EXEC PROC=,
-    # stored on the step's own dd_statements) onto the procedure's first step.
-    if step.dd_statements:
-        apply_unqualified_dd_overrides(expanded, step.dd_statements)
-
-    # Record audit information
-    if audit_records is not None:
-        record = ExplosionRecord(
-            step_name=step.name or "UNNAMED",
-            proc_name=proc_name,
-            parameters=overrides,
-            depth=depth,
-            timestamp=datetime.now(),  # local time, matches SYSTIME
-            expanded_steps=[s.name for s in expanded if hasattr(s, "name") and s.name],
-        )
-        audit_records.append(record)
-
-    # Record expansion info — resolved_parameters is PROC defaults merged with
-    # EXEC overrides (overrides win), giving the full effective parameter set.
-    if step.name:
-        expansion_map[step.name] = ProcExpansionInfo(
-            original_statement=f"EXEC {proc_name}",
-            proc_definition=procedure.name,
-            resolved_parameters={**procedure.parameters, **overrides},
-            source_line_numbers=[step.line_number],
-            expanded_step_names=[
-                s.name for s in expanded if hasattr(s, "name") and s.name
-            ],
-        )
 
     # Recursively explode any nested procedure calls
     new_call_chain = call_chain + [proc_name]
@@ -1719,6 +1925,7 @@ def _explode_step(  # noqa: C901 -- complexity baseline, split when touched
                     jcllib_order=jcllib_order,
                     warnings=warnings,
                     on_step=on_step,
+                    call_scope=_flattened_caller_scope(nested_call_scopes[id(s)]),
                 )
                 result.extend(nested)
             else:

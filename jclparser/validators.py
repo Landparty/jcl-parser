@@ -96,8 +96,10 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
 
     logger.debug("validating structure of job %s", job.name or "(unnamed)")
 
-    # Job name validation
-    if not validate_jcl_identifier(job.name):
+    # A JOB-less PROC member has no JOB statement and keeps its steps in
+    # job.procedures; the job-name and "at least one step" rules are about
+    # a JOB statement and do not apply to it.
+    if not job.is_procedure_member and not validate_jcl_identifier(job.name):
         errors.append(
             ValidationError(
                 f"Invalid job name '{job.name}': {_JCL_NAME_FORMAT}",
@@ -106,7 +108,7 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
         )
 
     # Must have at least one step
-    if not job.steps:
+    if not job.steps and not job.is_procedure_member:
         errors.append(
             ValidationError(
                 "Job must contain at least one execution step",
@@ -149,6 +151,8 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
     # Validate OUTPUT=*.name back-references (populated by parse_jcl).
     errors.extend(validate_output_references(job))
 
+    errors.extend(validate_procedure_references(job))
+
     logger.debug(
         "validation of job %s produced %d finding(s)",
         job.name or "(unnamed)",
@@ -177,6 +181,32 @@ def validate_output_references(job: Job) -> list[ValidationError]:
                 severity=ErrorSeverity.WARNING,
             )
         )
+    return errors
+
+
+def validate_procedure_references(job: Job) -> list[ValidationError]:
+    """Warn on ``EXEC procname`` calls whose PROC was not found.
+
+    :func:`jclparser.parse_jcl` adds every PROC it can load (in-stream,
+    JCLLIB / system PROCLIB under the base path, built-in) to
+    ``job.procedures``.  A call to any other PROC cannot be checked or
+    expanded here, but the PROC may well exist in the JES PROCLIB, so it is
+    a WARNING, not an ERROR (issue #116).  A strict parse of a job with a
+    ``JCLLIB ORDER`` still fails on it before this runs.
+    """
+    errors: list[ValidationError] = []
+    for step in iter_execution_steps(job.steps):
+        if step.procedure and not job.get_procedure(step.procedure):
+            errors.append(
+                ValidationError(
+                    f"Procedure '{step.procedure}' not found in-stream or in "
+                    "any configured PROC library; step "
+                    f"'{step.name or ''}' cannot be checked or expanded",
+                    ErrorType.SEMANTIC_ERROR,
+                    line_number=step.line_number,
+                    severity=ErrorSeverity.WARNING,
+                )
+            )
     return errors
 
 

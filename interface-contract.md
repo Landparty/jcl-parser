@@ -71,7 +71,7 @@ Attributes the adapter accesses on a `Job`:
 | Attribute | Type | Notes |
 |-----------|------|-------|
 | `job.name` | `str \| None` | Job name from `//JOBNAME JOB` statement |
-| `job.steps` | `list[Step]` | All job steps |
+| `job.steps` | `list[Step \| ConditionalBlock]` | Top-level steps in source order. An `// IF` block is a `ConditionalBlock` (no `.name`, no `.program`), and the steps inside it are only in its `then_steps` / `else_steps`. To visit every execution step, iterate `iter_execution_steps(job.steps)` (`from jclparser import iter_execution_steps`) — it flattens nested IF blocks, before and after `explode()` |
 | `job.procedures` | list | Inline PROC definitions for `InlineProcedureLoader` |
 | `job.validate()` | `list` | Structural validation errors |
 | `job.explode(...)` | `Job` | Returns exploded job; see above |
@@ -87,6 +87,11 @@ Attributes the adapter accesses on a `Job`:
 | `.parameters` | `dict` |
 | `.depth` | `int` |
 | `.expanded_steps` | `list` |
+
+> **Adapter change required (issue #99):** iterate `iter_execution_steps(job.steps)` (or
+> skip `ConditionalBlock` elements) wherever the adapter reads step attributes off
+> `job.steps` or `exploded_job.steps`; otherwise the first `// IF` raises
+> `AttributeError` and the steps inside IF blocks are missed.
 
 ## Step Object Contract
 

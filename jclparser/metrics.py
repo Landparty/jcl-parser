@@ -22,6 +22,7 @@ from .model import (
     ConditionalBlock,
     Job,
     Step,
+    _dataset_dds,
     iter_execution_steps,
 )
 
@@ -127,7 +128,9 @@ def compute_metrics(job: Job) -> JobMetrics:
         if isinstance(step, Step):
             exec_steps += 1
             step_name = step.name or ""
-            for dd in step.dd_statements:
+            # _dataset_dds: an unexploded PROC call's //PROCSTEP.DD overrides
+            # allocate datasets too.
+            for dd in _dataset_dds(step):
                 dd_count += 1
                 if not dd.dataset_name:
                     continue

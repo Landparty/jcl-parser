@@ -56,9 +56,9 @@ class TestEdgeCases:
 // JCLLIB ORDER=()
 //STEP1 EXEC TESTPROC"""
 
-        # Should handle gracefully
-        with pytest.raises(JCLSyntaxError):
-            parse_jcl(jcl, strict_mode=True, proc_base_path=FIXTURES_DIR)
+        # An empty order is no JCLLIB: the system PROCLIB is searched (#116).
+        job = parse_jcl(jcl, strict_mode=True, proc_base_path=FIXTURES_DIR)
+        assert job.get_procedure("TESTPROC") is not None
 
     def test_proc_with_dd_overrides(self, tmp_path):
         """Test external PROC with DD overrides."""

@@ -737,6 +737,12 @@ class Job:
     #: defined.  Parsing never fails because of these; they exist so a
     #: consumer can detect silent data loss without re-scanning the source.
     warnings: list[str] = field(default_factory=list)
+    #: ``True`` for the synthetic ``Job(name="")`` that :func:`parse_jcl`
+    #: returns for a JOB-less PROC member (a cataloged procedure): it has no
+    #: JOB statement and its steps live in :attr:`procedures`, so the
+    #: job-level checks (job name, "at least one step", JOB-card lint rules)
+    #: do not apply to it.
+    is_procedure_member: bool = False
 
     def add_step(self, step: Step | ConditionalBlock) -> None:
         """Add an execution step to this job"""

@@ -11,10 +11,11 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .utils import split_source_lines
+from .model import _dataset_dds
+from .utils import control_card_text, split_source_lines
 
 if TYPE_CHECKING:
-    from .model import DDStatement, Job, Step
+    from .model import DDStatement, Job, Procedure, Step
 
 # Programs known to execute SQL or DB2 operations.
 DB2_PROGRAMS: frozenset[str] = frozenset(
@@ -46,6 +47,13 @@ DB2_PROCEDURES: frozenset[str] = frozenset(
         "DSNHPLI",  # DB2 precompile + PL/I compile
     }
 )
+
+# The program a catalogued PROC runs, for PROCs whose in-stream data is that
+# program's control language.  On an unexploded job ``EXEC DSNUPROC`` has no
+# ``program``, so the step is classified by the program its PROC runs.
+PROCEDURE_PROGRAMS: dict[str, str] = {
+    "DSNUPROC": "DSNUTILB",
+}
 
 # Programs whose in-stream data is their own control language, not SQL.  Their
 # statements reuse SQL verbs -- IDCAMS ``DELETE`` / ``ALTER``, FTP ``DELETE``
@@ -228,14 +236,22 @@ def detect_sql_in_dd(dd: DDStatement) -> list[tuple[str, str]]:
     """
     if not dd.inline_data:
         return []
-    return detect_sql_in_text(dd.inline_data)
+    # Columns 72-80 of a card image are not statement text (issue #115).
+    return detect_sql_in_text(control_card_text(dd.inline_data))
 
 
-def detect_sql_in_step(step: Step) -> SQLDetectionResult:
+def detect_sql_in_step(
+    step: Step, procedure: Procedure | None = None
+) -> SQLDetectionResult:
     """Analyse a step for SQL content.
 
     Checks the program name (or, for ``EXEC procname``, the PROC name) and
-    the inline data of every DD statement.
+    the inline data of every DD statement -- on an unexploded PROC call its
+    ``//PROCSTEP.DD`` overrides too.  Each DD is read as input to the
+    program it feeds: the step's own, or for a PROC call the program of the
+    procstep it names in *procedure* (the called PROC, when known; an
+    unqualified DD feeds the first procstep), else the program a PROC in
+    :data:`PROCEDURE_PROGRAMS` runs.
     In-stream data of a program in :data:`NON_SQL_CONTROL_PROGRAMS` is not
     scanned, and in a ``SYSTSIN`` DD (TSO commands) only DB2 subcommands such
     as ``BIND`` count.  For a program in
@@ -249,25 +265,47 @@ def detect_sql_in_step(step: Step) -> SQLDetectionResult:
         is_db2_program=is_db2_program(step.program)
         or bool(step.procedure and step.procedure.upper() in DB2_PROCEDURES),
     )
-    program = step.program.upper() if step.program else ""
-    if program in NON_SQL_CONTROL_PROGRAMS:
-        return result
-    utility_control = program in DB2_UTILITY_CONTROL_PROGRAMS
     is_tso_input = False
-    for dd in step.dd_statements:
+    for dd in _dataset_dds(step):
         # An unnamed DD is a concatenation member of the last named one, so
         # ``//  DD *`` after ``//SYSTSIN DD ...`` is TSO input too.
         if dd.name:
-            is_tso_input = dd.name.upper() == _TSO_COMMAND_DD
-        if utility_control:
-            found = detect_sql_in_utility_statements(dd.inline_data or "")
-        else:
-            found = detect_sql_in_dd(dd)
-        for kw, cat in found:
+            is_tso_input = dd.name.upper().rpartition(".")[2] == _TSO_COMMAND_DD
+        for kw, cat in _sql_in_program_input(dd, _dd_program(step, dd, procedure)):
             if is_tso_input and cat not in _TSO_SQL_CATEGORIES:
                 continue
             result.sql_statements.append((kw, cat, dd.name))
     return result
+
+
+def _dd_program(step: Step, dd: DDStatement, procedure: Procedure | None) -> str:
+    """The program (upper case) that reads DD *dd* of *step*, or ``""``."""
+    if step.program:
+        return step.program.upper()
+    if procedure is not None:
+        from .model import iter_execution_steps
+
+        procstep, dot, _ = (dd.name or "").rpartition(".")
+        proc_steps = list(iter_execution_steps(procedure.steps))
+        if dot:
+            target = next(
+                (s for s in proc_steps if (s.name or "").upper() == procstep.upper()),
+                None,
+            )
+        else:
+            target = proc_steps[0] if proc_steps else None
+        if target is not None and target.program:
+            return target.program.upper()
+    return PROCEDURE_PROGRAMS.get((step.procedure or "").upper(), "")
+
+
+def _sql_in_program_input(dd: DDStatement, program: str) -> list[tuple[str, str]]:
+    """SQL in the in-stream data of *dd*, read as input to *program*."""
+    if program in NON_SQL_CONTROL_PROGRAMS:
+        return []
+    if program in DB2_UTILITY_CONTROL_PROGRAMS:
+        return detect_sql_in_utility_statements(control_card_text(dd.inline_data or ""))
+    return detect_sql_in_dd(dd)
 
 
 def detect_sql_in_job(job: Job) -> list[SQLDetectionResult]:
@@ -279,7 +317,8 @@ def detect_sql_in_job(job: Job) -> list[SQLDetectionResult]:
 
     results: list[SQLDetectionResult] = []
     for step in iter_execution_steps(job.steps):
-        det = detect_sql_in_step(step)
+        procedure = job.get_procedure(step.procedure) if step.procedure else None
+        det = detect_sql_in_step(step, procedure)
         if det.has_sql:
             results.append(det)
     return results

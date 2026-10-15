@@ -30,6 +30,7 @@ from .continuation_handler import ContinuationLineHandler
 from .errors import JCLSyntaxError
 from .utils import (
     instream_delimiter,
+    is_card_image,
     is_continued_card_image,
     normalize_jcl_lines,
     split_source_lines,
@@ -75,10 +76,17 @@ def _merge_source_lines(content: str) -> ScannedSource:
         jcl_indices[jcl_line_num - 1]: merged_line
         for merged_line, jcl_line_num in merged_jcl
     }
+    # In-stream data records reach the program as coded: columns 72-80 and
+    # tabs are data, not a continuation indicator and sequence field, so the
+    # raw record is woven in (trailing blanks aside) rather than the
+    # normalized one (issue #115).  CNTL control records are statements
+    # with JCL's column rules and stay normalized.
+    data_lines = {i: _data_record(raw_lines[i]) for i in classifier.inline_data_indices}
     merged_lines = _weave_lines(
         lines,
         merged_start,
         classifier.inline_data_indices | classifier.control_data_indices,
+        data_lines,
     )
 
     # Map the handler's suspect comment fields back to original line numbers.
@@ -124,10 +132,27 @@ def merge_continuations(
     )
 
 
+def _data_record(record: str) -> str:
+    """An in-stream data record as woven into the parse (issue #115).
+
+    A card image (exactly 80 columns, :func:`utils.is_card_image`) is kept
+    whole, so readers of control statements can still tell its columns
+    72-80 from text (:func:`utils.control_card_text`); any other record only
+    loses its trailing blanks.
+    """
+    return record if is_card_image(record) else record.rstrip(" ")
+
+
 def _weave_lines(
-    lines: list[str], merged_start: dict[int, str], data_indices: set[int]
+    lines: list[str],
+    merged_start: dict[int, str],
+    data_indices: set[int],
+    data_lines: dict[int, str] | None = None,
 ) -> list[tuple[str, int]]:
     """Recombine merged statements with the data records, in source order.
+
+    *data_lines* overrides the text woven in for a data record (the raw
+    in-stream record instead of its normalized form).
 
     A comment (or blank) record met inside a continued statement is its own
     entry, but it must come *before* that merged statement: a DD that opens
@@ -140,7 +165,9 @@ def _weave_lines(
     stmt_pos: int | None = None
     for i, line in enumerate(lines):
         if i in data_indices:
-            merged_lines.append((line, i + 1))
+            merged_lines.append(
+                (data_lines.get(i, line) if data_lines else line, i + 1)
+            )
             stmt_pos = None
         elif i in merged_start:
             merged_lines.append((merged_start[i], i + 1))

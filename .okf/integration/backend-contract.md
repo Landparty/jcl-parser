@@ -63,6 +63,14 @@ loader = CompositeProcedureLoader(
 
 `job.name`, `job.steps`, `job.procedures`, `job.validate()`, `job.explode(...)`, `job.explosion_audit`, `job.explosion_map`
 
+> **Correction (2026-10-15, issue #99):** `job.steps` is `list[Step | ConditionalBlock]`,
+> not `list[Step]` as `interface-contract.md` used to say. An `// IF` block is a
+> `ConditionalBlock` with no `.name`, and the steps inside it are only reachable through
+> its `then_steps` / `else_steps`, so an adapter reading `step.name` on every element
+> raises `AttributeError` on the first IF and never sees the steps inside it. Iterate
+> `iter_execution_steps(job.steps)` instead — re-exported from `jclparser` (with
+> `ConditionalBlock`) since this fix. Update the backend adapter at the next vendor sync.
+
 ## Step
 
 `step.name`, `step.program`, `step.is_exploded`, `step.procedure`, `step.is_procedure`,

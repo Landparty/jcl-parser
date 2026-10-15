@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from jclparser.errors import ErrorType
+from jclparser.errors import ErrorSeverity, ErrorType
 from jclparser.parser import validate_jcl
 
 
@@ -176,30 +176,42 @@ class TestValidateJCLFallbackReportsStrictError:
         return [(e.line_number, e.message) for e in validate_jcl(jcl)]
 
     def test_instream_data_not_reported_and_real_cause_kept(self):
+        # With a JCLLIB an unknown PROC is an error (issue #116).
         jcl = (
-            "//J JOB 1\n//S EXEC PGM=SORT\n//SYSIN DD *\n  SORT FIELDS=COPY\n"
-            "/*\n//S2 EXEC PROC=XYZ,A=1\n"
+            "//J JOB 1\n// JCLLIB ORDER=MY.PROCLIB\n//S EXEC PGM=SORT\n"
+            "//SYSIN DD *\n  SORT FIELDS=COPY\n/*\n//S2 EXEC PROC=XYZ,A=1\n"
         )
         errors = validate_jcl(jcl)
         assert len(errors) == 1
-        assert errors[0].line_number == 6
+        assert errors[0].line_number == 7
         assert errors[0].message.startswith("Procedure 'XYZ' not found")
         assert errors[0].error_type == ErrorType.SYNTAX_ERROR
 
     def test_cntl_control_records_not_reported(self):
         jcl = (
-            "//J JOB 1\n//S EXEC PGM=X\n//C CNTL\nNOT JCL AT ALL\n"
-            "// ENDCNTL\n//S2 EXEC NOPROC\n"
+            "//J JOB 1\n// JCLLIB ORDER=MY.PROCLIB\n//S EXEC PGM=X\n//C CNTL\n"
+            "NOT JCL AT ALL\n// ENDCNTL\n//S2 EXEC NOPROC\n"
         )
         findings = self._findings(jcl)
         assert len(findings) == 1
-        assert findings[0][0] == 6
+        assert findings[0][0] == 7
         assert "Procedure 'NOPROC' not found" in findings[0][1]
 
     def test_positional_exec_of_unknown_proc_reported(self):
-        findings = self._findings("//J JOB 1\n//S EXEC XYZ\n")
-        assert findings and findings[0][0] == 2
+        findings = self._findings(
+            "//J JOB 1\n// JCLLIB ORDER=MY.PROCLIB\n//S EXEC XYZ\n"
+        )
+        assert findings and findings[0][0] == 3
         assert "Procedure 'XYZ' not found" in findings[0][1]
+
+    def test_unknown_proc_without_jcllib_is_only_a_warning(self):
+        # Issue #116: with no JCLLIB the PROC may be in the JES PROCLIB.
+        jcl = "//J JOB 1\n//S EXEC XYZ\n"
+        assert validate_jcl(jcl) == []
+        (finding,) = validate_jcl(jcl, level="structure")
+        assert finding.line_number == 2
+        assert finding.severity == ErrorSeverity.WARNING
+        assert finding.message.startswith("Procedure 'XYZ' not found")
 
     def test_malformed_dlm_reported(self):
         findings = self._findings("//J JOB 1\n//S EXEC PGM=X\n//D DD *,DLM=(AB)\n")

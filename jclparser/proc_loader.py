@@ -126,11 +126,19 @@ class InlineProcedureLoader(ProcedureLoader):
         return self._procedures.get(name.upper())
 
 
+#: The system procedure libraries JES searches after the ``JCLLIB ORDER``
+#: libraries -- and on their own when a job has no JCLLIB.  Under the
+#: loader's base path they are ``<base_path>/SYS1.PROCLIB/<NAME>.jcl``.
+DEFAULT_SYSTEM_PROCLIBS: tuple[str, ...] = ("SYS1.PROCLIB",)
+
+
 class JCLLIBProcedureLoader(ProcedureLoader):
     """
     Loader for procedures from external JCLLIB libraries.
 
-    Reads procedure definitions from files in specified library directories.
+    Reads procedure definitions from files in specified library directories,
+    then in :data:`DEFAULT_SYSTEM_PROCLIBS`, as JES searches the JCLLIB
+    libraries before the system PROCLIB.
     Supports environment variable JCL_PROCLIB_PATH for base path configuration.
     With neither a base path nor that variable it reads no files at all: the
     process's working directory is never searched implicitly, since JCLLIB
@@ -158,8 +166,9 @@ class JCLLIBProcedureLoader(ProcedureLoader):
         """
         Load procedure from JCLLIB libraries.
 
-        Searches in order through specified libraries for a file matching
-        the procedure name (with or without .jcl extension).
+        Searches in order through specified libraries, then
+        :data:`DEFAULT_SYSTEM_PROCLIBS`, for a file matching the procedure
+        name (with or without .jcl extension).
         Uses internal caching via _cache dict.
         """
         # Create cache key
@@ -167,11 +176,14 @@ class JCLLIBProcedureLoader(ProcedureLoader):
 
         if cache_key in self._cache:
             return self._cache[cache_key]
-        if libraries is None:
-            libraries = []
+        listed = list(libraries or [])
+        listed_upper = {lib.upper() for lib in listed}
+        search = listed + [
+            lib for lib in DEFAULT_SYSTEM_PROCLIBS if lib.upper() not in listed_upper
+        ]
 
         # Try each library in order
-        for library in libraries:
+        for library in search:
             proc = self._load_from_library(name, library)
             if proc is not None:
                 self._cache[cache_key] = proc

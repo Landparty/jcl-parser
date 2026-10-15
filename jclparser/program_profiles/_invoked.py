@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..sql_detector import detect_sql_in_step
+from ..utils import control_card_text
 
 if TYPE_CHECKING:
     from ..model import Step
@@ -153,7 +154,7 @@ def collect_control_text(step: Step) -> str:
     for dd_name in ("SYSTSIN", "SYSIN"):
         dd = step.get_dd(dd_name)
         if dd and dd.inline_data:
-            texts.append(dd.inline_data)
+            texts.append(control_card_text(dd.inline_data))
     return "\n".join(texts)
 
 
