@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from ..utils import control_card_text
 from .base import ProgramAnalysis, ProgramProfile
 
 if TYPE_CHECKING:
@@ -37,7 +38,7 @@ def _control_text(step: Step) -> str:
     for dd_name in ("SYSIN", "SYSLIN"):
         dd = step.get_dd(dd_name)
         if dd and dd.inline_data:
-            return dd.inline_data
+            return control_card_text(dd.inline_data)
     return ""
 
 

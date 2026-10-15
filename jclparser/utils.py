@@ -144,6 +144,22 @@ def is_continued_card_image(line: str, next_line: str | None = None) -> bool:
     return _has_column_72_indicator(line, next_line)
 
 
+def control_card_text(text: str) -> str:
+    """In-stream control statements as a utility reads them: columns 1-71.
+
+    In-stream data keeps whole records (issue #115), so on an 80-column card
+    image columns 72-80 -- a continuation indicator and a sequence field to
+    the utilities that read control statements -- are still in the text.
+    This drops them from every record longer than 71 characters, as
+    :func:`normalize_jcl_line` does for JCL, so a numbered deck does not
+    leak its sequence numbers into the statements.
+    """
+    return "\n".join(
+        record[:71].rstrip() if len(record) > 71 else record
+        for record in split_source_lines(text)
+    )
+
+
 def normalize_jcl_line(line: str, next_line: str | None = None) -> str:
     """
     Normalize JCL line by removing extra whitespace and handling continuations.

@@ -123,7 +123,7 @@ class SortProfile(ProgramProfile):
     program_names = frozenset({"SORT", "DFSORT", "ICEMAN", "SORTD", "SYNCSORT"})
 
     def analyze(self, step: Step) -> ProgramAnalysis:
-        raw = _sysin_text(step) or ""
+        raw = _sysin_text(step, card_images=True) or ""
         statements = parse_control_statements(raw, _OPERATIONS)
         kinds = _kind_notes(statements)
         notes = [*kinds, *_clause_notes(statements), *_dataset_notes(step)]

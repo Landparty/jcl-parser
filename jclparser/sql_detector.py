@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .utils import split_source_lines
+from .utils import control_card_text, split_source_lines
 
 if TYPE_CHECKING:
     from .model import DDStatement, Job, Step
@@ -235,7 +235,8 @@ def detect_sql_in_dd(dd: DDStatement) -> list[tuple[str, str]]:
     """
     if not dd.inline_data:
         return []
-    return detect_sql_in_text(dd.inline_data)
+    # Columns 72-80 of a card image are not statement text (issue #115).
+    return detect_sql_in_text(control_card_text(dd.inline_data))
 
 
 def detect_sql_in_step(step: Step) -> SQLDetectionResult:
@@ -271,7 +272,9 @@ def detect_sql_in_step(step: Step) -> SQLDetectionResult:
         if dd.name:
             is_tso_input = dd.name.upper() == _TSO_COMMAND_DD
         if utility_control:
-            found = detect_sql_in_utility_statements(dd.inline_data or "")
+            found = detect_sql_in_utility_statements(
+                control_card_text(dd.inline_data or "")
+            )
         else:
             found = detect_sql_in_dd(dd)
         for kw, cat in found:

@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from ..utils import control_card_text
 from .base import ProgramAnalysis, ProgramProfile, _sysin_text
 
 if TYPE_CHECKING:
@@ -75,7 +76,7 @@ def _dd_names(lists: list[str]) -> list[str]:
 def _toolin_text(step: Step) -> str:
     dd = step.get_dd("TOOLIN")
     if dd and dd.inline_data:
-        return dd.inline_data
+        return control_card_text(dd.inline_data)
     # Some jobs route TOOLIN through SYSIN instead.
     return _sysin_text(step) or ""
 
