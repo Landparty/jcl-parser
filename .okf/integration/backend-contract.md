@@ -118,7 +118,19 @@ The adapter produces this dict for `ParserResult`:
 
 # File Extensions Handled
 
-`.jcl`, `.jcllib`, `.job`, `.prc`, `.proc` (and uppercase). Standalone PROC files are wrapped in a synthetic JOB statement and annotated with `is_procedure_definition=True`.
+`.jcl`, `.jcllib`, `.job`, `.prc`, `.proc` (and uppercase). Standalone PROC files are wrapped in a synthetic `//LEGACYLN JOB` statement and annotated with `is_procedure_definition=True`.
+
+> **Correction (2026-10-15, issue #100):** the wrapper was documented as `//LEGACYLENS JOB`,
+> a 10-character job name that fails the 1-8 character rule, so `job.validate()` reported
+> every wrapped PROC as invalid ("Invalid job name 'LEGACYLENS'" plus "Job must contain at
+> least one execution step", since the PROC's steps live in `job.procedures`). The
+> documented name is now the 8-character `LEGACYLN`, and `validate_job_structure` treats
+> in-stream procedures as the job's content: a job with no top-level steps but at least one
+> entry in `job.procedures` gets no "at least one execution step" error. A valid PROC
+> wrapped as `//LEGACYLN JOB` + the member now gives `job.validate() == []`
+> (`tests/unit/test_medium_validation_fixes.py::TestIssue100WrappedProcMember`).
+> **The backend adapter lives outside this repo and still emits `//LEGACYLENS JOB`; update
+> it to `//LEGACYLN JOB` at the next vendor sync.**
 
 # Citations
 

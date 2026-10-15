@@ -108,8 +108,11 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
             )
         )
 
-    # Must have at least one step
-    if not job.steps and not job.is_procedure_member:
+    # Must have at least one step -- unless the job only carries in-stream
+    # PROCs: a PROC-library member wrapped in a synthetic JOB statement
+    # (the backend's ``//LEGACYLN JOB``) has its steps in job.procedures,
+    # and those procedures are its content (#100).
+    if not job.steps and not job.is_procedure_member and not job.procedures:
         errors.append(
             ValidationError(
                 "Job must contain at least one execution step",

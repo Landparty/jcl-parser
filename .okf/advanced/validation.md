@@ -122,6 +122,14 @@ JOB statement's line; the temporary-dataset rules use the DD that creates the da
 second time, or the first DD that reads one never created. They used to come back at
 line 0 (`str(error)` had no `Line N:` prefix).
 
+**"Job must contain at least one execution step"** is not reported for a job whose
+only content is in-stream PROCs (no top-level steps, `job.procedures` non-empty — fixed
+2026-10-15, #100): that is how a PROC-library member is wrapped for parsing (the
+backend's synthetic `//LEGACYLN JOB`, see [backend-contract](../integration/backend-contract.md)),
+and a valid PROC wrapped that way validates clean. A JOB with neither steps nor
+procedures still gets the error; a JOB-less PROC member (`job.is_procedure_member`)
+never did.
+
 # Exception Types (raised by parse_jcl / validate_jcl)
 
 | Exception | Trigger |

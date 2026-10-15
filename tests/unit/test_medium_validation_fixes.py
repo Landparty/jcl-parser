@@ -1,9 +1,13 @@
 """Regression tests for the severity:medium validation fixes.
 
 * #119 -- step / DD / job validation findings carry their source line.
+* #100 -- a standalone PROC wrapped in the contract's synthetic JOB statement
+  validates clean.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 
@@ -102,3 +106,56 @@ class TestIssue119FindingLines:
         unused = by_message["Temporary dataset &&NEVER used but never created"]
         assert unused.line_number == 6
         assert unused.severity == ErrorSeverity.WARNING
+
+
+# ---------------------------------------------------------------------------
+# #100 -- the backend's synthetic JOB wrapper around a standalone PROC
+# ---------------------------------------------------------------------------
+
+#: The synthetic JOB statement interface-contract.md documents for wrapping a
+#: standalone PROC file ("File Extensions Handled").
+_WRAPPER = "//LEGACYLN JOB\n"
+
+_STANDALONE_PROC = (
+    "//MYPROC  PROC HLQ=PROD\n"
+    "//STEP1   EXEC PGM=IEFBR14\n"
+    "//DD1     DD DSN=&HLQ..DATA,DISP=SHR\n"
+    "//STEP2   EXEC PGM=SORT\n"
+    "//SORTIN  DD DSN=&HLQ..IN,DISP=SHR\n"
+    "//SORTOUT DD SYSOUT=*\n"
+    "//        PEND\n"
+)
+
+
+class TestIssue100WrappedProcMember:
+    def test_contract_wrapper_name_is_a_valid_job_name(self) -> None:
+        contract = (
+            Path(__file__).resolve().parents[2] / "interface-contract.md"
+        ).read_text(encoding="utf-8")
+        assert f"wrapped in a synthetic `{_WRAPPER.strip()}` statement" in contract
+        assert len(_WRAPPER.split()[0].removeprefix("//")) <= 8
+
+    def test_wrapped_proc_validates_clean(self) -> None:
+        job = parse_jcl(_WRAPPER + _STANDALONE_PROC)
+        assert [p.name for p in job.procedures] == ["MYPROC"]
+        assert job.steps == []
+        assert job.validate() == []
+
+    def test_wrapped_proc_has_no_validate_jcl_errors(self) -> None:
+        source = _WRAPPER + _STANDALONE_PROC
+        for level in ("basic", "structure"):
+            findings = validate_jcl(source, level=level)
+            assert not [f for f in findings if f.severity == ErrorSeverity.ERROR]
+
+    def test_wrapped_proc_parses_strict(self) -> None:
+        parse_jcl(_WRAPPER + _STANDALONE_PROC, strict_mode=True)
+
+    def test_job_without_steps_or_procs_still_errors(self) -> None:
+        messages = [e.message for e in parse_jcl(_WRAPPER).validate()]
+        assert messages == ["Job must contain at least one execution step"]
+
+    def test_old_ten_character_wrapper_name_is_invalid(self) -> None:
+        job = parse_jcl("//LEGACYLENS JOB\n" + _STANDALONE_PROC)
+        assert [e.message for e in job.validate()] == [
+            "Invalid job name 'LEGACYLENS': must be 1-8 characters, alphanumeric + @#$"
+        ]
