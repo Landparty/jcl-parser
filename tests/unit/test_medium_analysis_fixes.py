@@ -258,3 +258,85 @@ class TestSortOutfilJoinkeysDatasets:
         notes = _profile_notes(src)
         assert "input: A.LEFT" in notes
         assert "input: A.RIGHT" in notes
+
+
+class TestFtpInputDD:
+    """#111: batch FTP reads INPUT, falling back to SYSIN."""
+
+    _REPRO = (
+        "//J JOB\n"
+        "//FTPSTEP EXEC PGM=FTP\n"
+        "//INPUT DD *\n"
+        "remote.host\n"
+        "user pass\n"
+        "binary\n"
+        "put 'PROD.DAILY.EXTRACT' extract.dat\n"
+        "quit\n"
+        "/*\n"
+    )
+
+    def test_input_dd_repro(self):
+        notes = _profile_notes(self._REPRO)
+        assert notes == [
+            "OPEN remote.host",
+            "USER user",
+            "PUT 'PROD.DAILY.EXTRACT'",
+            "BINARY",
+        ]
+        assert not any("pass" in n for n in notes)
+
+    def test_input_wins_over_sysin(self):
+        src = self._REPRO.replace("/*\n", "/*\n//SYSIN DD *\n  GET X Y\n/*\n")
+        notes = _profile_notes(src)
+        assert "PUT 'PROD.DAILY.EXTRACT'" in notes
+        assert not any(n.startswith("GET") for n in notes)
+
+    def test_sysin_used_without_input(self):
+        notes = _profile_notes(self._REPRO.replace("//INPUT ", "//SYSIN "))
+        assert "OPEN remote.host" in notes
+        assert "PUT 'PROD.DAILY.EXTRACT'" in notes
+
+    def test_parm_host_makes_first_line_the_login(self):
+        src = (
+            "//J JOB\n"
+            "//S EXEC PGM=FTP,PARM='POSIX(ON)/ftp.example.com (EXIT'\n"
+            "//INPUT DD *\n"
+            "ftpuser secret\n"
+            "get remote.file 'LOCAL.FILE'\n"
+            "quit\n"
+            "/*\n"
+        )
+        notes = _profile_notes(src)
+        assert notes[:2] == ["OPEN ftp.example.com", "USER ftpuser"]
+        assert not any("secret" in n for n in notes)
+
+    def test_input_dataset_is_noted(self):
+        src = (
+            "//J JOB\n"
+            "//S EXEC PGM=FTP\n"
+            "//INPUT DD DSN=MY.FTP.CMDS,DISP=SHR\n"
+            "//SYSIN DD *\n"
+            "  PUT A B\n"
+            "/*\n"
+        )
+        assert _profile_notes(src) == ["commands from INPUT: MY.FTP.CMDS"]
+
+    def test_no_commands(self):
+        from jclparser.program_profiles import analyze_job
+
+        src = "//J JOB\n//S EXEC PGM=FTP,PARM='(EXIT'\n//INPUT DD DUMMY\n"
+        (result,) = analyze_job(jp.parse_jcl(src))
+        assert result.notes == []
+        assert "no recognised" in result.summary
+
+    def test_user_subcommand_after_host_reports_id_only(self):
+        src = self._REPRO.replace("user pass\n", "USER ftpid secretpw\n")
+        notes = _profile_notes(src)
+        assert "USER ftpid" in notes
+        assert not any("secretpw" in n for n in notes)
+
+    def test_login_reply_with_password_on_its_own_line(self):
+        src = self._REPRO.replace("user pass\n", "ftpid\nsecretpw\n")
+        notes = _profile_notes(src)
+        assert notes[:2] == ["OPEN remote.host", "USER ftpid"]
+        assert not any("secretpw" in n for n in notes)
