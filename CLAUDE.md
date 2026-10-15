@@ -66,11 +66,11 @@ The package is `jclparser/` — pure Python, no runtime dependencies. Supports P
 ```
 Input (string / file / IO)
   → read_source()                          utils.py
-  → ContinuationLineHandler.process()      continuation_handler.py  [merges column-71 continuations]
-  → resolve_includes()                     include_loader.py         [optional: expand // INCLUDE]
+  → resolve_includes_with_origins()        include_loader.py         [optional: expand // INCLUDE]
+  → merge_continuation_lines()             continuation_handler.py  [merges column-71 continuations]
   → parse_jcl() core loop                  parser.py                 [JOB/EXEC/DD/SET/IF/PROC/OUTPUT]
-  → ParameterParser                        parameter_ast.py          [typed param AST per statement]
-  → validate_jcl() checks                  validators.py             [optional: structural rules]
+  → ParameterParser                        parameter_ast.py          [operand split; DCB/SPACE AST on access]
+  → validate_jcl() checks                  parser.py → validators.py [optional: structural rules]
   → explode_job()                          explosion.py              [optional: expand PROCs + &SYMBOLS]
   → Job object
 ```

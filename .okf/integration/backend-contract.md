@@ -3,7 +3,7 @@ type: Integration Contract
 title: Backend Adapter Contract
 description: Stability contract between jcl-parser and backend/src/parsers/jcl/parser.py (JCLLegacyParser); changes to listed attributes are breaking changes.
 tags: [integration, backend, contract, vendoring]
-timestamp: 2026-10-04T00:00:00Z
+timestamp: 2026-10-15T00:00:00Z
 ---
 
 # Overview
@@ -23,7 +23,7 @@ The backend imports from `backend/_vendor/jcl-parser/`.
 ## 1. parse_jcl
 
 ```python
-job = parse_jcl(content: str)   # returns Job (never None); raises JCLSyntaxError | JCLValidationError | JCLStructureError
+job = parse_jcl(content: str)   # returns Job (never None); raises JCLSyntaxError | JCLValidationError | JCLStructureError | JCLParseError
 ```
 
 The adapter passes uploaded **text**. Since 2026-10-03 (`fix!`, commit a0c30c9) a `str` is always parsed as JCL content and never opened as a file, whatever it looks like — before, a one-line upload such as `/etc/passwd` or `X.jcl` was read from the server's filesystem. Code that passed a file *name* as a `str` must now pass `pathlib.Path`.
@@ -33,8 +33,10 @@ The adapter passes uploaded **text**. Since 2026-10-03 (`fix!`, commit a0c30c9) 
 ```python
 validation_errors = (
     job.validate()
-)  # list — stringified with str() for error_message fields
+)  # list[ValidationError] — stringified with str() for error_message fields
 ```
+
+The list also holds WARNING-severity findings (`.is_warning`; `[WARNING]` in `str()`), such as a PROC not found in any configured library, so a non-empty list does not by itself mean the job is invalid.
 
 ## 3. job.explode()
 
@@ -71,6 +73,8 @@ loader = CompositeProcedureLoader(
 > `iter_execution_steps(job.steps)` instead — re-exported from `jclparser` (with
 > `ConditionalBlock`) since this fix. Update the backend adapter at the next vendor sync.
 
+Other `Job` fields (e.g. `job.custom_statements`, added 2026-10-15) are not read by the adapter; see [core/data-model](../core/data-model.md).
+
 ## Step
 
 `step.name`, `step.program`, `step.is_exploded`, `step.procedure`, `step.is_procedure`,
@@ -104,6 +108,7 @@ The adapter produces this dict for `ParserResult`:
     "analysis": {"metrics", "issues", "modernization_hints"},
     # Optional:
     "is_batch_entry_point": bool,
+    "batch_entry_metadata": dict,
     "procedure_expansion": {"expanded_steps", "expansion_audit", "expansion_map", "original_step_count", "expanded_step_count"},
 }
 ```

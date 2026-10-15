@@ -22,10 +22,10 @@ job = parse_jcl(content: str)   # returns Job; a str is always JCL text, never a
 
 ### 2. Validation
 ```python
-validation_errors = job.validate()  # list of validation error objects
+validation_errors = job.validate()  # list[ValidationError]
 ```
 - Items are stringified with `str()`.
-- An empty list = no errors.
+- An empty list = no findings. Items include WARNING-severity findings (`str()` marks them `[WARNING]`, after any `Line N:` prefix; `.is_warning` is `True`) — e.g. a PROC not found in-stream or in any configured library — so a non-empty list does not by itself mean the job is invalid.
 
 ### 3. PROC explosion
 ```python
@@ -70,13 +70,13 @@ Attributes the adapter accesses on a `Job`:
 
 | Attribute | Type | Notes |
 |-----------|------|-------|
-| `job.name` | `str \| None` | Job name from `//JOBNAME JOB` statement |
+| `job.name` | `str` | Job name from `//JOBNAME JOB` statement; `""` for a JOB-less PROC member |
 | `job.steps` | `list[Step \| ConditionalBlock]` | Top-level steps in source order. An `// IF` block is a `ConditionalBlock` (no `.name`, no `.program`), and the steps inside it are only in its `then_steps` / `else_steps`. To visit every execution step, iterate `iter_execution_steps(job.steps)` (`from jclparser import iter_execution_steps`) — it flattens nested IF blocks, before and after `explode()` |
-| `job.procedures` | list | Inline PROC definitions for `InlineProcedureLoader` |
-| `job.validate()` | `list` | Structural validation errors |
+| `job.procedures` | `list[Procedure]` | Inline PROC definitions for `InlineProcedureLoader` |
+| `job.validate()` | `list[ValidationError]` | Structural validation findings (errors and warnings) |
 | `job.explode(...)` | `Job` | Returns exploded job; see above |
-| `job.explosion_audit` | `list` | Present after `explode(audit=True)`; see below |
-| `job.explosion_map` | `dict` | Present after `explode(audit=True)` |
+| `job.explosion_audit` | `list` | Populated on the job `explode(audit=True)` returns (empty on the original); see below |
+| `job.explosion_map` | `dict` | Populated on the job `explode(audit=True)` returns |
 
 Other `Job` fields (e.g. `job.custom_statements`, the statements of a custom type returned by a `StatementPlugin`, added 2026-10-15) are not read by the adapter; see `.okf/core/data-model.md`.
 
@@ -101,14 +101,14 @@ Attributes the adapter accesses on a `Step`:
 
 | Attribute | Type | Notes |
 |-----------|------|-------|
-| `step.name` | `str` | Step name |
+| `step.name` | `str` | Step name; `""` for an unnamed EXEC, `STEP.PROCSTEP` for an exploded step |
 | `step.program` | `str \| None` | PGM= value from EXEC statement |
 | `step.is_exploded` | `bool` | True if this step was expanded from a PROC |
 | `step.is_procedure` | `bool` (property) | True if step invokes a PROC (pre-explosion). Was documented as `step.is_proc_invocation`; no such attribute exists on `Step` — reading it raises `AttributeError` |
 | `step.procedure` | `str \| None` | PROC name if this is a PROC call |
 | `step.original_proc_call` | `str \| None` | Original PROC invocation name |
 | `step.parameters` | `dict` | Step parameters |
-| `step.line_number` | `int \| None` | Source line |
+| `step.line_number` | `int` | Source line (default `0`, never `None`) |
 | `step.dd_statements` | `list[DD]` | All DD statements for this step |
 
 ## DD Object Contract
@@ -117,7 +117,7 @@ Attributes the adapter accesses on a `Step`:
 |-----------|------|
 | `dd.name` | `str` |
 | `dd.dataset_name` | `str \| None` |
-| `dd.disposition` | `str \| None` |
+| `dd.disposition` | `str \| list[str] \| None` (a string for a bare status such as `SHR`, a list for a parenthesised `DISP=(NEW,CATLG,DELETE)`) |
 | `dd.parameters` | `dict` |
 
 ---
