@@ -333,6 +333,53 @@ _ABENDS_NOT_MODELLED = (
 )
 
 
+#: An enclosing IF's condition text (``NOT(...)`` for its ELSE branch) and
+#: how many steps preceded it in execution order.
+_Signature = tuple[str, int]
+
+
+def _tests_running_state(ast: ConditionNode) -> bool:
+    """True when *ast* has an unqualified ``RC`` / ``ABEND`` / ``RUN`` atom.
+
+    Without a step name, ``RC`` is the highest RC *so far* and ``ABEND`` /
+    ``RUN`` cover every step run so far, so the atom's value changes as
+    soon as another step runs.
+    """
+    if isinstance(ast, (ReturnCodeCondition, AbendCondition, RunCondition)):
+        return ast.step_name is None
+    return any(
+        isinstance(child, ConditionNode) and _tests_running_state(child)
+        for child in (getattr(ast, attr, None) for attr in ("operand", "left", "right"))
+    )
+
+
+def _repeats_enclosing_if(
+    block: ConditionalBlock, signatures: list[_Signature], preds: list[str]
+) -> bool:
+    """True when *block* re-tests an enclosing IF's condition and nothing
+    between the two IFs can change the result.
+
+    The condition text alone is not enough: a step that runs between them
+    changes an unqualified ``RC`` / ``ABEND`` / ``RUN`` test, and a named
+    step that runs between them changes the tests naming it (issue #109).
+    """
+    ast = block.condition_ast
+    for condition, at_if in signatures:
+        if condition != block.condition:
+            continue
+        between = set(preds[at_if:])
+        if not between:
+            return True
+        if ast is None or _tests_running_state(ast):
+            continue
+        named = _collect_referenced_steps(ast)
+        if not any(
+            name in between or name.partition(".")[0] in between for name in named
+        ):
+            return True
+    return False
+
+
 class _FeasibilityWalker:
     """Walks a job's steps in execution order and judges each IF."""
 
@@ -358,14 +405,15 @@ class _FeasibilityWalker:
     def walk(
         self,
         steps: list[Step | ConditionalBlock],
-        signatures: list[str],
+        signatures: list[_Signature],
         preds_before: list[str],
     ) -> list[str]:
         """Walk *steps*; return the predecessor list after the last of them.
 
         *preds_before* are the steps that precede *steps* in execution order
         (for a THEN/ELSE branch: everything before the IF), so an IF is never
-        evaluated against a step that runs after it.
+        evaluated against a step that runs after it.  *signatures* are the
+        conditions of the enclosing IFs (an ELSE branch's as ``NOT(...)``).
         """
         running_preds = list(preds_before)
         for item in steps:
@@ -374,8 +422,7 @@ class _FeasibilityWalker:
                 # are still walked for duplicate IF signatures.
                 if item.condition_ast is not None:
                     self._judge(item, item.condition_ast, running_preds)
-                    # Look for duplicate IF signatures across siblings.
-                    if item.condition in signatures:
+                    if _repeats_enclosing_if(item, signatures, running_preds):
                         self.report.duplicate_if_branches.append(
                             (item.line_number, item.condition)
                         )
@@ -385,13 +432,19 @@ class _FeasibilityWalker:
         return running_preds
 
     def _walk_branches(
-        self, block: ConditionalBlock, signatures: list[str], preds_before: list[str]
+        self,
+        block: ConditionalBlock,
+        signatures: list[_Signature],
+        preds_before: list[str],
     ) -> list[str]:
+        at_if = len(preds_before)
         then_preds = self.walk(
-            block.then_steps, signatures + [block.condition], preds_before
+            block.then_steps, [*signatures, (block.condition, at_if)], preds_before
         )
         else_preds = self.walk(
-            block.else_steps, signatures + [f"NOT({block.condition})"], preds_before
+            block.else_steps,
+            [*signatures, (f"NOT({block.condition})", at_if)],
+            preds_before,
         )
         # After ENDIF, a step of either branch may have run.
         return list(dict.fromkeys(then_preds + else_preds[len(preds_before) :]))
