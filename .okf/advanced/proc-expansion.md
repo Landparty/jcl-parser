@@ -72,11 +72,11 @@ exploded.explosion_audit  # list[ExplosionRecord], one per PROC expansion (neste
 exploded.explosion_map  # dict[calling step name → ProcExpansionInfo] (named calls only)
 
 # Each ExplosionRecord (to_dict() for JSON):
-entry.step_name, entry.proc_name, entry.parameters, entry.depth, entry.timestamp, entry.expanded_steps
+#   step_name, proc_name, parameters, depth, timestamp, expanded_steps
 
 # Each ProcExpansionInfo:
-info.original_statement, info.proc_definition, info.resolved_parameters,
-info.source_line_numbers, info.expanded_step_names
+#   original_statement, proc_definition, resolved_parameters,
+#   source_line_numbers, expanded_step_names
 ```
 
 # Symbol Substitution
