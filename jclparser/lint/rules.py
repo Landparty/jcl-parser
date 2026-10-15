@@ -117,7 +117,7 @@ class MissingJobTimeRule(LintRule):
     default_severity = ErrorSeverity.INFO
 
     def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
-        if job.parameters.get("TIME") is None:
+        if job.parameters.get("TIME") is None and not job.is_procedure_member:
             yield self._err(
                 f"JOB '{job.name}' has no TIME= parameter",
                 line_number=job.line_number,
@@ -131,7 +131,7 @@ class MissingJobRegionRule(LintRule):
     default_severity = ErrorSeverity.INFO
 
     def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
-        if job.parameters.get("REGION") is None:
+        if job.parameters.get("REGION") is None and not job.is_procedure_member:
             yield self._err(
                 f"JOB '{job.name}' has no REGION= parameter",
                 line_number=job.line_number,

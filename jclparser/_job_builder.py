@@ -776,7 +776,7 @@ class JobBuilder:
             return self.job
         if not self.pending_procedures:
             raise JCLSyntaxError("No JOB statement found", 0)
-        job = Job(name="", line_number=0)
+        job = Job(name="", line_number=0, is_procedure_member=True)
         for proc in self.pending_procedures:
             job.add_procedure(proc)
             # A JOB-less member (a cataloged procedure) has no job

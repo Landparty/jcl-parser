@@ -1511,6 +1511,7 @@ def explode_job(  # noqa: C901 -- complexity baseline, split when touched
         comments=job.comments,
         line_number=job.line_number,
         exported_symbols=set(job.exported_symbols),
+        is_procedure_member=job.is_procedure_member,
     )
 
     # Preserve post-parse analysis metadata so consumers of the exploded job

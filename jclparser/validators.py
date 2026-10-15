@@ -96,8 +96,10 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
 
     logger.debug("validating structure of job %s", job.name or "(unnamed)")
 
-    # Job name validation
-    if not validate_jcl_identifier(job.name):
+    # A JOB-less PROC member has no JOB statement and keeps its steps in
+    # job.procedures; the job-name and "at least one step" rules are about
+    # a JOB statement and do not apply to it.
+    if not job.is_procedure_member and not validate_jcl_identifier(job.name):
         errors.append(
             ValidationError(
                 f"Invalid job name '{job.name}': {_JCL_NAME_FORMAT}",
@@ -106,7 +108,7 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
         )
 
     # Must have at least one step
-    if not job.steps:
+    if not job.steps and not job.is_procedure_member:
         errors.append(
             ValidationError(
                 "Job must contain at least one execution step",

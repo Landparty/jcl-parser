@@ -232,18 +232,27 @@ def enforce_strict_dd_structure(content: str) -> None:
     """Strict mode: a DD statement with no EXEC anywhere is a structural error.
 
     Called only when the parsed job ended up with no steps; re-scans the raw
-    *content* for any DD statement and raises :class:`JCLStructureError` when
-    one is found.
+    *content* for any DD statement outside a PROC body and raises
+    :class:`JCLStructureError` when one is found.  A DD after a ``PROC``
+    statement (up to its ``PEND``, or to the end of a cataloged member that
+    has none) belongs to a PROC step, not to the job.
     """
+    in_proc = False
     for line in split_source_lines(content):
         stripped = line.strip()
-        if stripped.startswith("//") and not stripped.startswith("//*"):
-            parts = stripped.split()
-            if len(parts) >= 2 and parts[1].upper() == "DD":
-                raise JCLStructureError(
-                    "DD statement found before any EXEC step. "
-                    "Each DD must belong to a step."
-                )
+        if not stripped.startswith("//") or stripped.startswith("//*"):
+            continue
+        parts = stripped.split()
+        operation = parts[1].upper() if len(parts) >= 2 else ""
+        if operation == "PROC":
+            in_proc = True
+        elif operation == "PEND":
+            in_proc = False
+        elif operation == "DD" and not in_proc:
+            raise JCLStructureError(
+                "DD statement found before any EXEC step. "
+                "Each DD must belong to a step."
+            )
 
 
 def resolve_set_symbols(job: Job, strict: bool = False) -> None:
