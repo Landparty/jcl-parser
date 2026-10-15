@@ -3,7 +3,7 @@ type: Invariants
 title: Key Invariants
 description: 19 non-obvious behaviors in jcl-parser that cause contributor bugs; read before touching any parsing code.
 tags: [invariants, gotchas, development]
-timestamp: 2026-10-04T00:00:00Z
+timestamp: 2026-10-15T00:00:00Z
 ---
 
 # Overview
@@ -53,9 +53,12 @@ timestamp: 2026-10-04T00:00:00Z
     comment used to raise "Unclosed quote"; fixed 2026-09-27). An IF with no `THEN` yet continues on
     the next blank-name-field record, joined with a blank (`ContinuationLineHandler._continues_if`).
     The IF's label (`//CHK1 IF ...`) is not part of `ConditionalBlock.condition`. And
-    a blank after a comma still counts as inside the operands when a quoted string, `(` or
-    `KEY=VALUE` follows. A removed comment containing `=` is reported on `job.warnings` rather than
-    vanishing. Fixed 2026-09-02. Inside a parenthesised list, a blank after a subparameter's comma starts a
+    a blank after a comma still counts as inside the operands when a `KEY=VALUE` token follows, or
+    a quoted string or parenthesised group followed by `,` or the end of the record (a group must
+    also hold no unquoted blank) — so `JOB (ACCT), 'PGMR'` keeps its programmer name, while
+    `DSN=A,   (CUSTOMER MASTER FILE)` and `DSN=A,   'CUSTOMER' MASTER` are comments (issue #120,
+    fixed 2026-10-15; `_statement_parser._resumes_operands`). A removed comment containing `=` is
+    reported on `job.warnings` rather than vanishing. Fixed 2026-09-02. Inside a parenthesised list, a blank after a subparameter's comma starts a
     comment too when the rest of the record neither resumes operands nor closes the list
     (`DISP=(NEW,     COMMENT` / `//   CATLG)`), including on a record that continues an open list;
     `DISP=(NEW, CATLG)` on one record is still tolerated. Fixed 2026-10-09.

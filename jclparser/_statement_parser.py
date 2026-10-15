@@ -157,6 +157,50 @@ def statement_operation(line: str, group_operation: str = "") -> str:
     return found[1] if found is not None else ""
 
 
+def _quoted_string_end(text: str) -> int | None:
+    """Index just past the quoted string *text* starts with, or ``None`` if
+    the string is not closed on this record (``''`` is an escaped quote)."""
+    i = 1
+    n = len(text)
+    while i < n:
+        if text[i] == "'":
+            if i + 1 < n and text[i + 1] == "'":
+                i += 2
+                continue
+            return i + 1
+        i += 1
+    return None
+
+
+def _paren_group_end(text: str) -> int | None:
+    """Index just past the parenthesised group *text* starts with.
+
+    Returns ``None`` when the group is not closed on this record or holds an
+    unquoted blank — operands never contain one, so such a group is prose.
+    """
+    depth = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        char = text[i]
+        if char == "'":
+            end = _quoted_string_end(text[i:])
+            if end is None:
+                return None
+            i += end
+            continue
+        if char.isspace():
+            return None
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return None
+
+
 def _resumes_operands(text: str) -> bool:
     """Return True if *text*, following a trailing comma and blanks, looks like
     more operands rather than a comment.
@@ -164,11 +208,17 @@ def _resumes_operands(text: str) -> bool:
     ``//JOB1 JOB (ACCT), 'PGMR',CLASS=A`` puts blanks inside the operand field —
     illegal per z/OS but common in the wild — whereas
     ``//DD1 DD DSN=A.B,   COPY THE FILE`` is a comment on a continued
-    statement.  A quoted string, an opening paren, or a ``KEY=VALUE`` token
-    means the operand field is still going.
+    statement.  A ``KEY=VALUE`` token means the operand field is still going;
+    so does a quoted string or a parenthesised group, but only when it is
+    followed by a comma or the end of the record (and, for a group, holds no
+    unquoted blank): ``DSN=A.B,   (CUSTOMER MASTER FILE)`` and
+    ``DSN=A.B,   'CUSTOMER' MASTER`` are comments (issue #120).
     """
     if text[:1] in ("'", "("):
-        return True
+        end = (_quoted_string_end if text[0] == "'" else _paren_group_end)(text)
+        return end is not None and (
+            text[end : end + 1] == "," or not text[end:].strip()
+        )
     token = text.split(None, 1)[0]
     return "=" in token.split(",")[0]
 
