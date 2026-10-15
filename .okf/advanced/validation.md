@@ -113,6 +113,15 @@ status (`DISP=(,CATLG)`) is valid — it defaults to `NEW`.
 
 `str(error)` produces a human-readable message (used by the backend adapter).
 
+**Line numbers** (fixed 2026-10-15, #119): every `job.validate()` finding about a step,
+DD or the job itself carries that statement's line — the step rules (invalid step name,
+no PGM/PROC, both, duplicate step name) use `Step.line_number`; the DD rules (invalid DD
+name, dataset name, DISP, conflicting / missing data source, duplicate DD name) use
+`DDStatement.line_number`; the job-name and "at least one execution step" rules use the
+JOB statement's line; the temporary-dataset rules use the DD that creates the dataset a
+second time, or the first DD that reads one never created. They used to come back at
+line 0 (`str(error)` had no `Line N:` prefix).
+
 # Exception Types (raised by parse_jcl / validate_jcl)
 
 | Exception | Trigger |
