@@ -123,3 +123,44 @@ class TestDb2UtilityControlStatements:
             ("EXEC SQL", "EMBEDDED", "SYSIN"),
             ("CREATE", "DDL", "SYSIN"),
         ]
+
+
+_DSNUPROC_JOB = """//J JOB
+//STEP1 EXEC DSNUPROC,SYSTEM=DB2P,UID='RUNST'
+//SYSIN DD *
+  RUNSTATS TABLESPACE DBX.TSX
+     UPDATE ALL
+  MODIFY RECOVERY TABLESPACE DBX.TSX
+     DELETE AGE(90)
+/*
+"""
+
+
+@pytest.mark.unit
+class TestDb2UtilityProcCall:
+    """Issue #106: ``EXEC DSNUPROC`` runs DSNUTILB even when unexploded."""
+
+    def test_unexploded_dsnuproc_options_are_not_dml(self):
+        results = detect_sql_in_job(parse_jcl(_DSNUPROC_JOB))
+        assert [r.sql_statements for r in results] == [[]]
+
+    def test_exploded_dsnuproc_agrees(self):
+        from jclparser import explode_job
+
+        results = detect_sql_in_job(explode_job(parse_jcl(_DSNUPROC_JOB)))
+        assert [r.sql_statements for r in results] == [[]]
+
+    def test_sql_in_exec_sql_under_dsnuproc_still_reported(self):
+        step = Step(
+            name="S",
+            procedure="DSNUPROC",
+            dd_statements=[
+                DDStatement(
+                    name="SYSIN",
+                    inline_data="  EXEC SQL\n    DELETE FROM T\n  ENDEXEC\n",
+                )
+            ],
+        )
+        result = detect_sql_in_step(step)
+        assert ("DELETE", "DML", "SYSIN") in result.sql_statements
+        assert result.is_db2_program

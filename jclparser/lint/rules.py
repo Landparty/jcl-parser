@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from ..errors import ErrorSeverity, ValidationError
-from ..model import iter_execution_steps
+from ..model import _dataset_dds, iter_execution_steps
 from .base import LintRule
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ class HardcodedHLQRule(LintRule):
 
     def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
         for step in iter_execution_steps(job.steps):
-            for dd in step.dd_statements:
+            for dd in _dataset_dds(step):
                 dsn = dd.dataset_name
                 if not dsn or dsn.startswith("&&"):
                     continue
@@ -58,7 +58,7 @@ class LiteralSysdaUnitRule(LintRule):
 
     def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
         for step in iter_execution_steps(job.steps):
-            for dd in step.dd_statements:
+            for dd in _dataset_dds(step):
                 unit = dd.parameters.get("UNIT")
                 if not unit:
                     continue
@@ -90,7 +90,7 @@ class CriticalDatasetDeleteRule(LintRule):
         if not patterns:
             return
         for step in iter_execution_steps(job.steps):
-            for dd in step.dd_statements:
+            for dd in _dataset_dds(step):
                 if not dd.dataset_name:
                     continue
                 upper = dd.dataset_name.upper()

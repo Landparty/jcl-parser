@@ -47,6 +47,13 @@ DB2_PROCEDURES: frozenset[str] = frozenset(
     }
 )
 
+# The program a catalogued PROC runs, for PROCs whose in-stream data is that
+# program's control language.  On an unexploded job ``EXEC DSNUPROC`` has no
+# ``program``, so the step is classified by the program its PROC runs.
+PROCEDURE_PROGRAMS: dict[str, str] = {
+    "DSNUPROC": "DSNUTILB",
+}
+
 # Programs whose in-stream data is their own control language, not SQL.  Their
 # statements reuse SQL verbs -- IDCAMS ``DELETE`` / ``ALTER``, FTP ``DELETE``
 # / ``RENAME`` -- so scanning that data for SQL only yields false positives.
@@ -235,7 +242,8 @@ def detect_sql_in_step(step: Step) -> SQLDetectionResult:
     """Analyse a step for SQL content.
 
     Checks the program name (or, for ``EXEC procname``, the PROC name) and
-    the inline data of every DD statement.
+    the inline data of every DD statement.  A PROC call to a PROC in
+    :data:`PROCEDURE_PROGRAMS` is treated as running that PROC's program.
     In-stream data of a program in :data:`NON_SQL_CONTROL_PROGRAMS` is not
     scanned, and in a ``SYSTSIN`` DD (TSO commands) only DB2 subcommands such
     as ``BIND`` count.  For a program in
@@ -249,7 +257,10 @@ def detect_sql_in_step(step: Step) -> SQLDetectionResult:
         is_db2_program=is_db2_program(step.program)
         or bool(step.procedure and step.procedure.upper() in DB2_PROCEDURES),
     )
-    program = step.program.upper() if step.program else ""
+    if step.program:
+        program = step.program.upper()
+    else:
+        program = PROCEDURE_PROGRAMS.get((step.procedure or "").upper(), "")
     if program in NON_SQL_CONTROL_PROGRAMS:
         return result
     utility_control = program in DB2_UTILITY_CONTROL_PROGRAMS
