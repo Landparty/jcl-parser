@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from jclparser import explode_job, parse_jcl, validate_jcl
+from jclparser._statement_parser import _extract_jcllib_order
+from jclparser.errors import ProcedureNotFoundError
 from jclparser.explosion import (
     SymbolScope,
     _dsn_keep_undefined,
@@ -142,3 +146,92 @@ class TestParenthesisedDsn:
         assert _dsn_keep_undefined(["&T"], keep, strict=False) is keep  # type: ignore[arg-type]
         kept = _dsn_keep_undefined("&T", None, strict=False)
         assert kept is not None and kept("T")
+
+
+_OUTER = "//OUTER PROC\n//S1 EXEC PGM=IEFBR14\n// PEND\n"
+
+
+@pytest.fixture
+def proc_base(tmp_path: Path) -> Path:
+    base = tmp_path / "base"
+    (base / "MY.PROCLIB").mkdir(parents=True)
+    (base / "MY.PROCLIB" / "OUTER.jcl").write_text(_OUTER)
+    # A library outside the base directory that must never be reached.
+    (tmp_path / "OUT").mkdir()
+    (tmp_path / "OUT" / "OUTER.jcl").write_text(_OUTER)
+    return base
+
+
+class TestJcllibOrderSymbols:
+    """#128: SET symbols in effect at JCLLIB are resolved in ORDER."""
+
+    def test_set_symbol_resolved_and_proc_found(self, proc_base: Path) -> None:
+        src = (
+            "//J JOB\n// SET LIB=MY.PROCLIB\n//L JCLLIB ORDER=(&LIB)\n//R EXEC OUTER\n"
+        )
+        job = parse_jcl(src, proc_base_path=proc_base)
+        assert job.jcllib_order == ["MY.PROCLIB"]
+        assert not job.warnings
+        assert [s.name for s in explode_job(job).steps] == ["R.S1"]
+
+    def test_period_delimiter(self, proc_base: Path) -> None:
+        src = "//J JOB\n// SET HLQ=MY\n//L JCLLIB ORDER=&HLQ..PROCLIB\n//R EXEC OUTER\n"
+        job = parse_jcl(src, proc_base_path=proc_base)
+        assert job.jcllib_order == ["MY.PROCLIB"]
+        assert [s.name for s in explode_job(job).steps] == ["R.S1"]
+
+    def test_system_symbol_left_with_warning(self, proc_base: Path) -> None:
+        src = (
+            "//J JOB\n// SET HLQ=MY\n"
+            "//L JCLLIB ORDER=(&HLQ..PROCLIB,&SYSUID..PROCLIB)\n//R EXEC OUTER\n"
+        )
+        job = parse_jcl(src, proc_base_path=proc_base)
+        assert job.jcllib_order == ["MY.PROCLIB", "&SYSUID..PROCLIB"]
+        assert any("&SYSUID..PROCLIB" in w and "unresolved" in w for w in job.warnings)
+
+    def test_set_after_jcllib_not_applied(self, proc_base: Path) -> None:
+        src = "//J JOB\n//L JCLLIB ORDER=&LIB\n// SET LIB=MY.PROCLIB\n//R EXEC OUTER\n"
+        job = parse_jcl(src, proc_base_path=proc_base)
+        assert job.jcllib_order == ["&LIB"]
+        assert any("JCLLIB ORDER library &LIB" in w for w in job.warnings)
+        with pytest.raises(ProcedureNotFoundError):
+            explode_job(job)
+
+    def test_set_before_job_statement_applies(self, proc_base: Path) -> None:
+        src = (
+            "// SET LIB=MY.PROCLIB\n//L JCLLIB ORDER=(&LIB)\n//J JOB\n//R EXEC OUTER\n"
+        )
+        job = parse_jcl(src, proc_base_path=proc_base)
+        assert job.jcllib_order == ["MY.PROCLIB"]
+
+    def test_traversal_from_set_value_rejected(self, proc_base: Path) -> None:
+        src = "//J JOB\n// SET LIB='../OUT'\n//L JCLLIB ORDER=(&LIB)\n//R EXEC OUTER\n"
+        job = parse_jcl(src, proc_base_path=proc_base)
+        assert job.jcllib_order == ["../OUT"]
+        assert job.get_procedure("OUTER") is None
+        with pytest.raises(ProcedureNotFoundError):
+            explode_job(job)
+
+    def test_prescan_substitutes_earlier_sets(self) -> None:
+        src = (
+            "//J JOB\n// SET LIB=MY.PROCLIB\n"
+            "//L JCLLIB ORDER=(&LIB,'&LIB..Q',&SYSUID..X,&LATER)\n"
+            "// SET LATER=NO\n"
+        )
+        assert _extract_jcllib_order(src) == [
+            "MY.PROCLIB",
+            "MY.PROCLIB.Q",
+            "&SYSUID..X",
+            "&LATER",
+        ]
+
+    def test_include_found_through_symbolic_jcllib(self, tmp_path: Path) -> None:
+        lib = tmp_path / "MY.INCLIB"
+        lib.mkdir()
+        (lib / "COMMON.jcl").write_text("//S1 EXEC PGM=FROMINC\n")
+        src = (
+            "//J JOB\n// SET LIB=MY.INCLIB\n//L JCLLIB ORDER=(&LIB)\n"
+            "// INCLUDE MEMBER=COMMON\n"
+        )
+        job = parse_jcl(src, proc_base_path=tmp_path)
+        assert [s.program for s in job.steps] == ["FROMINC"]

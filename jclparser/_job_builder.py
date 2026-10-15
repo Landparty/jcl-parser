@@ -34,6 +34,7 @@ from ._model_factories import (
     _create_step_from_statement,
     _exec_has_program_spec,
     _has_unresolved_symbol_ref,
+    _resolve_jcllib_library,
     _resolve_set_value,
 )
 from ._post_parse import (
@@ -507,11 +508,26 @@ class JobBuilder:
         order_value = stmt.parameters["ORDER"]
         sink = self.job.jcllib_order if self.job else self.pending_jcllib
         # ORDER parameter might already be parsed as a list
+        libs: list[str] = []
         if isinstance(order_value, list):
-            sink.extend(order_value)
+            libs = [str(lib) for lib in order_value]
         elif isinstance(order_value, str):
-            libs = order_value.strip("()").split(",")
-            sink.extend([lib.strip() for lib in libs])
+            libs = [lib.strip() for lib in order_value.strip("()").split(",")]
+        # Only the SETs coded before this statement are in effect here.
+        symbols = (
+            {**self.pending_sets, **self.job.set_statements}
+            if self.job
+            else self.pending_sets
+        )
+        for lib in libs:
+            resolved = _resolve_jcllib_library(lib, symbols)
+            if resolved is None:
+                self._warnings_sink().append(
+                    f"Line {stmt.line_number}: JCLLIB ORDER library {lib} "
+                    "contains an unresolved symbol; kept as written"
+                )
+                resolved = lib
+            sink.append(resolved)
 
     def _on_include(self, stmt: Statement, line_num: int) -> None:
         # INCLUDE MEMBER=name

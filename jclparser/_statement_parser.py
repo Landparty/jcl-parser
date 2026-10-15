@@ -754,9 +754,14 @@ def _extract_jcllib_order(content: str) -> list[str]:
     list to :func:`~jclparser.include_loader.resolve_includes` before the full
     parse begins.
     """
+    from .include_loader import _record_set_symbols
+
     libraries: list[str] = []
+    # SET values seen so far: a library name may use a symbol SET earlier.
+    symbols: dict[str, str] = {}
     lines = split_source_lines(content)
     for index, line in enumerate(lines):
+        _record_set_symbols(line.lstrip(), symbols)
         params_part = _jcllib_operands(line)
         if params_part is None:
             continue
@@ -770,7 +775,7 @@ def _extract_jcllib_order(content: str) -> list[str]:
         rest = (params_part[order_idx + 6 :].split(None, 1) or [""])[0]
         if rest.startswith("("):
             rest = _follow_jcllib_order_list(rest, lines, index + 1)
-        libraries.extend(_split_jcllib_libraries(rest))
+        libraries.extend(_split_jcllib_libraries(rest, symbols))
     return libraries
 
 
@@ -820,8 +825,17 @@ def _follow_jcllib_order_list(rest: str, lines: list[str], follow: int) -> str:
     return rest[1:end] if end != -1 else rest[1:]
 
 
-def _split_jcllib_libraries(order_value: str) -> list[str]:
-    """Split a comma-separated ORDER value into non-empty library names."""
+def _split_jcllib_libraries(
+    order_value: str, symbols: dict[str, str] | None = None
+) -> list[str]:
+    """Split a comma-separated ORDER value into non-empty library names.
+
+    SET symbols from *symbols* are substituted like the main parse does; a
+    name that keeps an unresolved ``&symbol`` is returned as written.
+    """
+    from ._model_factories import _resolve_jcllib_library
+
+    symbols = symbols or {}
     libraries: list[str] = []
     for lib in order_value.split(","):
         lib = lib.strip()
@@ -830,7 +844,7 @@ def _split_jcllib_libraries(order_value: str) -> list[str]:
         if len(lib) >= 2 and lib[0] == lib[-1] == "'":
             lib = lib[1:-1].strip()
         if lib:
-            libraries.append(lib)
+            libraries.append(_resolve_jcllib_library(lib, symbols) or lib)
     return libraries
 
 

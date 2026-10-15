@@ -36,6 +36,8 @@ timestamp: 2026-10-04T00:00:00Z
 
 **Which loader `explode_job()` uses** (fixed 2026-09-28): the caller's `proc_loader=` if given; else, when `parse_jcl()` attached one, a `CompositeProcedureLoader` of the job's inline PROCs followed by the loader `parse_jcl()` attached to the job (`job._proc_loader`); else `create_default_loader(job.procedures)`. So an external PROC called from inside another external PROC (or from an IF block) is found in the same libraries as the top-level ones; before, the default chain was always rebuilt and such a nested call raised `ProcedureNotFoundError`. `parse_jcl()`'s pre-loading of external PROCs also walks `IF`/`THEN`/`ELSE` blocks (`iter_execution_steps`), not just top-level steps.
 
+**Symbols in `JCLLIB ORDER=`** (fixed 2026-10-15, #128): as on z/OS, the `// SET` symbols in effect at the JCLLIB statement — only SETs coded before it, including ones before the JOB statement — are substituted into each library name (`ORDER=(&LIB)`, `&HLQ..PROCLIB`) when the builder records `job.jcllib_order` (`_model_factories._resolve_jcllib_library`), so PROC loading and `explode_job()` see the resolved names. System symbols (`&SYSUID`) are not resolved there: a library that still holds an unresolved `&symbol` stays as written and adds a `job.warnings` entry. The INCLUDE pre-scan (`_extract_jcllib_order`) substitutes the same earlier SETs, without the warning. The base-path guard below still applies to the substituted name (`SET LIB='../OUT'` is skipped).
+
 # Usage
 
 ```python

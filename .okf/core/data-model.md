@@ -32,7 +32,7 @@ without importing, via `job.steps` / `job.procedures`).
 | `procedures` | `list[Procedure]` | Inline `PROC…PEND` blocks |
 | `conditionals` | `list[ConditionalBlock]` | Flat list of IF/THEN/ELSE blocks |
 | `set_statements` | `dict[str, str]` | Job-level SET symbol definitions. A SET inside a `PROC`…`PEND` body is **not** here — it is on `Procedure.set_statements` (since 2026-09-28). For a JOB-less member the synthetic job also carries its procedures' SETs |
-| `jcllib_order` | `list[str]` | JCLLIB library concatenation |
+| `jcllib_order` | `list[str]` | JCLLIB library concatenation, with the SET symbols in effect at the JCLLIB statement substituted (an entry with an unresolved `&symbol` stays as written, with a warning; #128) |
 | `includes` | `list[str]` | INCLUDE member references |
 | `comments` | `list[str]` | Present on the model but never populated — see invariant 8 |
 | `line_number` | `int` | Default `0` |

@@ -102,6 +102,23 @@ def _report_set_overflow(
         warnings.append(f"{prefix}{message}; value left unresolved")
 
 
+def _resolve_jcllib_library(library: str, known_symbols: dict[str, str]) -> str | None:
+    """Substitute SET symbols into one ``JCLLIB ORDER`` library name.
+
+    z/OS resolves the SET symbols defined before the JCLLIB statement, so
+    *known_symbols* must be the SET table in effect at that statement. Returns
+    ``None`` when a ``&symbol`` is still unresolved afterwards (a system symbol
+    such as ``&SYSUID``, or a SET coded later); the caller keeps the library as
+    written then.
+    """
+    if "&" not in library:
+        return library
+    resolved = _resolve_set_value(library, known_symbols)
+    if _has_unresolved_symbol_ref(resolved):
+        return None
+    return resolved
+
+
 def _has_unresolved_symbol_ref(
     value: str, ignore: Callable[[str], bool] | None = None
 ) -> bool:
