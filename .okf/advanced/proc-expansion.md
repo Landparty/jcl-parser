@@ -76,7 +76,7 @@ entry.step_name, entry.proc_name, entry.parameters, entry.depth, entry.expanded_
 # Symbol Substitution
 
 - `&NAME` → substituted value from symbol table
-- `&&` → literal `&` (escaped ampersand)
+- `&&` → literal `&` (escaped ampersand) — also when the `&&` comes from a symbol's value (`SET X='A&&B'` / `PROC Y='A&&B'` then `PARM='&X'` → `A&B`): the nested pass that resolves symbols inside a value keeps `&&`, and the top-level replacer collapses it exactly once afterwards (`A&&&&B` → `A&&B`, matching a plain step). DSN contexts pass `collapse_double_amp=False`, so neither form touches a DSN (fixed 2026-10-15, #127; PROC steps used to keep `A&&B`)
 - `&&TEMP` in a DSN means temporary dataset, not an escaped ampersand
 - A DSN that is one bare single-`&` reference (`DSN=&TEMP`, `DSN=&TEMP(MEM)`) with no symbol of that name is kept as written — the single-ampersand spelling of a temporary dataset name — instead of being blanked with an undefined-symbol warning (`_dsn_keep_undefined`; fixed 2026-09-28). `strict_symbols=True` still raises for it.
 - SET symbols resolve left-to-right; a step read before a SET redefined a symbol expands its PROC with the value in effect at that step (`Step.set_symbols`, fixed 2026-09-28)

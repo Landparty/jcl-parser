@@ -384,13 +384,23 @@ def _make_replacer(
         budget[0] -= len(value)
         if budget[0] < 0:
             raise _SymbolOverflow
-        if _TRAILING_SYMBOL_REF.search(value):
-            # Splicing a bare ``&SYSUID`` in front of ``.DATA`` would make that
-            # period the reference's delimiter; give it its own.
-            value += "."
-        return value
+        return _splice_ready_value(value, collapse_double_amp)
 
     return _replacer
+
+
+def _splice_ready_value(value: str, collapse_double_amp: bool) -> str:
+    """Finish a resolved symbol *value* for splicing into the text."""
+    if _TRAILING_SYMBOL_REF.search(value):
+        # Splicing a bare ``&SYSUID`` in front of ``.DATA`` would make that
+        # period the reference's delimiter; give it its own.
+        value += "."
+    if collapse_double_amp:
+        # The nested pass keeps ``&&`` so a value's escaped ampersand is not
+        # read as a symbol reference; collapse it now, exactly once, as a
+        # literal ``&&`` in the text itself is (invariant 4, #127).
+        value = value.replace("&&", "&")
+    return value
 
 
 def _substitute_symbols_bounded(
