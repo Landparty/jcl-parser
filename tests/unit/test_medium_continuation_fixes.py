@@ -86,3 +86,66 @@ class TestCommentAfterTrailingComma:
     )
     def test_split_comment_field(self, record, expected):
         assert split_comment_field(record) == expected
+
+
+class TestMissingCommaDoesNotMerge:
+    """#123: a record continues a statement only after a trailing comma."""
+
+    def test_missing_comma_keeps_dsn_and_warns(self):
+        job = parse_jcl(
+            "//J1 JOB (A),'X'\n//S1 EXEC PGM=A\n"
+            "//IN DD DSN=PROD.MASTER\n//      DISP=SHR\n"
+        )
+        assert job.steps[0].dd_statements[0].parameters == {"DSN": "PROD.MASTER"}
+        assert len(job.warnings) == 1
+        assert job.warnings[0].startswith("Line 4: continuation record ignored")
+        assert "DISP=SHR" in job.warnings[0]
+
+    def test_stray_group_is_reported_once_and_next_statement_survives(self):
+        job = parse_jcl(
+            "//J1 JOB (A),'X'\n//S1 EXEC PGM=A\n"
+            "//IN DD DSN=PROD.MASTER\n//      DISP=SHR,\n//      UNIT=SYSDA\n"
+            "//OUT DD DUMMY\n"
+        )
+        dds = job.steps[0].dd_statements
+        assert [dd.name for dd in dds] == ["IN", "OUT"]
+        assert dds[0].parameters == {"DSN": "PROD.MASTER"}
+        assert len(job.warnings) == 1
+
+    def test_comma_continuation_still_merges(self):
+        params = _dd_params(
+            "//J1 JOB (A),'X'\n//S1 EXEC PGM=A\n"
+            "//IN DD DSN=PROD.MASTER,\n//      DISP=SHR\n"
+        )
+        assert params == {"DSN": "PROD.MASTER", "DISP": "SHR"}
+
+    def test_open_quote_still_continues_without_comma(self):
+        handler = ContinuationLineHandler()
+        assert handler.is_continuation_line("//         B'", "//S EXEC PARM='A")
+
+    def test_leading_comma_record_after_complete_statement_continues(self):
+        handler = ContinuationLineHandler()
+        assert handler.is_continuation_line("//   ,DISP=SHR", "//IN DD DSN=A")
+
+    def test_stray_record_classification(self):
+        handler = ContinuationLineHandler()
+        assert handler.is_stray_continuation_record("//      DISP=SHR")
+        assert handler.is_stray_continuation_record("// ,DISP=SHR")
+        assert not handler.is_stray_continuation_record("//S2 EXEC PGM=X")
+        assert not handler.is_stray_continuation_record("//   STEP2 EXEC PGM=X")
+        assert not handler.is_stray_continuation_record("//  DD DUMMY")
+        assert not handler.is_stray_continuation_record("// DISP=SHR")
+        assert not handler.is_stray_continuation_record("//")
+
+    def test_unnamed_notify_is_its_own_statement(self):
+        job = parse_jcl(
+            "//J1 JOB (A),'X'\n// NOTIFY EMAIL='a@b.com'\n"
+            "//N2 NOTIFY USER=IBMUSER\n//S1 EXEC PGM=A\n"
+        )
+        assert job.parameters == {"_pos_1": "X"}
+        assert [(c.type, c.name, c.parameters) for c in job.control_statements] == [
+            ("NOTIFY", "", {"EMAIL": "a@b.com"}),
+            ("NOTIFY", "N2", {"USER": "IBMUSER"}),
+        ]
+        assert job.warnings == []
+        assert [s.name for s in job.steps] == ["S1"]

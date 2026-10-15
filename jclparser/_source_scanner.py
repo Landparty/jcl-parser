@@ -96,6 +96,14 @@ def _merge_source_lines(content: str) -> ScannedSource:
         f"{comment!r}"
         for jcl_line_num, comment in handler.suspect_comments
     ]
+    # A continuation-like record after a complete statement (missing comma)
+    # is not merged into it; say so instead of dropping its operands (#123).
+    warnings += [
+        f"Line {jcl_indices[jcl_line_num - 1] + 1}: continuation record "
+        f"ignored because the statement before it does not end with a comma "
+        f"(missing comma?): {record!r}"
+        for jcl_line_num, record in handler.stray_continuations
+    ]
 
     return ScannedSource(
         merged_lines,

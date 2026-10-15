@@ -3,7 +3,7 @@ type: Data Model
 title: JCL Data Model
 description: Hierarchy of Job, Step, DDStatement, ConditionalBlock, and Procedure objects returned by parse_jcl().
 tags: [model, core, data-model]
-timestamp: 2026-09-16T00:00:00Z
+timestamp: 2026-10-15T00:00:00Z
 ---
 
 # Overview
@@ -41,7 +41,7 @@ without importing, via `job.steps` / `job.procedures`).
 | `jes_typed_statements` | `list[Any]` | Same cards promoted to typed models; unknown JES commands stay raw-only. `parameters` stop at the first blank outside quotes/parens (the rest is a comment, kept in `raw`), except `//*OPERATOR` message text |
 | `output_statements` | `list[OutputStatement]` | OUTPUT statements |
 | `joblib_dds` | `list[DDStatement]` | JOBLIB concatenation |
-| `control_statements` | `list[Statement]` | `COMMAND` / `SCHEDULE` / `CNTL` kept verbatim; a CNTL block's records live in `parameters["_records"]` |
+| `control_statements` | `list[Statement]` | `COMMAND` / `SCHEDULE` / `CNTL` / `NOTIFY` kept verbatim; a CNTL block's records live in `parameters["_records"]` |
 | `sql_detections` | `dict[str, Any]` | Keyed by step name; only with `ParserConfig(detect_sql=True)` |
 | `unresolved_output_refs` | `list[tuple[str, str, int]]` | `OUTPUT=*.name` refs with no definition in scope: `(step_name, ref, line_number)`, see [OutputStatement](#outputstatement) |
 | `exported_symbols` | `set[str]` | From `EXPORT SYMLIST=(...)`; `"*"` exports every SET symbol |
@@ -165,7 +165,7 @@ The generic pre-model record produced by `parse_statement()`:
 - **Comments are dropped.** `Job.comments` / `Step.comments` / `DDStatement.comments`
   exist but are never populated, and there is no `job.statements` holding raw
   statements. The only statements kept verbatim are `COMMAND` / `SCHEDULE` /
-  `CNTL`, in `job.control_statements`. See [development/invariants](../development/invariants.md) #8.
+  `CNTL` / `NOTIFY` (z/OS 2.3, since 2026-10-15), in `job.control_statements`. See [development/invariants](../development/invariants.md) #8.
 - `ConditionalBlock.condition` is always set; `condition_ast` may be `None`.
 - `DDStatement.is_temporary()` is a **method**: `dd.is_temporary()`, not `dd.is_temporary`.
   `True` when `DSN=&&TEMP...` — double-`&&` signals a temporary dataset.

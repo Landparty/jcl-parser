@@ -49,6 +49,7 @@ _STATEMENT_TYPES: frozenset = frozenset(
         "COMMAND",
         "CNTL",
         "ENDCNTL",
+        "NOTIFY",
     }
 )
 

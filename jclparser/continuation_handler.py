@@ -73,6 +73,12 @@ class ContinuationLineHandler:
         #: turns these into job warnings so a truncated or garbled statement
         #: is never dropped without a trace.
         self.suspect_comments: list[tuple[int, str]] = []
+        #: ``(index_in_input_list, record_text)`` for every continuation-like
+        #: record that followed a complete statement (no trailing comma) and
+        #: so was not merged into it.  Populated by
+        #: :meth:`merge_continuation_lines`; the parser reports them as job
+        #: warnings, since the record's operands are otherwise ignored.
+        self.stray_continuations: list[tuple[int, str]] = []
 
     def _has_implicit_continuation(self, previous_line: str) -> bool:
         """Check if previous line ends with comma (implicit continuation)."""
@@ -115,6 +121,26 @@ class ContinuationLineHandler:
         # Its second token being an operation keyword gives it away.
         return _is_named_statement(content.split(), False)
 
+    def is_stray_continuation_record(self, line: str) -> bool:
+        """Return True if *line* looks like a continuation record but starts a
+        statement group of its own.
+
+        A continuation record (blank name field, first token not an operation)
+        only continues a statement whose operand field ended with a comma or
+        is inside an open quoted string or parenthesised list.  When the
+        statement before it was complete -- a missing comma, the classic
+        ``DSN=PROD.MASTER`` / ``DISP=SHR`` slip -- the record is not merged
+        (that silently corrupted the last value) and the caller reports it.
+        """
+        if self.ALT_CONTINUATION_PATTERN.match(line):
+            return True
+        if not self.CONTINUATION_PATTERN.match(line):
+            return False
+        if self._looks_like_new_statement(line):
+            return False
+        first_keyword = self._get_first_keyword(line)
+        return bool(first_keyword) and first_keyword not in self.JCL_KEYWORDS
+
     def is_continuation_line(
         self,
         line: str,
@@ -146,27 +172,22 @@ class ContinuationLineHandler:
         else:
             has_unclosed_context = self._has_unclosed_context(previous_line)
 
+        # Without a trailing comma (or an open quote/paren) the previous
+        # statement is complete: a record that is not a statement of its own
+        # is a stray continuation, never merged (issue #123) -- see
+        # is_stray_continuation_record().
+        if not (has_implicit_continuation or has_unclosed_context):
+            return False
+
         if self.CONTINUATION_PATTERN.match(line):
-            if has_implicit_continuation or has_unclosed_context:
-                return True
+            return True
 
-            if self._looks_like_new_statement(line):
-                return False
-
-            first_keyword = self._get_first_keyword(line)
-            if first_keyword and first_keyword not in self.JCL_KEYWORDS:
-                return True
-
-        if has_implicit_continuation or has_unclosed_context:
-            stripped_line = line.strip()
-            if (
-                stripped_line.startswith("//")
-                and not stripped_line.startswith("//*")
-                and not self._looks_like_new_statement(line)
-            ):
-                return True
-
-        return False
+        stripped_line = line.strip()
+        return (
+            stripped_line.startswith("//")
+            and not stripped_line.startswith("//*")
+            and not self._looks_like_new_statement(line)
+        )
 
     @staticmethod
     def _continues_if(merged_line: str, group_operation: str, line: str) -> bool:
@@ -219,6 +240,7 @@ class ContinuationLineHandler:
         """
         merged: list[tuple[str, int]] = []
         self.suspect_comments = []
+        self.stray_continuations = []
         i = 0
 
         while i < len(lines):
@@ -259,6 +281,8 @@ class ContinuationLineHandler:
         # continued operands are lost (see split_comment_field).
         group_operation = statement_operation(lines[i])
         line = self._strip_comment(lines[i], group_operation, original_line_num)
+        if self.is_stray_continuation_record(line):
+            self.stray_continuations.append((original_line_num, line.strip()))
 
         # Start building merged line
         merged_line = line.rstrip()

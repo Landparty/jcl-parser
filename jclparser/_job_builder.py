@@ -123,10 +123,12 @@ class JobBuilder:
         "JES": "_on_jes",
         "OUTPUT": "_on_output",
         "NULL": "_on_null",
-        # No richer model representation for COMMAND / SCHEDULE / CNTL.
+        # No richer model representation for COMMAND / SCHEDULE / CNTL /
+        # NOTIFY (z/OS 2.3).
         "COMMAND": "_on_control",
         "SCHEDULE": "_on_control",
         "CNTL": "_on_control",
+        "NOTIFY": "_on_control",
         "ENDCNTL": "_on_endcntl",
         "UNKNOWN": "_on_unknown",
         "XMIT": "_on_xmit",
@@ -665,7 +667,7 @@ class JobBuilder:
         pass
 
     def _on_control(self, stmt: Statement, line_num: int) -> None:
-        """Record a COMMAND / SCHEDULE / CNTL statement verbatim."""
+        """Record a COMMAND / SCHEDULE / CNTL / NOTIFY statement verbatim."""
         # No richer model representation, but they are real statements —
         # record them verbatim rather than discarding them.
         if stmt.type == "CNTL":
