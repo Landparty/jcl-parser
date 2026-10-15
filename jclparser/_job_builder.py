@@ -156,8 +156,12 @@ class JobBuilder:
         self.pending_procedures: list[Procedure] = []
         self.current_delimiter = "/*"
         self.current_terminates_on_slash = False
-        #: Track DDs that appear before first EXEC
+        #: Job-level DDs that appear before the first job-level EXEC (e.g.
+        #: ``SYSCHK``/``JOBCAT``); attached to that step, never to a step of an
+        #: in-stream PROC defined in between (#103).
         self.orphaned_dds: list[DDStatement] = []
+        #: DDs inside a PROC/PEND body before the procedure's first EXEC.
+        self.proc_orphaned_dds: list[DDStatement] = []
         #: ``len(conditional_stack)`` when the open PROC began: IF blocks at
         #: or below it belong to the enclosing job, not to the procedure.
         self.proc_cond_depth = 0
@@ -335,11 +339,16 @@ class JobBuilder:
         self.in_joblib_concat = False  # JOBLIB concatenation ends at first EXEC
         self.concat_override_key = None
 
-        # Attach any orphaned DDs to this first step
-        if self.orphaned_dds:
-            for dd in self.orphaned_dds:
-                self.current_step.add_dd(dd)
-            self.orphaned_dds = []
+        # Attach DDs seen before the first EXEC of this scope to this step.
+        # Job-level DDs (SYSCHK, JOBCAT, ...) wait for the first job-level
+        # EXEC: a step inside an in-stream PROC definition must never pick
+        # them up, or every expansion of the PROC would copy them (#103).
+        if self.current_procedure is not None:
+            pending_dds, self.proc_orphaned_dds = self.proc_orphaned_dds, []
+        else:
+            pending_dds, self.orphaned_dds = self.orphaned_dds, []
+        for dd in pending_dds:
+            self.current_step.add_dd(dd)
 
         # Add step to the open IF branch, the PROC being defined, or the job
         self._attach(self.current_step)
@@ -358,9 +367,12 @@ class JobBuilder:
             elif not stmt.name and self.in_joblib_concat and self.job is not None:
                 # Empty-name DD concatenating onto the JOBLIB group
                 self.job.joblib_dds.append(current_dd)
+            elif self.current_procedure is not None:
+                # DD in a PROC body before its first EXEC
+                self.proc_orphaned_dds.append(current_dd)
             else:
                 self.in_joblib_concat = False
-                # Store as orphaned DD to be attached to next step
+                # Job-level DD: attached to the next job-level step
                 self.orphaned_dds.append(current_dd)
         elif stmt.name and "." in stmt.name:
             # This is a DD override for a procedure step
@@ -430,6 +442,8 @@ class JobBuilder:
         self.proc_cond_depth = len(self.conditional_stack)
         # Reset current_step since we're now inside procedure
         self.current_step = None
+        self.in_joblib_concat = False
+        self.proc_orphaned_dds = []
 
     def _on_pend(self, stmt: Statement, line_num: int) -> None:
         # End of procedure definition - stop tracking.  PEND closes the PROC
@@ -444,9 +458,22 @@ class JobBuilder:
                     f"Line {cond.line_number}: IF block in PROC {procedure.name} "
                     f"has no matching ENDIF; closed at PEND (line {line_num})"
                 )
+            self._warn_proc_orphaned_dds(procedure, line_num)
+        self.proc_orphaned_dds = []
         self.proc_cond_depth = 0
         self.current_procedure = None
         self.current_step = None
+
+    def _warn_proc_orphaned_dds(self, procedure: Procedure, line_num: int) -> None:
+        """Report DDs of a PROC body that had no EXEC step to attach to."""
+        if self.proc_orphaned_dds:
+            dd_names = ", ".join(
+                dd.name or "(unnamed)" for dd in self.proc_orphaned_dds
+            )
+            self._warnings_sink().append(
+                f"Line {line_num}: PROC {procedure.name} has DD statement(s) "
+                f"but no EXEC step to attach them to; discarded: {dd_names}"
+            )
 
     def _on_set(self, stmt: Statement, line_num: int) -> None:
         # SET symbol=value statement.  A SET before the JOB statement (or in a
@@ -899,8 +926,8 @@ class JobBuilder:
 
     def _warn_orphaned_dds(self, job: Job) -> None:
         # orphaned_dds is only ever non-empty here when the whole job had no
-        # EXEC statement at all (the first EXEC always flushes and clears the
-        # list) -- those DD statements have nowhere to attach and are
+        # job-level EXEC statement at all (the first one always flushes and
+        # clears the list) -- those DD statements have nowhere to attach and are
         # discarded, so record what was lost instead of vanishing them silently.
         if self.orphaned_dds:
             dd_names = ", ".join(dd.name or "(unnamed)" for dd in self.orphaned_dds)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from jclparser import parse_jcl
+from jclparser import explode_job, parse_jcl
 from jclparser.model import ConditionalBlock, Step
 
 pytestmark = pytest.mark.unit
@@ -140,3 +140,82 @@ class TestUnclosedIfInProc:
         cond = job.steps[1]
         assert isinstance(cond, ConditionalBlock)
         assert _names(cond.then_steps) == ["S1"]
+
+
+def _dd_names(step: Step | ConditionalBlock) -> list[str]:
+    assert isinstance(step, Step)
+    return [dd.name for dd in step.dd_statements]
+
+
+class TestJobLevelDdBeforeInstreamProc:
+    """#103: a job-level DD before an in-stream PROC is not moved into it."""
+
+    SRC = (
+        "//J JOB\n"
+        "//JOBLIB DD DSN=A.LOAD,DISP=SHR\n"
+        "//SYSCHK DD DSN=CHK.DS,DISP=OLD\n"
+        "//P PROC\n"
+        "//PS1 EXEC PGM=A\n"
+        "// PEND\n"
+        "//S1 EXEC P\n"
+        "//S2 EXEC P\n"
+    )
+
+    def test_procedure_definition_untouched(self) -> None:
+        job = parse_jcl(self.SRC)
+        assert _dd_names(job.procedures[0].steps[0]) == []
+
+    def test_dd_attaches_to_first_job_level_step(self) -> None:
+        job = parse_jcl(self.SRC)
+        assert [dd.name for dd in job.joblib_dds] == ["JOBLIB"]
+        assert _dd_names(job.steps[0]) == ["SYSCHK"]
+        assert _dd_names(job.steps[1]) == []
+        assert job.warnings == []
+
+    def test_same_as_without_the_proc_in_between(self) -> None:
+        plain = parse_jcl(
+            "//J JOB\n"
+            "//JOBLIB DD DSN=A.LOAD,DISP=SHR\n"
+            "//SYSCHK DD DSN=CHK.DS,DISP=OLD\n"
+            "//S1 EXEC PGM=X\n"
+        )
+        assert _dd_names(plain.steps[0]) == _dd_names(parse_jcl(self.SRC).steps[0])
+
+    def test_not_copied_into_every_expansion(self) -> None:
+        exploded = explode_job(parse_jcl(self.SRC))
+        by_name = {s.name: _dd_names(s) for s in exploded.steps}
+        assert by_name["S2.PS1"] == []
+
+    def test_dd_before_first_proc_exec_stays_in_proc(self) -> None:
+        job = parse_jcl(
+            "//J JOB\n"
+            "//SYSCHK DD DSN=CHK.DS,DISP=OLD\n"
+            "//P PROC\n"
+            "//PDD DD DSN=P.DS,DISP=SHR\n"
+            "//PS1 EXEC PGM=A\n"
+            "// PEND\n"
+            "//S1 EXEC P\n"
+        )
+        assert _dd_names(job.procedures[0].steps[0]) == ["PDD"]
+        assert _dd_names(job.steps[0]) == ["SYSCHK"]
+
+    def test_proc_dd_with_no_proc_step_is_warned(self) -> None:
+        job = parse_jcl(
+            "//J JOB\n//P PROC\n//PDD DD DSN=P.DS,DISP=SHR\n// PEND\n//S1 EXEC PGM=X\n"
+        )
+        assert _dd_names(job.steps[0]) == []
+        assert any(
+            "PROC P has DD statement(s) but no EXEC step" in w and "PDD" in w
+            for w in job.warnings
+        )
+
+    def test_job_dd_with_no_job_step_still_warned(self) -> None:
+        job = parse_jcl(
+            "//J JOB\n"
+            "//SYSCHK DD DSN=CHK.DS,DISP=OLD\n"
+            "//P PROC\n"
+            "//PS1 EXEC PGM=A\n"
+            "// PEND\n"
+        )
+        assert _dd_names(job.procedures[0].steps[0]) == []
+        assert any("no EXEC step" in w and "SYSCHK" in w for w in job.warnings)
