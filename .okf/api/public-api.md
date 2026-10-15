@@ -3,7 +3,7 @@ type: API Reference
 title: jclparser Public API
 description: All exports from jclparser/__init__.py, organized by stability tier; only Tier 1 should be used in new external integrations.
 tags: [api, stability, exports]
-timestamp: 2026-10-04T00:00:00Z
+timestamp: 2026-10-15T00:00:00Z
 ---
 
 # Overview
@@ -20,8 +20,8 @@ Will not be removed or signature-broken without a major version bump.
 |--------|-------------|
 | `parse_jcl(source, ...)` | Main entry — parses JCL text (`str`), a file (`pathlib.Path`) or an IO; returns `Job` (or `(Job, ProfilingResult)` with `enable_profiling=True`). A `str` is always content, never a file name, whatever it looks like (breaking change 2026-10-03: `parse_jcl("job.jcl")` parses the text `job.jcl`; use `parse_jcl(Path("job.jcl"))`). The same holds for `validate_jcl` and `detect_file_type` |
 | `parse(source, ...)` | Alias for `parse_jcl` |
-| `validate_jcl(source, level="basic", config=None, *, proc_base_path=None, enable_external_procs=True)` | Strict parse + `job.validate()` findings (ERRORs only at `"basic"`, all at `"structure"`/`"semantic"`); returns a flat `list[ParseError]` (empty when valid). `level` is a plain `str`: `"basic"` / `"structure"` / `"semantic"`. The keyword-only `proc_base_path` / `enable_external_procs` (added 2026-10-15, #129) have `parse_jcl`'s names, defaults and meaning: the base directory for external PROC libraries and INCLUDE members (default `JCL_PROCLIB_PATH`), and whether PROCs are loaded from it at all. Before, `validate_jcl` could only find external PROCs through the env var |
-| `parse_statement(line, line_number=0)` | Parse a single JCL statement line in isolation; returns `Statement \| None` |
+| `validate_jcl(source, level=None, config=None, *, proc_base_path=None, enable_external_procs=True)` | Strict parse + `job.validate()` findings (ERRORs only at `"basic"`, all at `"structure"`/`"semantic"`); returns a flat `list[ParseError]` (empty when valid). `level` is a `ValidationLevel` or its string value, case-insensitive: `"basic"` / `"structure"` / `"semantic"` (`"syntax_only"` is an alias of `"basic"`; anything else raises `ValueError`); omitted, it is `config.validation_level`, else `"basic"`. The keyword-only `proc_base_path` / `enable_external_procs` (added 2026-10-15, #129) have `parse_jcl`'s names, defaults and meaning: the base directory for external PROC libraries and INCLUDE members (default `JCL_PROCLIB_PATH`), and whether PROCs are loaded from it at all. Before, `validate_jcl` could only find external PROCs through the env var |
+| `parse_statement(line, line_number=0, config=None)` | Parse a single JCL statement line in isolation; returns `Statement \| None` |
 
 ## Model Classes
 
@@ -39,7 +39,11 @@ PROC member; `job.validate()` and the JOB-card lint rules skip the JOB-statement
 
 ## Error / Enum Types
 
-`JCLParseError` (common base), `JCLSyntaxError`, `JCLValidationError`, `JCLStructureError`, `ParseError`, `ValidationError`, `UndefinedSymbolError`, `CircularProcedureError`, `ExplosionDepthError`, `ProcedureNotFoundError`, `ErrorType`, `ErrorSeverity`, `ValidationLevel`
+`JCLParseError` (common base of the exceptions), `JCLSyntaxError`, `JCLValidationError`, `JCLStructureError`, `UndefinedSymbolError`, `CircularProcedureError`, `ExplosionDepthError`, `ProcedureNotFoundError`, `ErrorType`, `ErrorSeverity`, `ValidationLevel`
+
+`ParseError` (frozen dataclass, what `validate_jcl` returns) and `ValidationError` (what `job.validate()` and `lint_job` return) are finding records, **not** exceptions — they do not derive from `JCLParseError` and are never raised.
+
+`__version__` (package version string) is also in `__all__`.
 
 # Tier 2 — Advanced
 
