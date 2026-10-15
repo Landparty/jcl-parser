@@ -167,3 +167,94 @@ class TestLifecycleStepCond:
         warnings = _lifecycle_warnings(src)
         assert len(warnings) == 1
         assert "already cataloged" in warnings[0][1]
+
+
+def _profile_notes(src: str) -> list[str]:
+    from jclparser.program_profiles import analyze_job
+
+    results = analyze_job(jp.parse_jcl(src))
+    assert len(results) == 1
+    return results[0].notes
+
+
+class TestSortOutfilJoinkeysDatasets:
+    """#110: OUTFIL FNAMES=/FILES= outputs and JOINKEYS inputs are reported."""
+
+    def test_outfil_fnames_outputs(self):
+        src = (
+            "//J JOB\n"
+            "//S EXEC PGM=SORT\n"
+            "//SORTIN DD DSN=A.IN,DISP=SHR\n"
+            "//OUT1 DD DSN=A.OUT1,DISP=(NEW,CATLG)\n"
+            "//OUT2 DD DSN=A.OUT2,DISP=(NEW,CATLG)\n"
+            "//OTHER DD DSN=A.OTHER,DISP=SHR\n"
+            "//SYSIN DD *\n"
+            "  SORT FIELDS=COPY\n"
+            "  OUTFIL FNAMES=OUT1,\n"
+            "    INCLUDE=(1,1,CH,EQ,C'A')\n"
+            "  OUTFIL FNAMES=OUT2,SAVE\n"
+            "/*\n"
+        )
+        notes = _profile_notes(src)
+        assert "input: A.IN" in notes
+        assert "output: A.OUT1" in notes
+        assert "output: A.OUT2" in notes
+        assert not any("A.OTHER" in n for n in notes)
+
+    def test_outfil_fnames_list_files_and_default(self):
+        src = (
+            "//J JOB\n"
+            "//S EXEC PGM=SORT\n"
+            "//SORTIN DD DSN=A.IN,DISP=SHR\n"
+            "//SORTOUT DD DSN=A.MAIN,DISP=(NEW,CATLG)\n"
+            "//SORTOF1 DD DSN=A.OF1,DISP=(NEW,CATLG)\n"
+            "//SORTOFAB DD DSN=A.OFAB,DISP=(NEW,CATLG)\n"
+            "//X DD DSN=A.X,DISP=(NEW,CATLG)\n"
+            "//Y DD DSN=A.Y,DISP=(NEW,CATLG)\n"
+            "//SYSIN DD *\n"
+            "  SORT FIELDS=(1,4,CH,A)\n"
+            "  OUTFIL FILES=(1,AB)\n"
+            "  OUTFIL FNAMES=(X,Y)\n"
+            "  OUTFIL INCLUDE=(1,1,CH,EQ,C'B')\n"
+            "/*\n"
+        )
+        notes = _profile_notes(src)
+        for dsn in ("A.MAIN", "A.OF1", "A.OFAB", "A.X", "A.Y"):
+            assert f"output: {dsn}" in notes
+
+    def test_joinkeys_default_ddnames(self):
+        src = (
+            "//J JOB\n"
+            "//S EXEC PGM=SORT\n"
+            "//SORTJNF1 DD DSN=A.LEFT,DISP=SHR\n"
+            "//SORTJNF2 DD DSN=A.RIGHT,DISP=SHR\n"
+            "//SORTOUT DD DSN=A.JOINED,DISP=(NEW,CATLG)\n"
+            "//SYSIN DD *\n"
+            "  JOINKEYS FILE=F1,FIELDS=(1,10,A)\n"
+            "  JOINKEYS FILE=F2,FIELDS=(1,10,A)\n"
+            "  REFORMAT FIELDS=(F1:1,80,F2:11,20)\n"
+            "  SORT FIELDS=COPY\n"
+            "/*\n"
+        )
+        notes = _profile_notes(src)
+        assert "input: A.LEFT" in notes
+        assert "input: A.RIGHT" in notes
+        assert "output: A.JOINED" in notes
+
+    def test_joinkeys_named_ddnames(self):
+        src = (
+            "//J JOB\n"
+            "//S EXEC PGM=SORT\n"
+            "//LEFT DD DSN=A.LEFT,DISP=SHR\n"
+            "//RIGHT DD DSN=A.RIGHT,DISP=SHR\n"
+            "//SORTOUT DD DSN=A.JOINED,DISP=(NEW,CATLG)\n"
+            "//SYSIN DD *\n"
+            "  JOINKEYS F1=LEFT,FIELDS=(1,10,A)\n"
+            "  JOINKEYS F2=RIGHT,\n"
+            "    FIELDS=(1,10,A)\n"
+            "  SORT FIELDS=COPY\n"
+            "/*\n"
+        )
+        notes = _profile_notes(src)
+        assert "input: A.LEFT" in notes
+        assert "input: A.RIGHT" in notes
