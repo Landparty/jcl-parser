@@ -1,5 +1,26 @@
 # Update Log
 
+## 2026-10-15 (severity:medium issues)
+* **Fix (#122)**: a backslash before a quote no longer escapes it (JCL has none), so `// SET DIR='C:\'` no longer swallows the next statement. AUDIT M1 resolved. See [core/parsing-pipeline](core/parsing-pipeline.md).
+* **Fix (#120)**: a `(...)` or `'...'` comment after a trailing comma is a comment unless a `,` or the end of the record follows it (a paren group must also have no unquoted blank); `JOB (ACCT), 'PGMR'` still tolerated. See [development/invariants](development/invariants.md) #17.
+* **Fix (#123)**: a record continues a statement only after a trailing comma (or open quote/paren); otherwise it is ignored with a `continuation record ignored ... (missing comma?)` warning. `NOTIFY` added to `_STATEMENT_TYPES` and kept in `job.control_statements`. Invariants #15/#16.
+* **Fix (#117)**: `//X XMIT DLM=` and JES2 `/*XMIT` open transmitted data that ends at `/*` or `DLM=` (never `//`); the records are not parsed as JCL.
+* **Fix (#102)**: `PEND` closes any IF left open inside the in-stream PROC, with a warning; later job steps are no longer swallowed.
+* **Fix (#103)**: job-level DDs coded before an in-stream PROC (SYSCHK, JOBCAT, ...) attach to the first job-level EXEC, never to a step inside the PROC definition.
+* **Feature (#130)**: new `Job.custom_statements` keeps plugin statements whose type has no handler, in source order. See [core/data-model](core/data-model.md).
+* **Fix (#127)**: `&&` in a symbol's value collapses to `&` in PROC-step PARMs as in plain steps (invariant 4); DSN contexts unchanged.
+* **Fix (#121)**: `DSN=(...)` is kept as text (`dataset_name == "(A.B)"`) and reported by validation instead of raising `TypeError` when the job has a SET.
+* **Fix (#128)**: SET symbols defined before a `JCLLIB` statement are substituted into `jcllib_order`; an entry left with an unresolved symbol (e.g. a system symbol) is kept as written with a warning. The library path guard still applies. See [advanced/proc-expansion](advanced/proc-expansion.md).
+* **Fix (#119)**: `validate_jcl` step, DD and job findings carry their source line instead of 0.
+* **Fix (#100)**: the backend contract's wrapper job is now `//LEGACYLN JOB` (8 characters) — **the backend adapter must be updated** — and a job with no steps but in-stream PROCs no longer gets "at least one execution step". See [integration/backend-contract](integration/backend-contract.md).
+* **Fix (#129)**: `validate_jcl` gains keyword-only `proc_base_path` / `enable_external_procs`; the CLI forwards `--proc-path` for `--validate`. See [api/public-api](api/public-api.md).
+* **Fix (#118)**: after an `// INCLUDE`, line numbers on statements, warnings and errors refer to the main source; a member line maps to its INCLUDE line and messages name the member and line within it. New `resolve_includes_with_origins()`.
+* **Fix (#101)**: IF conditions evaluate AND and OR at equal precedence, left to right (z/OS MVS JCL Reference operator table).
+* **Fix (#109)**: `paths` reports a nested IF as a duplicate only when nothing between the two IFs can change its result.
+* **Fix (#108)**: dataset lifecycle treats a step that `COND=` can bypass as a conditional branch; `COND=EVEN` alone runs always. See [advanced/validation](advanced/validation.md).
+* **Fix (#110)**: SORT profile reports OUTFIL `FNAMES=`/`FILES=` outputs and JOINKEYS `F1=`/`F2=` (SORTJNF1/2) inputs.
+* **Fix (#111)**: FTP profile reads commands from the `INPUT` DD, falling back to `SYSIN`; passwords are never echoed into notes.
+
 ## 2026-10-15 (severity:high issues)
 * **Fix (#106)**: `sql` on an unexploded job reported DB2 utility options under `EXEC DSNUPROC` (`RUNSTATS ... UPDATE ALL`, `MODIFY RECOVERY ... DELETE AGE(90)`) as DML: the utility exemption keyed on `step.program`, which a PROC call does not have. New `sql_detector.PROCEDURE_PROGRAMS` (`DSNUPROC` -> `DSNUTILB`) classifies such a call by the program its PROC runs. Regression tests: `tests/unit/test_sql_detector_control_programs.py::TestDb2UtilityProcCall`.
 * **Fix (#107)**: lint `JCL-LINT-001/002/003` and `compute_metrics` read only `step.dd_statements`, so on an unexploded job the `//PROCSTEP.DD` overrides of a PROC call were invisible; they now use `model._dataset_dds(step)` as the dataset checks do (#87). Regression tests: `tests/unit/test_issue_107_override_dds.py`.
