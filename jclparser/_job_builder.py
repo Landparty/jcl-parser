@@ -60,6 +60,8 @@ from .utils import (
     instream_delimiter,
     is_positional_key,
     jcl_value_text,
+    jes_xmit_delimiter,
+    xmit_delimiter,
 )
 
 logger = logging.getLogger(__name__)
@@ -628,6 +630,13 @@ class JobBuilder:
         from .jes_statements import parse_jes_control
 
         typed = parse_jes_control(stmt.name, raw_params, stmt.line_number)
+        if stmt.name.upper() == "XMIT":
+            # The records that follow are a job stream for another node,
+            # not JCL of this job; they end at /* or DLM= (issue #117).
+            self.current_dd = None
+            self._start_transmitted_data(
+                jes_xmit_delimiter(raw_params), stmt.line_number
+            )
         if self.dialect == "jes3" and stmt.name.upper() not in _JES3_SLASH_STAR:
             # JES3 does not process JES2 control statements: keep the text,
             # but do not interpret it, and say so.
@@ -709,8 +718,6 @@ class JobBuilder:
                 line_number=stmt.line_number,
             )
             self.current_step.add_dd(self.current_dd)
-            self.in_inline_data = True
-            self.inline_data_lines = []
         else:
             # Job-level XMIT has no step to attach a DD to, but the
             # transmitted data block that follows must still be
@@ -720,12 +727,29 @@ class JobBuilder:
             # it; clear current_dd so the inline-data-end handler
             # doesn't misattach it to an unrelated earlier DD.
             self.current_dd = None
-            self.in_inline_data = True
-            self.inline_data_lines = []
             self._warnings_sink().append(
                 f"Line {stmt.line_number}: job-level XMIT has no step to attach "
                 f"its data to; the transmitted records were discarded"
             )
+        self._start_transmitted_data(xmit_delimiter(stmt.parameters), stmt.line_number)
+
+    def _start_transmitted_data(self, delimiter: Any, line_num: int) -> None:
+        """Open the data block of an XMIT / ``/*XMIT`` statement.
+
+        The transmitted records are a job stream for another node, so a
+        ``//`` record never ends them: only ``/*`` or the ``DLM=`` delimiter
+        does (the pre-scan in ``_merge_source_lines`` uses the same rule).
+        """
+        if not isinstance(delimiter, str):
+            raise JCLSyntaxError(
+                f"DLM= must be a one- or two-character delimiter, got "
+                f"{jcl_value_text(delimiter)}",
+                line_num,
+            )
+        self.in_inline_data = True
+        self.inline_data_lines = []
+        self.current_delimiter = delimiter
+        self.current_terminates_on_slash = False
 
     # ------------------------------------------------------------------ #
     # Finalisation

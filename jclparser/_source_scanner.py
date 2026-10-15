@@ -32,8 +32,11 @@ from .utils import (
     instream_delimiter,
     is_card_image,
     is_continued_card_image,
+    is_jes_xmit,
+    jes_xmit_delimiter,
     normalize_jcl_lines,
     split_source_lines,
+    xmit_delimiter,
 )
 
 
@@ -220,9 +223,9 @@ class _RecordClassifier:
         # starts in-stream data with no DD statement, which JES reads as an
         # implicit ``//SYSIN DD *`` (see JobBuilder.start_implicit_sysin).
         self.seen_exec = False
-        # Operands of a DD statement whose continuation records are still
-        # coming.
-        self.pending_dd: str | None = None
+        # ``(operation, operands)`` of a DD / XMIT statement whose
+        # continuation records are still coming.
+        self.pending: tuple[str, str] | None = None
 
     def run(self) -> list[int]:
         return [i for i, line in enumerate(self.lines) if self._is_jcl(i, line)]
@@ -235,6 +238,11 @@ class _RecordClassifier:
             return False
         if self._opens_implicit_sysin(i, line):
             return False
+        if is_jes_xmit(line):
+            # JES2 ``/*XMIT``: the records after it are a job stream for
+            # another node, ended only by ``/*`` or its DLM= (issue #117).
+            self._open_instream(jes_xmit_delimiter(line[6:]), False)
+            return True
         if (
             line.strip()
             and line.startswith("//")
@@ -314,44 +322,72 @@ class _RecordClassifier:
         if "CNTL" in upper_line and statement_operation(line) == "CNTL":
             self.in_cntl_block = True
             self.cntl_start_line = i + 1
-        dd_operands = self._complete_dd_operands(line, upper_line)
-        if dd_operands is not None:
-            instream = _instream_delimiter(dd_operands)
-            if instream is not None:
-                self._open_instream(*instream)
+        completed = self._complete_data_operands(line, upper_line)
+        if completed is None:
+            return
+        operation, operands = completed
+        if operation == "XMIT":
+            self._open_instream(*_xmit_data_delimiter(operands))
+            return
+        instream = _instream_delimiter(operands)
+        if instream is not None:
+            self._open_instream(*instream)
 
-    def _complete_dd_operands(self, line: str, upper_line: str) -> str | None:
-        """Return a DD's whole operand field once its last record is read.
+    def _complete_data_operands(
+        self, line: str, upper_line: str
+    ) -> tuple[str, str] | None:
+        """Return ``(operation, operands)`` of a DD / XMIT once its last record
+        is read.
 
-        In-stream data starts at ``DD *`` / ``DD DATA`` / any DD with an
-        explicit DLM=. The operand field is located by tokenizing the record —
-        the same way the JobBuilder reads it — so that spacing
-        ("//SYSIN    DD    *") can never make the two disagree and leave data
-        records to be parsed as JCL. A DD statement continued onto further
-        records (``DD DATA,`` / ``//   DLM=$$``) is only judged once its last
-        record is read: those records are JCL, and DLM= may sit on any of them.
+        In-stream data starts at ``DD *`` / ``DD DATA`` (DLM= may change its
+        delimiter); transmitted data starts at ``XMIT``. The operand field is
+        located by tokenizing the record — the same way the JobBuilder reads
+        it — so that spacing ("//SYSIN    DD    *") can never make the two
+        disagree and leave data records to be parsed as JCL. A statement
+        continued onto further records (``DD DATA,`` / ``//   DLM=$$``) is
+        only judged once its last record is read: those records are JCL, and
+        DLM= may sit on any of them. A new statement while one is pending
+        means its continuation never came.
         """
-        if self.pending_dd is not None:
-            if statement_operation(line) in _STATEMENT_TYPES:
-                self.pending_dd = None  # continuation never came
+        if (
+            self.pending is not None
+            and statement_operation(line) not in _STATEMENT_TYPES
+        ):
+            operation, operands = self.pending
+            operands += split_comment_field(line, operation)[0][2:].strip()
+        else:
+            self.pending = None
+            if "DD" not in upper_line and "XMIT" not in upper_line:
                 return None
-            continuation = split_comment_field(line, "DD")[0][2:].strip()
-            self.pending_dd += continuation
-            if continuation.endswith(","):
+            field = _operand_field(line)
+            if field is None or field[1] not in _DATA_OPENING_OPERATIONS:
                 return None
-            operands, self.pending_dd = self.pending_dd, None
-            return operands
-        if "DD" not in upper_line:
-            return None
-        dd_field = _operand_field(line)
-        if dd_field is None or dd_field[1] != "DD":
-            return None
-        statement = split_comment_field(line, "DD")[0]
-        operands = statement[dd_field[0] :].strip()
+            operation = field[1]
+            operands = split_comment_field(line, operation)[0][field[0] :].strip()
         if operands.endswith(","):
-            self.pending_dd = operands
+            self.pending = (operation, operands)
             return None
-        return operands
+        self.pending = None
+        return operation, operands
+
+
+#: Statements whose operands can open a data block in the pre-scan.
+_DATA_OPENING_OPERATIONS = frozenset({"DD", "XMIT"})
+
+
+def _xmit_data_delimiter(operands: str) -> tuple[str, bool]:
+    """Return ``(delimiter, False)`` for the data after a ``//X XMIT``.
+
+    Transmitted records are a job stream, so ``//`` never ends them; a
+    malformed or unbalanced DLM= keeps the default ``/*`` here and is
+    reported by the JobBuilder.
+    """
+    try:
+        parameters = _parse_parameters(operands) if operands else {}
+    except JCLSyntaxError:
+        parameters = {}
+    delimiter = xmit_delimiter(parameters)
+    return (delimiter if isinstance(delimiter, str) else "/*"), False
 
 
 def _instream_delimiter(operands: str) -> tuple[str, bool] | None:

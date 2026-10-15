@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import pytest
 
-from jclparser import parse_jcl
+from jclparser import ParserConfig, parse_jcl
+from jclparser._source_scanner import _xmit_data_delimiter
 from jclparser._statement_parser import split_comment_field
 from jclparser.continuation_handler import ContinuationLineHandler
+from jclparser.errors import JCLSyntaxError
 
 pytestmark = pytest.mark.unit
 
@@ -149,3 +151,78 @@ class TestMissingCommaDoesNotMerge:
         ]
         assert job.warnings == []
         assert [s.name for s in job.steps] == ["S1"]
+
+
+_REMOTE = "//J2 JOB (B),'Y'\n//S9 EXEC PGM=REMOTE\n"
+
+
+class TestXmitData:
+    """#117: XMIT honours DLM=, and JES2 ``/*XMIT`` data is not parsed."""
+
+    def test_xmit_dlm_ends_transmitted_data(self):
+        job = parse_jcl(
+            "//J1 JOB (A),'X'\n//X1 XMIT DEST=NODE2,DLM=$$\n"
+            + _REMOTE
+            + "$$\n//S1 EXEC PGM=LOCAL\n"
+        )
+        assert [s.program for s in job.steps] == ["LOCAL"]
+        assert not any("never closed" in w for w in job.warnings)
+
+    def test_jes2_xmit_dlm_ends_transmitted_data(self):
+        job = parse_jcl(
+            "//J1 JOB (A),'X'\n/*XMIT NODE2 DLM=$$\n"
+            + _REMOTE
+            + "$$\n//S1 EXEC PGM=LOCAL\n"
+        )
+        assert job.name == "J1"
+        assert [s.program for s in job.steps] == ["LOCAL"]
+        assert job.jes_statements == ["/*XMIT NODE2 DLM=$$"]
+
+    @pytest.mark.parametrize("xmit", ["//X1 XMIT DEST=NODE2", "/*XMIT NODE2"])
+    def test_default_delimiter_is_slash_star_not_slash_slash(self, xmit):
+        job = parse_jcl(
+            "//J1 JOB (A),'X'\n" + xmit + "\n" + _REMOTE + "/*\n//S1 EXEC PGM=LOCAL\n"
+        )
+        assert [s.program for s in job.steps] == ["LOCAL"]
+
+    def test_xmit_dlm_on_continuation_record_and_slash_star_is_data(self):
+        job = parse_jcl(
+            "//J1 JOB (A),'X'\n//S0 EXEC PGM=A\n//X1 XMIT DEST=NODE2,\n//   DLM=$$\n"
+            "//J2 JOB (B),'Y'\n/*\n$$\n//S1 EXEC PGM=LOCAL\n"
+        )
+        xmit = job.steps[0].dd_statements[0]
+        assert xmit.parameters == {"DEST": "NODE2", "DLM": "$$"}
+        assert xmit.inline_data == "//J2 JOB (B),'Y'\n/*"
+        assert [s.name for s in job.steps] == ["S0", "S1"]
+
+    def test_quoted_dlm_and_jes3_dialect(self):
+        job = parse_jcl(
+            "//J1 JOB (A),'X'\n/*XMIT NODE2 DLM='ZZ'\n" + _REMOTE + "ZZ\n"
+            "//S1 EXEC PGM=LOCAL\n",
+            config=ParserConfig(dialect="jes3"),
+        )
+        assert [s.program for s in job.steps] == ["LOCAL"]
+
+    def test_unterminated_xmit_data_is_reported(self):
+        job = parse_jcl("//J1 JOB (A),'X'\n//X1 XMIT DEST=NODE2,DLM=$$\n" + _REMOTE)
+        assert job.steps == []
+        assert any("never closed by its delimiter '$$'" in w for w in job.warnings)
+
+    def test_malformed_xmit_dlm_raises(self):
+        with pytest.raises(JCLSyntaxError, match="DLM= must be"):
+            parse_jcl(
+                "//J1 JOB (A),'X'\n//X1 XMIT DEST=NODE2,DLM=(A,B)\n" + _REMOTE + "/*\n"
+            )
+
+    def test_unbalanced_xmit_operands_keep_default_delimiter(self):
+        assert _xmit_data_delimiter("DEST=(NODE2") == ("/*", False)
+        assert _xmit_data_delimiter("") == ("/*", False)
+
+    def test_dd_star_right_after_unfinished_dd_opens_data(self):
+        job = parse_jcl(
+            "//J1 JOB (A),'X'\n//S0 EXEC PGM=A\n//D1 DD DSN=A,\n//D2 DD *\n"
+            "DATA\n/*\n//S1 EXEC PGM=B\n"
+        )
+        dds = job.steps[0].dd_statements
+        assert dds[1].inline_data == "DATA"
+        assert [s.name for s in job.steps] == ["S0", "S1"]
