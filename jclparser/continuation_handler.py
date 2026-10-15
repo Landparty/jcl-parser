@@ -451,8 +451,9 @@ class ContinuationLineHandler:
         while i < len(line):
             char = line[i]
 
-            if char == "'" and ctx.last_char != "\\":
-                # Handle escaped quotes
+            if char == "'":
+                # JCL has no backslash escape: ``'C:\'`` is a complete
+                # string.  The only escape is a doubled apostrophe.
                 if i + 1 < len(line) and line[i + 1] == "'":
                     i += 2  # Skip escaped quote
                     continue

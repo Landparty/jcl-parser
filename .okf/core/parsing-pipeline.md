@@ -3,7 +3,7 @@ type: Pipeline
 title: JCL Parsing Pipeline
 description: Seven-stage pipeline that transforms raw JCL text into a structured Job object; stages 1, 2, and 4 are mandatory.
 tags: [parsing, pipeline, core]
-timestamp: 2026-10-04T00:00:00Z
+timestamp: 2026-10-15T00:00:00Z
 ---
 
 # Overview
@@ -46,6 +46,7 @@ Input (string / file / IO)
 - `resolve_includes()` never expands an `// INCLUDE` record that sits inside in-stream data (`DD DATA` / `DLM=`) or a CNTL block — it locates those records with the parser's own `_merge_source_lines` scan. The JCLLIB pre-scan (`_extract_jcllib_order`) drops quotes around a library name (`ORDER=('MY.PROCLIB')`), as the main parse does.
 - In-stream data records are not normalized: `inline_data` keeps columns 72-80 and tabs; an 80-column card image is kept whole, any other record loses its trailing blanks (issue #115). Control-statement readers use `utils.control_card_text()`, which cuts card images to columns 1-71.
 - Column 71 is the continuation column. Never pass pre-stripped lines. A quoted string continued from an 80-column card image (non-blank column 72) keeps its blanks through column 71 and resumes in column 16 (see [development/invariants](../development/invariants.md) #1).
+- **JCL has no backslash escape.** Inside a quoted string the only escape is a doubled apostrophe (`''`); `ContinuationLineHandler._analyze_line_context` treats `\` as ordinary text, so `// SET DIR='C:\'` closes its string and the next `// SET` stays a statement of its own (issue #122, fixed 2026-10-15).
 - Stage 4 is split across six modules (behavior unchanged, layout only): `parser.py` holds the public API (`parse_jcl`, `validate_jcl`, `parse_statement` re-export) and the core loop; `_source_scanner.py` holds the pre-scan (`_merge_source_lines`: in-stream / CNTL record classification, continuation merge); `_statement_parser.py` holds single-line statement/parameter parsing; `_job_builder.py` holds `JobBuilder` (the per-statement-type dispatch state machine); `_model_factories.py` holds the `Statement -> Job/Step/DDStatement` factories and SET-value helpers; `_post_parse.py` holds the post-parse passes (external PROC loading, `OUTPUT=*.name` refs, SET substitution, strict DD structure). All historical `jclparser.parser` and `jclparser._job_builder` imports still work via re-exports.
 
 # Quick Start
