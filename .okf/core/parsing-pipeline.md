@@ -1,23 +1,23 @@
 ---
 type: Pipeline
 title: JCL Parsing Pipeline
-description: Seven-stage pipeline that transforms raw JCL text into a structured Job object; stages 1, 2, and 4 are mandatory.
+description: Seven-stage pipeline that transforms raw JCL text into a structured Job object; stages 1, 3, 4, and 5 always run.
 tags: [parsing, pipeline, core]
 timestamp: 2026-10-15T00:00:00Z
 ---
 
 # Overview
 
-`parse_jcl(source)` drives the pipeline. Stages 1, 2, and 4 always run. Stages 3, 5, 6, and 7 are optional or separate calls.
+`parse_jcl(source)` drives the pipeline. Stages 1, 3, 4, and 5 always run (stage 5 inside stage 4). Stage 2 runs only when the source has an `// INCLUDE`; stages 6 and 7 are separate calls.
 
 ```
 Input (string / file / IO)
   → [1] read_source()                     utils.py          — a str is always content, a Path is read, a file-like is read(); file reads try utf-8 (BOM dropped) → cp1252 → latin-1
-  → [2] ContinuationLineHandler.process() continuation_handler.py — merges col-71 continuations
-  → [3] resolve_includes()                include_loader.py [optional] — expands // INCLUDE
+  → [2] resolve_includes_with_origins()   include_loader.py [optional] — expands // INCLUDE (parser._expand_includes), before continuation merging so member records are merged too
+  → [3] ContinuationLineHandler.merge_continuation_lines() continuation_handler.py — merges col-71 continuations (called from _source_scanner._merge_source_lines)
   → [4] parse_jcl() core loop             parser.py         — orchestrates; the source pre-scan lives in _source_scanner.py, statement-line parsing lives in _statement_parser.py, model assembly in _job_builder.py (JobBuilder) + _model_factories.py, post-parse passes in _post_parse.py
-  → [5] ParameterParser                   parameter_ast.py  — typed param ASTs per statement
-  → [6] validate_jcl()                    validators.py     [optional] — structural checks
+  → [5] ParameterParser                   parameter_ast.py  — splits each statement's operands (from _statement_parser, during stage 4); typed DCB/SPACE ASTs are built lazily by dd.dcb / dd.space
+  → [6] validate_jcl()                    parser.py → validators.py [optional] — structural checks
   → [7] explode_job()                     explosion.py      [optional] — PROC + symbol expansion
   → Job object
 ```
@@ -39,12 +39,14 @@ Input (string / file / IO)
   card, recorded in `job.jes_typed_statements` before the comment is discarded. See
   [development/invariants.md](../development/invariants.md) #8.
 - JES control statements (`/*JOBPARM`, `/*ROUTE`) are handled in `jes_statements.py`, not in `job.steps`.
-- `validate_jcl(source, level="basic")` returns a **flat `list[ParseError]`** (empty when
+- `validate_jcl(source, level=None, config=None, *, proc_base_path=None, enable_external_procs=True)`
+  returns a **flat `list[ParseError]`** (empty when
   valid) — not a boolean and not a `(Job, errors)` tuple. It parses with
-  `strict_mode=True` internally and discards the `Job`; parse the source separately if
-  you need both. `level` is a plain string — `"basic"` (syntax only), `"structure"`,
-  or `"semantic"`.
-- SET symbols resolve left-to-right; a SET cannot reference a later SET.
+  `strict_mode=True` internally (minus the strict `job.validate()` raise; it reports
+  those findings itself) and discards the `Job`; parse the source separately if
+  you need both. `level` is a `ValidationLevel` or its string — `"basic"` (syntax only), `"structure"`,
+  or `"semantic"` — defaulting to `config.validation_level`, else `"basic"`.
+- SET symbols resolve left-to-right: a SET that redefines a symbol affects only the statements after it (`Step.set_symbols`). A reference to a symbol whose *first* SET comes later still resolves against the job's final SET table in the post-parse pass (`SET A=&B.X` then `SET B=1` gives `PARM='&A'` → `1X`), while `job.set_statements` keeps `A` as coded. See [development/invariants](../development/invariants.md) #10.
 - The post-parse SET pass resolves `DD DSN=`/`DISP=`, EXEC parameters (`PARM=`), and `Step.program` / `Step.procedure` (`EXEC PGM=&NAME`, `EXEC &PROC`), including steps nested in `IF`/`ELSE`; a symbol it cannot resolve is left as written in `program`/`procedure`.
 - `resolve_includes()` never expands an `// INCLUDE` record that sits inside in-stream data (`DD DATA` / `DLM=`) or a CNTL block — it locates those records with the parser's own `_merge_source_lines` scan. The JCLLIB pre-scan (`_extract_jcllib_order`) drops quotes around a library name (`ORDER=('MY.PROCLIB')`), as the main parse does.
 - **Line numbers are reported against the main source, not the INCLUDE-expanded text** (issue #118, fixed 2026-10-15). `parser._expand_includes` uses `resolve_includes_with_origins` and keeps an `_include_origins.IncludeLineMap`; the scan and the parse loop still run on the expanded text (in-stream / CNTL indices stay consistent), and the translation is applied in one place at the end of `_parse_jcl_core`: `IncludeLineMap.relabel_job()` rewrites `line_number` on every model object of the job (steps, DDs, overrides, IF blocks, in-stream PROCs, OUTPUT / CNTL statements; external and built-in PROCs keep their own member's numbers), `job.unresolved_output_refs` and the `Line N` prefix of `job.warnings`; `relabel_error()` does the same for the `JCLParseError` that ends a parse. A line from the main source keeps its own number; a line read from a member gets the line of the outermost `// INCLUDE` in the main source, and its message names the innermost member and the line within it: `Line 2 (INCLUDE member COMMON, line 3): ...` (`JCLParseError.include_note`; `validate_jcl` appends `(INCLUDE member COMMON, line 3)` to the `ParseError.message`). Before, every statement, warning and error after an INCLUDE was shifted by the member's length. `job.validate()` findings carry the translated line but no member note.

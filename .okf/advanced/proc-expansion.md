@@ -3,7 +3,7 @@ type: Subsystem
 title: PROC Expansion
 description: explode_job() replaces PROC invocations with their full step content and substitutes &SYMBOL parameters; always a separate call from parse_jcl().
 tags: [proc, explosion, symbol-substitution, advanced]
-timestamp: 2026-10-04T00:00:00Z
+timestamp: 2026-10-15T00:00:00Z
 ---
 
 # Overview
@@ -32,7 +32,7 @@ timestamp: 2026-10-04T00:00:00Z
 
 **Builtins are structural approximations, not verbatim IBM PROCs.** Safe for static analysis; must not be submitted to a real mainframe.
 
-**What `parse_jcl()` loads** (since 2026-10-15, issue #116): with `enable_external_procs` (the default) it attaches the default chain to the job, JCLLIB or not, whenever the job names a JCLLIB, `proc_base_path` is given, or a PROC call is not in-stream (otherwise `explode_job()`'s own default chain is identical, so building it is skipped), and adds every PROC the chain finds to `job.procedures` (so a builtin such as `IGYWCL` and `<base>/SYS1.PROCLIB/MYPROC.jcl` resolve with no JCLLIB). A PROC still not found is a strict-parse error only when the job has a `JCLLIB ORDER`; with none it may be in the JES PROCLIB. Either way a lenient parse reports it once, as a WARNING from `job.validate()` (`validators.validate_procedure_references`, reported by `validate_jcl` at `structure`/`semantic`), not on `job.warnings`. With `enable_external_procs=False` strict mode still raises for any PROC that is not in-stream.
+**What `parse_jcl()` loads** (since 2026-10-15, issue #116): with `enable_external_procs` (the default) it attaches the default chain to the job, JCLLIB or not, whenever the job names a JCLLIB, `proc_base_path` is given, or a PROC call is not in-stream (otherwise `explode_job()`'s own default chain is identical, so building it is skipped), and adds every PROC the chain finds to `job.procedures` (so a builtin such as `IGYWCL` and `<base>/SYS1.PROCLIB/MYPROC.jcl` resolve with no JCLLIB). A PROC still not found is a strict-parse error only when the job has a `JCLLIB ORDER`; with none it may be in the JES PROCLIB. Either way a lenient parse reports it once, as a WARNING from `job.validate()` (`validators.validate_procedure_references`, reported by `validate_jcl` at `structure`/`semantic`), not on `job.warnings`. With a `JCLLIB ORDER`, `validate_jcl` (which parses strict) reports the strict-parse ERROR `Procedure 'X' not found. Searched in: ...` instead. With `enable_external_procs=False` strict mode still raises for any PROC that is not in-stream.
 
 **Which loader `explode_job()` uses** (fixed 2026-09-28): the caller's `proc_loader=` if given; else, when `parse_jcl()` attached one, a `CompositeProcedureLoader` of the job's inline PROCs followed by the loader `parse_jcl()` attached to the job (`job._proc_loader`); else `create_default_loader(job.procedures)`. So an external PROC called from inside another external PROC (or from an IF block) is found in the same libraries as the top-level ones; before, the default chain was always rebuilt and such a nested call raised `ProcedureNotFoundError`. `parse_jcl()`'s pre-loading of external PROCs also walks `IF`/`THEN`/`ELSE` blocks (`iter_execution_steps`), not just top-level steps.
 
@@ -61,18 +61,22 @@ options but names the loader `loader=`, not `proc_loader=`.
 | `proc_loader` | `None` | Loader chain; `None` builds the default chain below |
 | `max_depth` | `10` | Raises `ExplosionDepthError` if nesting exceeds it |
 | `max_steps` | `DEFAULT_MAX_STEPS` = `10_000` (`0` = unlimited) | Cap on total expanded steps; raises `JCLStructureError` if exceeded. Counted per plain step as it is produced (an `on_step` hook threaded through `_explode_step`), so a PROC fan-out stops at the limit instead of being built first. z/OS allows 255 steps per job |
-| `audit` | **`True`** | Populates `job.explosion_audit` and `job.explosion_map` |
-| `system_provider` | `None` | `SystemSymbolProvider` for `&SYSUID`-style system symbols |
+| `audit` | **`True`** | Populates `job.explosion_audit` (left `[]` when False); `job.explosion_map` is filled either way |
+| `system_provider` | `None` | `SystemSymbolProvider` for `&SYSUID`-style system symbols; `None` uses `system_symbols.get_default_provider()` (a `MockSystemSymbolProvider` unless `set_default_provider()` was called) |
 | `strict_symbols` | `False` | If True, raises `UndefinedSymbolError` for unknown `&SYMBOLS` |
 
 # Audit Data (when audit=True)
 
 ```python
-exploded.explosion_audit  # list of audit entries
-exploded.explosion_map  # dict[step_name → proc_name]
+exploded.explosion_audit  # list[ExplosionRecord], one per PROC expansion (nested ones too)
+exploded.explosion_map  # dict[calling step name → ProcExpansionInfo] (named calls only)
 
-# Each entry:
-entry.step_name, entry.proc_name, entry.parameters, entry.depth, entry.expanded_steps
+# Each ExplosionRecord (to_dict() for JSON):
+#   step_name, proc_name, parameters, depth, timestamp, expanded_steps
+
+# Each ProcExpansionInfo:
+#   original_statement, proc_definition, resolved_parameters,
+#   source_line_numbers, expanded_step_names
 ```
 
 # Symbol Substitution
@@ -137,7 +141,10 @@ EXEC keyword parameters coded on an `EXEC procname` statement (`ACCT`, `ADDRSPC`
 | `JCLStructureError` | A substitution would splice in more than `utils.MAX_SYMBOL_VALUE_LENGTH` (65,536) characters of symbol values (only with `strict_symbols=True`; otherwise the text is left unresolved with a warning on `exploded_job.warnings`, #70) |
 
 **Expansion bounds.** A symbol whose value refers back to itself (`A='&A'`, directly or via other
-symbols) is a cycle: the reference is left as written instead of being re-expanded. Fan-out over
+symbols) is a cycle: during explosion (`substitute_symbols`) the reference is left as written
+instead of being re-expanded. At `parse_jcl()` time a SET whose value still holds such an
+unresolved reference is dropped from the substitution scope, so a statement referencing it is
+blanked with a `job.warnings` entry ("unresolved symbol &A ... resolved to empty string"). Fan-out over
 distinct symbols is capped by the character budget above. `JCLLIB ORDER=` libraries must stay
 inside the loader's base path (checked lexically, so an operator-symlinked library still works):
 an absolute or `..` library is skipped.

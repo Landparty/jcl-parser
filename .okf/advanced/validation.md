@@ -3,7 +3,7 @@ type: Subsystem
 title: Validation
 description: Two independent validation layers — structural (post-parse job checks) and parameter (DD/EXEC parameter checks) — plus lint rules in SARIF format.
 tags: [validation, lint, errors, advanced]
-timestamp: 2026-09-16T00:00:00Z
+timestamp: 2026-10-15T00:00:00Z
 ---
 
 # Overview
@@ -11,6 +11,10 @@ timestamp: 2026-09-16T00:00:00Z
 Two layers, both optional. `validate_jcl()` runs both in one call and returns a flat
 `list[ParseError]` — never a boolean, and **not** a `(Job, errors)` tuple. It discards the
 `Job` it parsed internally, so parse separately if you need the model as well.
+Signature: `validate_jcl(source, level=None, config=None, *, proc_base_path=None,
+enable_external_procs=True)`; the two keyword-only options load PROCs and INCLUDE members
+exactly as for `parse_jcl()` (added 2026-10-15, #129; the CLI forwards `--proc-path` for
+`--validate`).
 
 # Structural Validation
 
@@ -66,19 +70,21 @@ as the parse loop skips them. The strict exception itself is always reported too
 already found the same line and message -- it is often the only error naming the real
 cause, e.g. "Procedure 'XYZ' not found", a malformed `DLM=`, or "No JOB statement
 found". That last one is not reported for input with no statements at all
-(`validate_jcl("") == []`) or for a PROC member with steps.
+(`validate_jcl("") == []`) or for a PROC member with steps. When the failing line came
+from an `// INCLUDE` member, the error carries the INCLUDE statement's line and its message
+ends with `(INCLUDE member NAME, line K)` (#118).
 
 ## What It Checks
 
-Identifier naming (max 8 chars), dataset names (max 44 chars), JOB card present, step structure, DD structure, parameter constraints (RECFM, DSORG, TIME, REGION, MSGLEVEL).
+`job.validate()` (`validators.validate_job_structure`): job name (1-8 chars, alphanumeric + `@#$`), at least one execution step, duplicate step names; per step (`validate_step_structure`) the step name, PGM= or PROC (not both) and duplicate DD names (WARNING); per DD (`validate_dd_statement`) the DD name, dataset name (max 44 chars, qualifiers max 8), DISP and data source; then temporary-dataset dependencies (`validate_data_dependencies`), the dataset lifecycle (`validate_dataset_lifecycle`), unresolved `OUTPUT=*.name` references and PROC calls not found (both WARNING). A missing JOB card is a strict-parse error ("No JOB statement found"), reported by `validate_jcl`. DCB (`RECFM`, `DSORG`, `LRECL`, `BLKSIZE`) and `SPACE` values are **not** checked by either: call `dd.dcb.validate()` / `dd.space.validate()` (`parameter_ast.DCBParameter` / `SPACEParameter`, returning `list[str]`). `TIME`, `REGION` and `MSGLEVEL` values are not validated anywhere (lint `JCL-LINT-004`/`005` only flag a JOB card without `TIME=`/`REGION=`).
 
 Step names are checked with `validators.validate_step_name`, which accepts the qualified names `explode_job()` gives PROC steps (`S1.PS1`, `S1.PS1.IS1`) when every dot-separated part is a valid identifier, so `job.validate()` on an exploded job no longer reports "Invalid step name" for them. Exploded steps from an *unnamed* `EXEC procname` (placeholder qualifier, no `original_proc_call`) are skipped in the duplicate-step-name check; a real duplicate is still reported. Fixed 2026-09-28.
 
-`DSORG` accepts `PS`/`PO`/`DA`/`IS`/`VS`, their unmovable `U` forms (`PSU`/`POU`/`DAU`/`ISU`) and the BTAM/GAM/TCAM organizations `CX`/`GS`/`TX`/`TQ`/`TR` (fixed 2026-09-28).
+`DCBParameter.validate()`'s `DSORG` check accepts `PS`/`PO`/`DA`/`IS`/`VS`, their unmovable `U` forms (`PSU`/`POU`/`DAU`/`ISU`) and the BTAM/GAM/TCAM organizations `CX`/`GS`/`TX`/`TQ`/`TR` (fixed 2026-09-28).
 
 # Parameter Validation
 
-Validates structured parameter objects built by `parameter_ast.py`.
+Per-statement checks in `validators.py`; the canonical DISP and dataset-name rules live in `parameter_validators.py` (`DISPValidator`, `DatasetNameValidator`), and typed DCB/SPACE checks on the `parameter_ast.py` objects (see above).
 
 ```python
 from jclparser import validate_dd_statement, validate_step_structure
@@ -103,15 +109,19 @@ status (`DISP=(,CATLG)`) is valid — it defaults to `NEW`.
 
 # Error Object Fields
 
+`validate_jcl()` returns `ParseError` (a frozen dataclass); `job.validate()`, `validate_dd_statement()`, `validate_dataset_lifecycle()` and `lint_job()` return `ValidationError`.
+
 | Field | Type |
 |-------|------|
 | `severity` | `ErrorSeverity.ERROR / WARNING / INFO` |
-| `type` | `ErrorType.SYNTAX / VALIDATION / STRUCTURE / SEMANTIC` |
+| `error_type` | `ErrorType.SYNTAX_ERROR / VALIDATION_ERROR / STRUCTURE_ERROR / SEMANTIC_ERROR` |
 | `message` | `str` |
-| `line_number` | `int \| None` |
-| `context` | `str \| None` — the problematic JCL fragment |
+| `line_number` | `int` on `ParseError` (0 = unknown); `int \| None` on `ValidationError` |
+| `column_number` | `int \| None` — `ParseError` only |
+| `context` | `str` (default `""`) — the problematic JCL fragment; `ParseError` only |
+| `error_code` | `str \| None` — the lint rule code (`JCL-LINT-001`); `ValidationError` only |
 
-`str(error)` produces a human-readable message (used by the backend adapter).
+`str(error)` on a `ValidationError` produces a human-readable message, `Line N: [WARNING] [CODE] message` (used by the backend adapter on `job.validate()` items). `ParseError` defines no `__str__`, so `str()` gives its dataclass repr; read `.message` / `.line_number`.
 
 **Line numbers** (fixed 2026-10-15, #119): every `job.validate()` finding about a step,
 DD or the job itself carries that statement's line — the step rules (invalid step name,
@@ -134,9 +144,9 @@ never did.
 
 | Exception | Trigger |
 |-----------|---------|
-| `JCLSyntaxError` | Malformed JCL that cannot be parsed at all |
-| `JCLValidationError` | Structural rule raised to exception level |
-| `JCLStructureError` | Missing required structural element (e.g., JOB card absent) |
+| `JCLSyntaxError` | Malformed or misordered JCL (e.g. "EXEC statement before JOB statement", "No JOB statement found"), and in strict mode a PROC not found with a `JCLLIB ORDER` (or with external loading disabled) |
+| `JCLValidationError` | Strict mode only: `job.validate()` has ERROR findings (`Job validation failed: ...`) |
+| `JCLStructureError` | Strict mode: a DD with no EXEC in a job with no steps; also an INCLUDE expansion over `max_lines` |
 | `JCLParseError` | Generic parent — catches all of the above. Exported from `jclparser` (as `interface-contract.md` requires) |
 
 # Dataset Lifecycle Validation
@@ -144,7 +154,7 @@ never did.
 ```python
 from jclparser import validate_dataset_lifecycle, analyze_dataset_lifecycle
 
-events = analyze_dataset_lifecycle(job)  # list[DatasetEvent]
+events = analyze_dataset_lifecycle(job)  # dict[dataset name → list[DatasetEvent]]
 issues = validate_dataset_lifecycle(
     job
 )  # list[ValidationError] — catches disposed-before-use, etc.
@@ -173,11 +183,23 @@ sarif = lint_to_sarif(findings, artifact_uri="jobs/MYJOB.jcl")
 
 Every result location carries `physicalLocation.artifactLocation` (SARIF 2.1.0 requires it); `artifact_uri` fills its `uri` — omit it and the `artifactLocation` is empty, which is schema-valid but gives consumers such as GitHub code scanning no file to place the result in.
 
-Built-in rule IDs follow `JCL-LINT-NNN`. Custom rules extend `LintRule` ABC.
+Built-in rule IDs follow `JCL-LINT-NNN`. Custom rules extend `LintRule` ABC (register with `register_rule`, remove with `unregister_rule`). `LintConfig` takes `enabled` / `disabled` (sets of codes; empty `enabled` = every rule), `severities` (per-code `ErrorSeverity` override) and `critical_dataset_patterns`. Built-in rules (`jclparser/lint/rules.py`, `BUILTIN_RULES`):
+
+| Code | Rule class | Default severity | Fires on |
+|------|------------|------------------|----------|
+| `JCL-LINT-001` | `HardcodedHLQRule` | INFO | A literal dataset name with at least two qualifiers (not `&&` temporaries, referbacks, `NULLFILE`, or names built from symbols) |
+| `JCL-LINT-002` | `LiteralSysdaUnitRule` | INFO | `UNIT=SYSDA` |
+| `JCL-LINT-003` | `CriticalDatasetDeleteRule` | WARNING | See below (needs `critical_dataset_patterns`) |
+| `JCL-LINT-004` | `MissingJobTimeRule` | INFO | JOB card without `TIME=` (not a JOB-less PROC member) |
+| `JCL-LINT-005` | `MissingJobRegionRule` | INFO | JOB card without `REGION=` (not a JOB-less PROC member) |
+| `JCL-LINT-007` | `DuplicateStepNameRule` | ERROR | A step name already used in the job |
+| `JCL-LINT-008` | `UndefinedOutputRefRule` | WARNING | `DD OUTPUT=*.name` matching no `OUTPUT` statement |
+
+There is no `JCL-LINT-006`. A rule that raises yields a `JCL-LINT-000` finding (WARNING by default) instead of stopping the run. Rules 001-003 read a PROC call's `//PROCSTEP.DD` overrides too (`model._dataset_dds`).
 
 Each SARIF `tool.driver.rules[]` entry takes its `shortDescription` and `fullDescription` from the registered rule's `description` (rules have no separate title, so both carry it); the pseudo-codes `JCL-LINT-000` (a rule raised) and `JCL-GEN-000` (finding without a code) have fixed descriptions, and a code no registered rule carries gets only `shortDescription` = its code (fixed 2026-10-13, #88: `shortDescription` was the code and `fullDescription` the first finding's message, truncated to 120 characters).
 
-`JCL-LINT-003` (critical dataset, `LintConfig.critical_dataset_patterns`) fires only on `DISP=(NEW,CATLG,DELETE)` and `DISP=(NEW,KEEP,DELETE)` (an omitted status counts as `NEW`): a successful run keeps the dataset, an abend deletes it. An omitted normal disposition (`(NEW,,DELETE)`, which defaults to DELETE), `DELETE` or `PASS` does not fire, and the message shows the disposition as coded (fixed 2026-10-13, #88: any `(NEW,x,DELETE)` fired, and an omitted normal disposition was reported as `CATLG`).
+`JCL-LINT-003` (critical dataset, `LintConfig.critical_dataset_patterns`) fires only on `DISP=(NEW,CATLG,DELETE)` and `DISP=(NEW,KEEP,DELETE)` (an omitted status counts as `NEW`): a successful run keeps the dataset, an abend deletes it. An omitted normal disposition (`(NEW,,DELETE)`, which defaults to DELETE), `DELETE` or `PASS` does not fire, and the message shows the disposition as coded, an omitted status as `NEW` (fixed 2026-10-13, #88: any `(NEW,x,DELETE)` fired, and an omitted normal disposition was reported as `CATLG`).
 
 # Citations
 
