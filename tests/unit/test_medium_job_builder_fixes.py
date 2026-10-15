@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
-from jclparser import explode_job, parse_jcl
-from jclparser.model import ConditionalBlock, Step
+from jclparser import explode_job, parse_jcl, parse_statement
+from jclparser._job_builder import JobBuilder
+from jclparser.model import ConditionalBlock, Statement, Step
+from jclparser.plugins import ParserConfig, StatementPlugin, get_plugin_registry
 
 pytestmark = pytest.mark.unit
 
@@ -219,3 +223,72 @@ class TestJobLevelDdBeforeInstreamProc:
         )
         assert _dd_names(job.procedures[0].steps[0]) == []
         assert any("no EXEC step" in w and "SYSCHK" in w for w in job.warnings)
+
+
+class _MyOpPlugin(StatementPlugin):
+    def can_parse(self, line: str) -> bool:
+        return " MYOP " in line
+
+    def parse_statement(self, line: str, line_number: int) -> Statement:
+        name = line[2:].split(" ", 1)[0]
+        return Statement(
+            type="MYOP",
+            name=name,
+            parameters={"_raw": line.split(" MYOP ", 1)[1].strip()},
+            line_number=line_number,
+        )
+
+    @property
+    def statement_types(self) -> list[str]:
+        return ["MYOP"]
+
+
+@pytest.fixture
+def myop_plugin() -> Iterator[None]:
+    registry = get_plugin_registry()
+    plugin = _MyOpPlugin()
+    registry.register_statement_plugin(plugin)
+    try:
+        yield
+    finally:
+        registry.unregister_plugin(plugin)
+
+
+class TestCustomPluginStatements:
+    """#130: a plugin statement of a custom type is kept on the job."""
+
+    SRC = "//J JOB\n//OP1 MYOP FIRST\n//S1 EXEC PGM=X\n//OP2 MYOP SECOND\n"
+    CONFIG = ParserConfig(enabled_plugins=["_MyOpPlugin"])
+
+    @pytest.mark.usefixtures("myop_plugin")
+    def test_custom_statements_kept_in_source_order(self) -> None:
+        job = parse_jcl(self.SRC, config=self.CONFIG)
+        assert [(s.type, s.name) for s in job.custom_statements] == [
+            ("MYOP", "OP1"),
+            ("MYOP", "OP2"),
+        ]
+        assert job.custom_statements[0].parameters["_raw"] == "FIRST"
+        assert _names(job.steps) == ["S1"]
+
+    @pytest.mark.usefixtures("myop_plugin")
+    def test_custom_statement_before_job_card_kept_first(self) -> None:
+        job = parse_jcl("//OP0 MYOP ZERO\n" + self.SRC, config=self.CONFIG)
+        assert [s.name for s in job.custom_statements] == ["OP0", "OP1", "OP2"]
+
+    @pytest.mark.usefixtures("myop_plugin")
+    def test_custom_statements_survive_explosion(self) -> None:
+        job = parse_jcl(self.SRC, config=self.CONFIG)
+        exploded = explode_job(job)
+        assert [s.name for s in exploded.custom_statements] == ["OP1", "OP2"]
+        assert exploded.custom_statements is not job.custom_statements
+
+    def test_default_is_empty(self) -> None:
+        assert parse_jcl("//J JOB\n//S1 EXEC PGM=X\n").custom_statements == []
+
+    def test_builder_routes_unhandled_type(self) -> None:
+        builder = JobBuilder()
+        stmt = Statement(type="WHATEVER", name="X", parameters={}, line_number=1)
+        assert "WHATEVER" not in JobBuilder._HANDLERS
+        builder.handle_statement(stmt, 1)
+        builder.handle_statement(parse_statement("//J JOB", 2), 2)
+        assert builder.finish().custom_statements == [stmt]

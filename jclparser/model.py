@@ -718,6 +718,11 @@ class Job:
     #: block in ``parameters["_records"]``.  Kept verbatim so no source
     #: statement is dropped without a trace.
     control_statements: list[Statement] = field(default_factory=list)
+    #: Statements of a type the parser has no model for, in source order --
+    #: typically a custom ``Statement.type`` returned by an enabled
+    #: :class:`~jclparser.plugins.StatementPlugin`.  Kept verbatim instead of
+    #: being dropped; consumers that understand the type interpret them.
+    custom_statements: list[Statement] = field(default_factory=list)
     #: Optional SQL detection results, keyed by step name.  Populated when
     #: ``parse_jcl`` is called with ``ParserConfig(detect_sql=True)``; otherwise
     #: left empty.  Each entry is a

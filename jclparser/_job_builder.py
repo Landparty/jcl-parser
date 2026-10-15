@@ -106,8 +106,8 @@ class JobBuilder:
 
     # Statement type -> name of its ``_on_<type>`` handler.  Every type in
     # ``_STATEMENT_TYPES`` must appear here, even when its handler is a
-    # deliberate no-op (NULL, ENDCNTL): an unlisted type is dropped
-    # without a trace.
+    # deliberate no-op (NULL, ENDCNTL).  Any other type -- a custom type
+    # returned by a StatementPlugin -- is kept in ``Job.custom_statements``.
     _HANDLERS: ClassVar[dict[str, str]] = {
         "JOB": "_on_job",
         "EXEC": "_on_exec",
@@ -197,6 +197,9 @@ class JobBuilder:
         self.pending_conditionals: list[ConditionalBlock] = []
         self.pending_steps: list[Step | ConditionalBlock] = []
         self.pending_control: list[Statement] = []
+        #: Statements of a type the builder has no handler for (e.g. a custom
+        #: type returned by a StatementPlugin) seen before the JOB statement.
+        self.pending_custom: list[Statement] = []
         #: The open ``CNTL`` block, whose program control records are collected
         #: verbatim until its ``ENDCNTL``.
         self.current_cntl: Statement | None = None
@@ -296,13 +299,17 @@ class JobBuilder:
     # ------------------------------------------------------------------ #
 
     def handle_statement(self, stmt: Statement, line_num: int) -> None:
-        """Record statement warnings, then dispatch to the type handler."""
+        """Record statement warnings, then dispatch to the type handler.
+
+        A statement whose type has no handler in :attr:`_HANDLERS` (e.g. a
+        custom type returned by a :class:`~jclparser.plugins.StatementPlugin`)
+        is kept verbatim in :attr:`Job.custom_statements` (#130).
+        """
         if stmt.warnings:
             self._warnings_sink().extend(stmt.warnings)
 
-        handler_name = self._HANDLERS.get(stmt.type)
-        if handler_name is not None:
-            getattr(self, handler_name)(stmt, line_num)
+        handler_name = self._HANDLERS.get(stmt.type, "_on_custom")
+        getattr(self, handler_name)(stmt, line_num)
 
     # ------------------------------------------------------------------ #
     # Per-statement-type handlers
@@ -741,6 +748,22 @@ class JobBuilder:
         if self.current_cntl is not None:
             self.current_cntl.parameters["_records"].append(line)
 
+    def _on_custom(self, stmt: Statement, line_num: int) -> None:
+        """Keep a statement of a type the builder has no handler for.
+
+        Such statements come from a :class:`~jclparser.plugins.StatementPlugin`
+        returning a custom ``Statement.type``; they used to be dropped
+        silently (#130).
+        """
+        logger.debug(
+            "no handler for statement type %r at line %d; kept in "
+            "Job.custom_statements",
+            stmt.type,
+            line_num,
+        )
+        sink = self.job.custom_statements if self.job else self.pending_custom
+        sink.append(stmt)
+
     def _on_unknown(self, stmt: Statement, line_num: int) -> None:
         # Unknown statement type - log but continue processing
         statement_type_name = stmt.parameters.get("_statement_type", "")
@@ -902,6 +925,7 @@ class JobBuilder:
         job.conditionals[:0] = self.pending_conditionals
         job.steps[:0] = self.pending_steps
         job.control_statements[:0] = self.pending_control
+        job.custom_statements[:0] = self.pending_custom
 
     def _flush_pending_sets(self, job: Job) -> None:
         # Statements seen before the JOB statement (or in a JOB-less member)

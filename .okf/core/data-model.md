@@ -42,6 +42,7 @@ without importing, via `job.steps` / `job.procedures`).
 | `output_statements` | `list[OutputStatement]` | OUTPUT statements |
 | `joblib_dds` | `list[DDStatement]` | JOBLIB concatenation |
 | `control_statements` | `list[Statement]` | `COMMAND` / `SCHEDULE` / `CNTL` / `NOTIFY` kept verbatim; a CNTL block's records live in `parameters["_records"]` |
+| `custom_statements` | `list[Statement]` | Statements whose `type` the parser has no handler for — a custom type returned by an enabled `StatementPlugin` — kept verbatim in source order (since 2026-10-15, #130; they used to be dropped silently). Copied onto the job `explode_job` returns |
 | `sql_detections` | `dict[str, Any]` | Keyed by step name; only with `ParserConfig(detect_sql=True)` |
 | `unresolved_output_refs` | `list[tuple[str, str, int]]` | `OUTPUT=*.name` refs with no definition in scope: `(step_name, ref, line_number)`, see [OutputStatement](#outputstatement) |
 | `exported_symbols` | `set[str]` | From `EXPORT SYMLIST=(...)`; `"*"` exports every SET symbol |

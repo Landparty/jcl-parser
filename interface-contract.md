@@ -78,6 +78,8 @@ Attributes the adapter accesses on a `Job`:
 | `job.explosion_audit` | `list` | Present after `explode(audit=True)`; see below |
 | `job.explosion_map` | `dict` | Present after `explode(audit=True)` |
 
+Other `Job` fields (e.g. `job.custom_statements`, the statements of a custom type returned by a `StatementPlugin`, added 2026-10-15) are not read by the adapter; see `.okf/core/data-model.md`.
+
 **`explosion_audit` entries** — each item must have:
 
 | Field | Type |

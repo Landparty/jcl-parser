@@ -1729,6 +1729,7 @@ def _exploded_job(job: Job, exploded_steps: list[Step | ConditionalBlock]) -> Jo
         "jes_statements",
         "output_statements",
         "joblib_dds",
+        "custom_statements",
         "warnings",
     ):
         src_val = getattr(job, _attr, None)
