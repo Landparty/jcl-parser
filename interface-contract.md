@@ -78,6 +78,8 @@ Attributes the adapter accesses on a `Job`:
 | `job.explosion_audit` | `list` | Present after `explode(audit=True)`; see below |
 | `job.explosion_map` | `dict` | Present after `explode(audit=True)` |
 
+Other `Job` fields (e.g. `job.custom_statements`, the statements of a custom type returned by a `StatementPlugin`, added 2026-10-15) are not read by the adapter; see `.okf/core/data-model.md`.
+
 **`explosion_audit` entries** — each item must have:
 
 | Field | Type |
@@ -202,4 +204,14 @@ ParserResult(
 
 `.jcl`, `.jcllib`, `.job`, `.prc`, `.proc` (and uppercase variants).
 
-Standalone PROC files (containing `PROC...PEND` but no `JOB` statement) are detected and wrapped in a synthetic `//LEGACYLENS JOB` statement before parsing, then the result is annotated with `is_procedure_definition=True`.
+Standalone PROC files (containing `PROC...PEND` but no `JOB` statement) are detected and wrapped in a synthetic `//LEGACYLN JOB` statement before parsing, then the result is annotated with `is_procedure_definition=True`.
+
+> **Correction (2026-10-15, issue #100):** the wrapper used to be documented as
+> `//LEGACYLENS JOB`. `LEGACYLENS` is 10 characters and a job name is 1-8, so
+> `job.validate()` failed every wrapped PROC with "Invalid job name". The wrapper name is
+> now the 8-character `LEGACYLN`. The wrapped job has no top-level steps (they live in
+> `job.procedures`); `job.validate()` no longer reports "Job must contain at least one
+> execution step" for a job whose only content is in-stream PROCs, so a valid PROC
+> wrapped this way validates clean. **The backend adapter, which vendors this library and
+> lives outside this repo, must be updated to emit `//LEGACYLN JOB`** at the next vendor
+> sync.

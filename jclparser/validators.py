@@ -104,15 +104,20 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
             ValidationError(
                 f"Invalid job name '{job.name}': {_JCL_NAME_FORMAT}",
                 ErrorType.VALIDATION_ERROR,
+                line_number=job.line_number,
             )
         )
 
-    # Must have at least one step
-    if not job.steps and not job.is_procedure_member:
+    # Must have at least one step -- unless the job only carries in-stream
+    # PROCs: a PROC-library member wrapped in a synthetic JOB statement
+    # (the backend's ``//LEGACYLN JOB``) has its steps in job.procedures,
+    # and those procedures are its content (#100).
+    if not job.steps and not job.is_procedure_member and not job.procedures:
         errors.append(
             ValidationError(
                 "Job must contain at least one execution step",
                 ErrorType.STRUCTURE_ERROR,
+                line_number=job.line_number,
             )
         )
 
@@ -130,7 +135,9 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
             if step.name in step_names:
                 errors.append(
                     ValidationError(
-                        f"Duplicate step name: {step.name}", ErrorType.VALIDATION_ERROR
+                        f"Duplicate step name: {step.name}",
+                        ErrorType.VALIDATION_ERROR,
+                        line_number=step.line_number,
                     )
                 )
             else:
@@ -228,6 +235,7 @@ def validate_step_structure(step: Step) -> list[ValidationError]:
             ValidationError(
                 f"Invalid step name '{step.name}': {_JCL_NAME_FORMAT}",
                 ErrorType.VALIDATION_ERROR,
+                line_number=step.line_number,
             )
         )
 
@@ -237,6 +245,7 @@ def validate_step_structure(step: Step) -> list[ValidationError]:
             ValidationError(
                 f"Step {step.name or '(unnamed)'} must specify a program (PGM=) or procedure",
                 ErrorType.VALIDATION_ERROR,
+                line_number=step.line_number,
             )
         )
 
@@ -246,6 +255,7 @@ def validate_step_structure(step: Step) -> list[ValidationError]:
             ValidationError(
                 f"Step {step.name or '(unnamed)'} cannot specify both program and procedure",
                 ErrorType.VALIDATION_ERROR,
+                line_number=step.line_number,
             )
         )
 
@@ -261,6 +271,7 @@ def validate_step_structure(step: Step) -> list[ValidationError]:
                 ValidationError(
                     f"Duplicate DD name in step {step.name or '(unnamed)'}: {dd.name}",
                     ErrorType.VALIDATION_ERROR,
+                    line_number=dd.line_number,
                     severity=ErrorSeverity.WARNING,
                 )
             )
@@ -309,6 +320,7 @@ def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
             ValidationError(
                 f"Invalid DD name '{dd.name}': {_JCL_NAME_FORMAT}",
                 ErrorType.VALIDATION_ERROR,
+                line_number=dd.line_number,
             )
         )
 
@@ -320,7 +332,9 @@ def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
     if dsn and not unresolved and not validate_dataset_name(dsn):
         errors.append(
             ValidationError(
-                f"Invalid dataset name '{dd.dataset_name}'", ErrorType.VALIDATION_ERROR
+                f"Invalid dataset name '{dd.dataset_name}'",
+                ErrorType.VALIDATION_ERROR,
+                line_number=dd.line_number,
             )
         )
 
@@ -330,6 +344,7 @@ def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
             ValidationError(
                 f"Invalid DISP parameter '{dd.disposition}' on DD {dd.name}",
                 ErrorType.VALIDATION_ERROR,
+                line_number=dd.line_number,
             )
         )
 
@@ -359,6 +374,7 @@ def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
             ValidationError(
                 f"DD {dd.name} has conflicting data source specifications",
                 ErrorType.VALIDATION_ERROR,
+                line_number=dd.line_number,
             )
         )
     elif source_count == 0:
@@ -366,6 +382,7 @@ def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
             ValidationError(
                 f"DD {dd.name} must specify a data source (DSN, SYSOUT, DUMMY, or inline data)",
                 ErrorType.VALIDATION_ERROR,
+                line_number=dd.line_number,
             )
         )
 
@@ -395,7 +412,7 @@ def validate_disposition(disp) -> bool:
     return result.is_valid
 
 
-def validate_data_dependencies(job: Job) -> list[ValidationError]:  # noqa: C901 -- complexity baseline, split when touched
+def validate_data_dependencies(job: Job) -> list[ValidationError]:
     """
     Validate data dependencies between job steps.
 
@@ -405,61 +422,23 @@ def validate_data_dependencies(job: Job) -> list[ValidationError]:  # noqa: C901
     Returns:
         List of validation errors
     """
-    errors: list[ValidationError] = []
+    tracker = _TempDatasetTracker()
+    tracker.walk(job.steps, {})
+    return tracker.findings()
 
-    # Track temporary datasets created and used
-    temp_datasets_created: dict[str, str] = {}  # dataset -> step_name
-    temp_datasets_used: dict[str, list[str]] = {}  # dataset -> [step_names]
 
-    def _check_step(step: Step, active: dict[str, str]) -> None:
-        """Check one step's temporary DDs against *active*, updating it.
+class _TempDatasetTracker:
+    """Creation / use of temporary (``&&name``) datasets, in execution order."""
 
-        *active* maps each temporary dataset that still exists (created and
-        not yet deleted by an explicit or defaulted DELETE) to the step that
-        created it.  DISP=MOD on one of them extends it (the classic way to
-        collect several compiles' object decks in &&LOADSET) rather than
-        creating it a second time.
-        """
-        step_name = step.name or f"Step{len(temp_datasets_created) + 1}"
+    def __init__(self) -> None:
+        self.errors: list[ValidationError] = []
+        #: dataset -> name of the step that (last) created it
+        self.created: dict[str, str] = {}
+        #: dataset -> line of the first DD that reads or extends it
+        self.first_use: dict[str, int] = {}
 
-        for dd in _dataset_dds(step):
-            if dd.dataset_name and dd.dataset_name.startswith("&&"):
-                # &&GOSET(GO) names a member of &&GOSET: key on the dataset.
-                temp_ds = dd.dataset_name.split("(", 1)[0]
-                tokens = dd._disp_tokens() if dd.disposition else []
-                extends_existing = (
-                    bool(tokens) and tokens[0] == "MOD" and temp_ds in active
-                )
-
-                # Check if this is creating or using the dataset
-                if dd.is_output() and not extends_existing:
-                    if temp_ds in active:
-                        errors.append(
-                            ValidationError(
-                                f"Temporary dataset {temp_ds} created in multiple steps: "
-                                f"{active[temp_ds]} and {step_name}",
-                                ErrorType.VALIDATION_ERROR,
-                            )
-                        )
-                    temp_datasets_created[temp_ds] = step_name
-                    active[temp_ds] = step_name
-
-                elif dd.is_input() or extends_existing:
-                    if temp_ds not in temp_datasets_used:
-                        temp_datasets_used[temp_ds] = []
-                    temp_datasets_used[temp_ds].append(step_name)
-
-                normal_disp = tokens[1] if len(tokens) >= 2 else ""
-                if normal_disp == "DELETE" or (
-                    tokens and tokens[0] == "NEW" and not normal_disp
-                ):
-                    # Deleted at the end of this step (an omitted normal
-                    # disposition on a NEW dataset defaults to DELETE): a
-                    # later step may create one of the same name again.
-                    active.pop(temp_ds, None)
-
-    def _walk(
-        items: list[Step | ConditionalBlock], active: dict[str, str]
+    def walk(
+        self, items: list[Step | ConditionalBlock], active: dict[str, str]
     ) -> dict[str, str]:
         """Walk *items* in execution order; return the temporaries left.
 
@@ -470,27 +449,77 @@ def validate_data_dependencies(job: Job) -> list[ValidationError]:  # noqa: C901
         """
         for item in items:
             if isinstance(item, Step):
-                _check_step(item, active)
+                self.check_step(item, active)
             elif isinstance(item, ConditionalBlock):
-                then_active = _walk(item.then_steps, dict(active))
-                else_active = _walk(item.else_steps, dict(active))
+                then_active = self.walk(item.then_steps, dict(active))
+                else_active = self.walk(item.else_steps, dict(active))
                 active = {**else_active, **then_active}
         return active
 
-    _walk(job.steps, {})
+    def check_step(self, step: Step, active: dict[str, str]) -> None:
+        """Check one step's temporary DDs against *active*, updating it.
 
-    # Check that temporary datasets are created before use.
-    # Reported as WARNING rather than ERROR because the validator is flow-blind:
-    # the creating step may be inside a conditional branch that the flat step list
-    # does not reflect, so a hard ERROR here would produce false positives.
-    for temp_ds in temp_datasets_used:
-        if temp_ds not in temp_datasets_created:
-            errors.append(
-                ValidationError(
-                    f"Temporary dataset {temp_ds} used but never created",
-                    ErrorType.VALIDATION_ERROR,
-                    severity=ErrorSeverity.WARNING,
+        *active* maps each temporary dataset that still exists (created and
+        not yet deleted by an explicit or defaulted DELETE) to the step that
+        created it.  DISP=MOD on one of them extends it (the classic way to
+        collect several compiles' object decks in &&LOADSET) rather than
+        creating it a second time.
+        """
+        step_name = step.name or f"Step{len(self.created) + 1}"
+        for dd in _dataset_dds(step):
+            if dd.dataset_name and dd.dataset_name.startswith("&&"):
+                self._check_dd(dd, step_name, active)
+
+    def _check_dd(
+        self, dd: DDStatement, step_name: str, active: dict[str, str]
+    ) -> None:
+        # &&GOSET(GO) names a member of &&GOSET: key on the dataset.
+        temp_ds = (dd.dataset_name or "").split("(", 1)[0]
+        tokens = dd._disp_tokens() if dd.disposition else []
+        extends_existing = bool(tokens) and tokens[0] == "MOD" and temp_ds in active
+
+        # Check if this is creating or using the dataset
+        if dd.is_output() and not extends_existing:
+            if temp_ds in active:
+                self.errors.append(
+                    ValidationError(
+                        f"Temporary dataset {temp_ds} created in multiple steps: "
+                        f"{active[temp_ds]} and {step_name}",
+                        ErrorType.VALIDATION_ERROR,
+                        line_number=dd.line_number,
+                    )
                 )
-            )
+            self.created[temp_ds] = step_name
+            active[temp_ds] = step_name
+        elif dd.is_input() or extends_existing:
+            self.first_use.setdefault(temp_ds, dd.line_number)
 
-    return errors
+        normal_disp = tokens[1] if len(tokens) >= 2 else ""
+        if normal_disp == "DELETE" or (
+            tokens and tokens[0] == "NEW" and not normal_disp
+        ):
+            # Deleted at the end of this step (an omitted normal disposition
+            # on a NEW dataset defaults to DELETE): a later step may create
+            # one of the same name again.
+            active.pop(temp_ds, None)
+
+    def findings(self) -> list[ValidationError]:
+        """The duplicate-creation errors, then the used-but-never-created ones.
+
+        The latter are reported as WARNING rather than ERROR because the
+        validator is flow-blind: the creating step may be inside a
+        conditional branch that the flat step list does not reflect, so a
+        hard ERROR here would produce false positives.
+        """
+        errors = list(self.errors)
+        for temp_ds, line_number in self.first_use.items():
+            if temp_ds not in self.created:
+                errors.append(
+                    ValidationError(
+                        f"Temporary dataset {temp_ds} used but never created",
+                        ErrorType.VALIDATION_ERROR,
+                        line_number=line_number,
+                        severity=ErrorSeverity.WARNING,
+                    )
+                )
+        return errors

@@ -384,13 +384,23 @@ def _make_replacer(
         budget[0] -= len(value)
         if budget[0] < 0:
             raise _SymbolOverflow
-        if _TRAILING_SYMBOL_REF.search(value):
-            # Splicing a bare ``&SYSUID`` in front of ``.DATA`` would make that
-            # period the reference's delimiter; give it its own.
-            value += "."
-        return value
+        return _splice_ready_value(value, collapse_double_amp)
 
     return _replacer
+
+
+def _splice_ready_value(value: str, collapse_double_amp: bool) -> str:
+    """Finish a resolved symbol *value* for splicing into the text."""
+    if _TRAILING_SYMBOL_REF.search(value):
+        # Splicing a bare ``&SYSUID`` in front of ``.DATA`` would make that
+        # period the reference's delimiter; give it its own.
+        value += "."
+    if collapse_double_amp:
+        # The nested pass keeps ``&&`` so a value's escaped ampersand is not
+        # read as a symbol reference; collapse it now, exactly once, as a
+        # literal ``&&`` in the text itself is (invariant 4, #127).
+        value = value.replace("&&", "&")
+    return value
 
 
 def _substitute_symbols_bounded(
@@ -902,7 +912,9 @@ def _dsn_keep_undefined(
     dataset_name: str, keep_undefined: Callable[[str], bool] | None, strict: bool
 ) -> Callable[[str], bool] | None:
     """Extend *keep_undefined* to keep an undefined bare-``&NAME`` dataset name."""
-    match = None if strict else _BARE_SYMBOL_DSN_RE.fullmatch(dataset_name)
+    if strict or not isinstance(dataset_name, str):
+        return keep_undefined
+    match = _BARE_SYMBOL_DSN_RE.fullmatch(dataset_name)
     if match is None:
         return keep_undefined
     temp_name = match.group(1)
@@ -945,8 +957,9 @@ def substitute_dd_statement(
     """
     local_warnings: list[str] | None = [] if warnings is not None else None
 
-    # Substitute dataset name, remembering the name as first coded
-    if dd.dataset_name:
+    # Substitute dataset name, remembering the name as first coded. A
+    # non-text name (a DDStatement built directly with a list) is left alone.
+    if dd.dataset_name and isinstance(dd.dataset_name, str):
         if dd.coded_dataset_name is None and "&" in dd.dataset_name:
             dd.coded_dataset_name = dd.dataset_name
         dd.dataset_name = substitute_symbols(
@@ -1716,6 +1729,7 @@ def _exploded_job(job: Job, exploded_steps: list[Step | ConditionalBlock]) -> Jo
         "jes_statements",
         "output_statements",
         "joblib_dds",
+        "custom_statements",
         "warnings",
     ):
         src_val = getattr(job, _attr, None)

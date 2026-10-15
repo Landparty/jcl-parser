@@ -69,15 +69,52 @@ def instream_delimiter(parameters: dict[str, Any]) -> tuple[Any, bool] | None:
     if not (is_star or "DATA" in parameters):
         return None
     has_dlm = "DLM" in parameters
-    delimiter = parameters.get("DLM", "/*")
+    return _unquote_delimiter(parameters.get("DLM", "/*")), is_star and not has_dlm
+
+
+def _unquote_delimiter(delimiter: Any) -> Any:
+    """Drop the apostrophes around a quoted ``DLM='$$'`` value."""
     if (
         isinstance(delimiter, str)
         and len(delimiter) >= 2
         and delimiter.startswith("'")
         and delimiter.endswith("'")
     ):
-        delimiter = delimiter[1:-1]
-    return delimiter, is_star and not has_dlm
+        return delimiter[1:-1]
+    return delimiter
+
+
+def xmit_delimiter(parameters: dict[str, Any]) -> Any:
+    """Return the delimiter that ends the records transmitted by ``//X XMIT``.
+
+    Transmitted records are a whole job stream, so ``//`` never ends them --
+    only ``/*`` or the ``DLM=`` delimiter does. Like :func:`instream_delimiter`
+    the value is returned as parsed (a list for a malformed ``DLM=(A,B)``) for
+    the caller to validate.
+    """
+    return _unquote_delimiter(parameters.get("DLM", "/*"))
+
+
+_RE_JES_XMIT = re.compile(r"/\*XMIT(?:\s|$)", re.IGNORECASE)
+_RE_JES_DLM = re.compile(r"(?:^|[\s,])DLM=([^\s,]+)", re.IGNORECASE)
+
+
+def is_jes_xmit(line: str) -> bool:
+    """Return ``True`` if *line* is a JES2 ``/*XMIT`` control statement."""
+    return _RE_JES_XMIT.match(line) is not None
+
+
+def jes_xmit_delimiter(operands: str) -> str:
+    """Return the delimiter ending the data of a JES2 ``/*XMIT`` statement.
+
+    *operands* is the statement text after ``/*XMIT`` (``NODE2 DLM=$$``); its
+    ``DLM=`` keyword is blank-delimited free text, not a tokenized operand.
+    """
+    match = _RE_JES_DLM.search(operands)
+    if match is None:
+        return "/*"
+    delimiter = _unquote_delimiter(match.group(1))
+    return delimiter if isinstance(delimiter, str) and delimiter else "/*"
 
 
 def jcl_value_text(value: Any) -> str:

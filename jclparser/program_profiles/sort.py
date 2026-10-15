@@ -7,8 +7,11 @@ The IBM sort is commonly invoked as ``SORT``, ``ICEMAN``, ``DFSORT``, or
 optional ``INCLUDE``, ``OMIT``, ``INREC``, ``OUTREC``, ``OUTFIL`` statements.
 The profile only does a shallow parse — enough to surface the *fact* that
 the step sorts, merges or copies, which filters it applies, and which
-datasets it reads (SORTIN, or SORTIN01-SORTIN99 for a merge) and writes —
-but does not attempt to validate field specifications.
+datasets it reads (SORTIN, SORTIN01-SORTIN99 for a merge, the JOINKEYS
+files: SORTJNF1 / SORTJNF2 or the ``F1=`` / ``F2=`` DDs) and writes
+(SORTOUT, and each ``OUTFIL``'s ``FNAMES=`` DDs, ``SORTOFx`` for
+``FILES=x``, SORTOUT for an ``OUTFIL`` naming neither) — but does not
+attempt to validate field specifications.
 
 Each control statement is read as DFSORT reads it: an optional label, the
 operation, and the operands up to the first blank outside quotes and
@@ -102,9 +105,62 @@ def _clause_notes(statements: list[ControlStatement]) -> list[str]:
     return [note for clause, note in _CLAUSE_NOTES if clause in found]
 
 
-def _dataset_notes(step: Step) -> list[str]:
-    """``input:`` for every dataset of SORTIN / SORTINnn (concatenations
-    included), ``output:`` for SORTOUT, in DD order."""
+def _keyword_values(stmt: ControlStatement) -> dict[str, list[str]]:
+    """*stmt*'s keyword operands: upper-cased key to its value list
+    (``FNAMES=(A,B)`` gives ``["A", "B"]``)."""
+    values: dict[str, list[str]] = {}
+    for operand in split_operands(stmt.operands):
+        key, eq, value = operand.partition("=")
+        if not eq:
+            continue
+        value = value.strip()
+        if value.startswith("(") and value.endswith(")"):
+            value = value[1:-1]
+        values[key.strip().upper()] = [
+            v.strip().upper() for v in value.split(",") if v.strip()
+        ]
+    return values
+
+
+def _outfil_ddnames(stmt: ControlStatement) -> list[str]:
+    """The DDs an ``OUTFIL`` writes: ``FNAMES=`` as named, ``FILES=x`` as
+    ``SORTOFx``, and ``SORTOUT`` when it names neither."""
+    values = _keyword_values(stmt)
+    names = values.get("FNAMES", []) + [
+        f"SORTOF{suffix}" for suffix in values.get("FILES", [])
+    ]
+    return names or ["SORTOUT"]
+
+
+def _joinkeys_ddnames(stmt: ControlStatement) -> list[str]:
+    """The DD a ``JOINKEYS`` reads: ``F1=dd`` / ``F2=dd`` as named,
+    ``FILE=F1`` / ``FILE=F2`` (or ``FILES=``) as ``SORTJNF1`` / ``SORTJNF2``."""
+    values = _keyword_values(stmt)
+    names = values.get("F1", []) + values.get("F2", [])
+    for key in ("FILE", "FILES"):
+        names += [f"SORTJN{f}" for f in values.get(key, []) if f in ("F1", "F2")]
+    return names
+
+
+def _io_ddnames(statements: list[ControlStatement]) -> tuple[set[str], set[str]]:
+    """The input and output DD names the control statements name, beyond
+    SORTIN / SORTINnn and SORTOUT."""
+    inputs: set[str] = set()
+    outputs: set[str] = set()
+    for stmt in statements:
+        if stmt.operation == "OUTFIL":
+            outputs.update(_outfil_ddnames(stmt))
+        elif stmt.operation == "JOINKEYS":
+            inputs.update(_joinkeys_ddnames(stmt))
+    return inputs, outputs
+
+
+def _dataset_notes(step: Step, statements: list[ControlStatement]) -> list[str]:
+    """``input:`` for every dataset of SORTIN / SORTINnn and the JOINKEYS
+    files (concatenations included), ``output:`` for SORTOUT and the
+    ``OUTFIL`` files, in DD order."""
+    inputs, outputs = _io_ddnames(statements)
+    outputs.add("SORTOUT")
     notes: list[str] = []
     current = ""
     for dd in step.dd_statements:
@@ -112,9 +168,9 @@ def _dataset_notes(step: Step) -> list[str]:
             current = dd.name.upper()
         if not dd.dataset_name:
             continue
-        if _RE_INPUT_DD.match(current):
+        if _RE_INPUT_DD.match(current) or current in inputs:
             notes.append(f"input: {dd.dataset_name}")
-        elif current == "SORTOUT" and dd.name:
+        elif current in outputs and dd.name:
             notes.append(f"output: {dd.dataset_name}")
     return notes
 
@@ -126,7 +182,7 @@ class SortProfile(ProgramProfile):
         raw = _sysin_text(step, card_images=True) or ""
         statements = parse_control_statements(raw, _OPERATIONS)
         kinds = _kind_notes(statements)
-        notes = [*kinds, *_clause_notes(statements), *_dataset_notes(step)]
+        notes = [*kinds, *_clause_notes(statements), *_dataset_notes(step, statements)]
 
         if not notes:
             summary = f"{step.program} with no recognised control statements"

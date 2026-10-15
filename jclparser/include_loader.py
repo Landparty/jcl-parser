@@ -27,6 +27,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import NamedTuple
 
 from .errors import JCLStructureError
 from .utils import (
@@ -174,6 +175,29 @@ class JCLLIBMemberLoader(IncludeMemberLoader):
         return paths
 
 
+class LineOrigin(NamedTuple):
+    """Where one line of INCLUDE-expanded JCL came from.
+
+    Attributes:
+        member: The INCLUDE member the line was read from -- the innermost
+            one for a nested INCLUDE -- or ``None`` for a line of the main
+            source.
+        line: 1-based line number in the main source: the line itself for a
+            main-source line, else the line of the (outermost) ``// INCLUDE``
+            statement in the main source that brought it in.
+        member_line: 1-based line number within *member* (``None`` for a
+            main-source line).
+    """
+
+    member: str | None
+    line: int
+    member_line: int | None = None
+
+
+#: One line of expanded text (line end included) and where it came from.
+_Entry = tuple[str, LineOrigin]
+
+
 def resolve_includes(
     content: str,
     loader: IncludeMemberLoader,
@@ -196,6 +220,9 @@ def resolve_includes(
 
     Unresolvable members (loader returns ``None``) are left as-is so that
     the caller can decide how to handle them (e.g. log a warning).
+
+    :func:`resolve_includes_with_origins` does the same and also returns
+    where each line of the result came from.
 
     Args:
         content: Raw JCL text to process.
@@ -222,110 +249,164 @@ def resolve_includes(
     Raises:
         JCLStructureError: If expansion would inline more than *max_lines*.
     """
-    if _depth >= max_depth:
-        return content
-    if _budget is None:
-        _budget = [max_lines]
-    if _symbols is None:
-        _symbols = {}
+    expander = _IncludeExpander(
+        loader,
+        libraries,
+        max_depth,
+        max_lines,
+        _collected,
+        [max_lines] if _budget is None else _budget,
+        {} if _symbols is None else _symbols,
+    )
+    return "".join(text for text, _ in expander.expand(content, _depth, _active))
 
-    # Records of in-stream data (``DD *`` / ``DD DATA,DLM=``) and CNTL blocks
-    # are not JCL: a ``// INCLUDE`` among them is data and must stay as-is.
-    # They are located with the same scan the parser itself uses.
-    from ._source_scanner import _merge_source_lines
 
-    _, inline_data, control_data, _ = _merge_source_lines(content)
-    data_indices = inline_data | control_data
+def resolve_includes_with_origins(
+    content: str,
+    loader: IncludeMemberLoader,
+    libraries: list[str] | None = None,
+    max_depth: int = 8,
+    max_lines: int = 1_000_000,
+    collected: list[str] | None = None,
+) -> tuple[str, list[LineOrigin]]:
+    """Expand INCLUDEs like :func:`resolve_includes`; also map lines to origins.
 
-    result: list[str] = []
-    for index, line in enumerate(split_source_lines(content, keepends=True)):
-        if index in data_indices:
-            result.append(line)
-            continue
+    Returns:
+        ``(text, origins)``: the expanded text, and one :class:`LineOrigin`
+        per line of it (``origins[n - 1]`` is where line *n* came from), so
+        a line number in the expanded text can be reported against the main
+        source -- and the member -- it was read from.  *collected*, when
+        given, receives the name of every member expanded.
+
+    Raises:
+        JCLStructureError: If expansion would inline more than *max_lines*.
+    """
+    expander = _IncludeExpander(
+        loader, libraries, max_depth, max_lines, collected, [max_lines], {}
+    )
+    entries = expander.expand(content, 0, frozenset())
+    return "".join(text for text, _ in entries), [origin for _, origin in entries]
+
+
+class _IncludeExpander:
+    """The state shared by every level of one INCLUDE expansion."""
+
+    def __init__(
+        self,
+        loader: IncludeMemberLoader,
+        libraries: list[str] | None,
+        max_depth: int,
+        max_lines: int,
+        collected: list[str] | None,
+        budget: list[int],
+        symbols: dict[str, str],
+    ) -> None:
+        self.loader = loader
+        self.libraries = libraries
+        self.max_depth = max_depth
+        self.max_lines = max_lines
+        self.collected = collected
+        self.budget = budget
+        self.symbols = symbols
+
+    def expand(self, content: str, depth: int, active: frozenset[str]) -> list[_Entry]:
+        """Expand the INCLUDEs of *content*; one entry per resulting line.
+
+        Line origins are relative to *content*: its own lines map to
+        themselves, a member's lines to the INCLUDE line that brought them.
+        """
+        lines = split_source_lines(content, keepends=True)
+        if depth >= self.max_depth:
+            return [(line, LineOrigin(None, i + 1)) for i, line in enumerate(lines)]
+
+        # Records of in-stream data (``DD *`` / ``DD DATA,DLM=``) and CNTL
+        # blocks are not JCL: a ``// INCLUDE`` among them is data and must
+        # stay as-is. They are located with the same scan the parser uses.
+        from ._source_scanner import _merge_source_lines
+
+        _, inline_data, control_data, _ = _merge_source_lines(content)
+        data_indices = inline_data | control_data
+
+        result: list[_Entry] = []
+        for index, line in enumerate(lines):
+            expanded = None
+            if index not in data_indices:
+                expanded = self._expand_statement(line, index + 1, depth, active)
+            if expanded is None:
+                expanded = [(line, LineOrigin(None, index + 1))]
+            result.extend(expanded)
+        return result
+
+    def _expand_statement(
+        self, line: str, line_number: int, depth: int, active: frozenset[str]
+    ) -> list[_Entry] | None:
+        """The expansion of *line* if it is a resolvable INCLUDE, else None."""
         # Preserve leading whitespace: only strip the line terminator so that
         # in-stream data lines (which may contain '//' after leading spaces)
         # are never mistaken for JCL statements.
         statement_line = line.rstrip("\r\n")
-        _record_set_symbols(statement_line, _symbols)
+        _record_set_symbols(statement_line, self.symbols)
         member = _extract_include_member(statement_line)
-        if member is not None and "&" in member:
-            member = _substitute_member_symbols(member, _symbols)
-        if member is not None and member in _active:
+        if member is None:
+            return None
+        if "&" in member:
+            member = _substitute_member_symbols(member, self.symbols)
+        if member in active:
             logger.warning(
                 "INCLUDE member %r is recursive; leaving statement intact", member
             )
-        elif member is not None:
-            expanded = _expand_include_member(
-                member,
-                loader,
-                libraries,
-                max_depth,
-                _depth,
-                _collected,
-                max_lines,
-                _active,
-                _budget,
-                _symbols,
-            )
-            if expanded is not None:
-                result.append(expanded)
-                continue
+            return None
+        expanded = self._expand_member(member, depth, active)
+        if expanded is None:
             # Member not found — leave the INCLUDE line intact
             logger.debug(
                 "INCLUDE member %r not found; leaving statement intact", member
             )
-        result.append(line)
+            return None
+        return [
+            (text, _member_origin(origin, member, line_number))
+            for text, origin in expanded
+        ]
 
-    return "".join(result)
+    def _expand_member(
+        self, member: str, depth: int, active: frozenset[str]
+    ) -> list[_Entry] | None:
+        """Load *member* and return its recursively expanded lines.
+
+        Returns ``None`` if the loader cannot find the member. Charges the
+        member's lines against the shared budget (see :func:`resolve_includes`).
+        The last line always ends with a newline.
+
+        Raises:
+            JCLStructureError: If the expansion exceeds *max_lines*.
+        """
+        member_content = self.loader.load_member(member, self.libraries)
+        if member_content is None:
+            return None
+        self.budget[0] -= member_content.count("\n") + 1
+        if self.budget[0] < 0:
+            raise JCLStructureError(
+                f"INCLUDE expansion exceeds {self.max_lines:,} lines "
+                f"(at member {member})"
+            )
+        if self.collected is not None:
+            self.collected.append(member)
+        logger.debug("resolved INCLUDE member %r (depth %d)", member, depth)
+        entries = self.expand(member_content, depth + 1, active | {member})
+        # Ensure the inlined content ends with a newline
+        if not entries:
+            return [("\n", LineOrigin(None, 1))]
+        text, origin = entries[-1]
+        if not text.endswith("\n"):
+            entries[-1] = (text + "\n", origin)
+        return entries
 
 
-def _expand_include_member(
-    member: str,
-    loader: IncludeMemberLoader,
-    libraries: list[str] | None,
-    max_depth: int,
-    depth: int,
-    collected: list[str] | None,
-    max_lines: int,
-    active: frozenset[str],
-    budget: list[int],
-    symbols: dict[str, str],
-) -> str | None:
-    """Load *member* and return its recursively expanded, newline-terminated text.
-
-    Returns ``None`` if the loader cannot find the member. Charges the
-    member's lines against the shared *budget* (see :func:`resolve_includes`).
-
-    Raises:
-        JCLStructureError: If the expansion exceeds *max_lines*.
-    """
-    member_content = loader.load_member(member, libraries)
-    if member_content is None:
-        return None
-    budget[0] -= member_content.count("\n") + 1
-    if budget[0] < 0:
-        raise JCLStructureError(
-            f"INCLUDE expansion exceeds {max_lines:,} lines (at member {member})"
-        )
-    if collected is not None:
-        collected.append(member)
-    logger.debug("resolved INCLUDE member %r (depth %d)", member, depth)
-    expanded = resolve_includes(
-        member_content,
-        loader=loader,
-        libraries=libraries,
-        max_depth=max_depth,
-        _depth=depth + 1,
-        _collected=collected,
-        max_lines=max_lines,
-        _active=active | {member},
-        _budget=budget,
-        _symbols=symbols,
-    )
-    # Ensure the inlined content ends with a newline
-    if not expanded.endswith("\n"):
-        expanded += "\n"
-    return expanded
+def _member_origin(origin: LineOrigin, member: str, include_line: int) -> LineOrigin:
+    """Re-base *origin*, relative to *member*, on the INCLUDE line that read it."""
+    if origin.member is None:
+        return LineOrigin(member, include_line, origin.line)
+    return LineOrigin(origin.member, include_line, origin.member_line)
 
 
 def _record_set_symbols(line: str, symbols: dict[str, str]) -> None:

@@ -105,7 +105,8 @@ Line counts as of 2026-10-08 (`wc -l`).
 | `explosion.py` | 1604 | `explode_job()`, `SymbolScope`, DD/EXEC overrides, `DEFAULT_MAX_STEPS` |
 | `proc_loader.py` | 427 | Loader chain, `create_default_loader()` |
 | `builtin_procs.py` | 246 | `BUILTIN_UTILITY_PROCS` last-resort templates |
-| `include_loader.py` | 437 | `resolve_includes()`, member loaders |
+| `include_loader.py` | 518 | `resolve_includes()`, `resolve_includes_with_origins()` / `LineOrigin`, member loaders |
+| `_include_origins.py` | 126 | `IncludeLineMap` — translates INCLUDE-expanded line numbers back to the main source (#118) |
 | `continuation_handler.py` | 478 | `ContinuationLineHandler` |
 | `parameter_ast.py` | 397 | Typed parameter AST (`DCBParameter`, `SPACEParameter`, …) |
 | `parameter_validators.py` | 262 | Parameter value validators |

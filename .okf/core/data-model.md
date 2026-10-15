@@ -3,7 +3,7 @@ type: Data Model
 title: JCL Data Model
 description: Hierarchy of Job, Step, DDStatement, ConditionalBlock, and Procedure objects returned by parse_jcl().
 tags: [model, core, data-model]
-timestamp: 2026-09-16T00:00:00Z
+timestamp: 2026-10-15T00:00:00Z
 ---
 
 # Overview
@@ -32,7 +32,7 @@ without importing, via `job.steps` / `job.procedures`).
 | `procedures` | `list[Procedure]` | Inline `PROC…PEND` blocks |
 | `conditionals` | `list[ConditionalBlock]` | Flat list of IF/THEN/ELSE blocks |
 | `set_statements` | `dict[str, str]` | Job-level SET symbol definitions. A SET inside a `PROC`…`PEND` body is **not** here — it is on `Procedure.set_statements` (since 2026-09-28). For a JOB-less member the synthetic job also carries its procedures' SETs |
-| `jcllib_order` | `list[str]` | JCLLIB library concatenation |
+| `jcllib_order` | `list[str]` | JCLLIB library concatenation, with the SET symbols in effect at the JCLLIB statement substituted (an entry with an unresolved `&symbol` stays as written, with a warning; #128) |
 | `includes` | `list[str]` | INCLUDE member references |
 | `comments` | `list[str]` | Present on the model but never populated — see invariant 8 |
 | `line_number` | `int` | Default `0` |
@@ -41,7 +41,8 @@ without importing, via `job.steps` / `job.procedures`).
 | `jes_typed_statements` | `list[Any]` | Same cards promoted to typed models; unknown JES commands stay raw-only. `parameters` stop at the first blank outside quotes/parens (the rest is a comment, kept in `raw`), except `//*OPERATOR` message text |
 | `output_statements` | `list[OutputStatement]` | OUTPUT statements |
 | `joblib_dds` | `list[DDStatement]` | JOBLIB concatenation |
-| `control_statements` | `list[Statement]` | `COMMAND` / `SCHEDULE` / `CNTL` kept verbatim; a CNTL block's records live in `parameters["_records"]` |
+| `control_statements` | `list[Statement]` | `COMMAND` / `SCHEDULE` / `CNTL` / `NOTIFY` kept verbatim; a CNTL block's records live in `parameters["_records"]` |
+| `custom_statements` | `list[Statement]` | Statements whose `type` the parser has no handler for — a custom type returned by an enabled `StatementPlugin` — kept verbatim in source order (since 2026-10-15, #130; they used to be dropped silently). Copied onto the job `explode_job` returns |
 | `sql_detections` | `dict[str, Any]` | Keyed by step name; only with `ParserConfig(detect_sql=True)` |
 | `unresolved_output_refs` | `list[tuple[str, str, int]]` | `OUTPUT=*.name` refs with no definition in scope: `(step_name, ref, line_number)`, see [OutputStatement](#outputstatement) |
 | `exported_symbols` | `set[str]` | From `EXPORT SYMLIST=(...)`; `"*"` exports every SET symbol |
@@ -82,7 +83,7 @@ the codebase; use `step.procedure` / `step.is_procedure`.
 | Field | Type | Notes |
 |-------|------|-------|
 | `name` | `str` | DD name, max 8 chars |
-| `dataset_name` | `str \| None` | `DSN=` value, or `DSNAME=` (its long form) when no `DSN=` is coded |
+| `dataset_name` | `str \| None` | `DSN=` value, or `DSNAME=` (its long form) when no `DSN=` is coded. Always text: a parenthesised `DSN=(A.B)` (tokenized to a list in `parameters`) is rendered back as coded, `"(A.B)"`, so `validate_jcl()` reports it as an invalid dataset name (fixed 2026-10-15, #121; with a `// SET` in the job it used to crash `parse_jcl`/`validate_jcl` with a `TypeError`) |
 | `coded_dataset_name` | `str \| None` | The dataset name as coded, before SET / PROC symbol substitution (`&HLQ..DATA` while `dataset_name` reads `PROD.DATA`); `None` when the coded name had no symbols. Not part of `==` or `repr` |
 | `disposition` | `str \| None` | `DISP=` raw string |
 | `parameters` | `dict[str, Any]` | DSN, DISP, SPACE, DCB, SYSOUT… |
@@ -158,12 +159,14 @@ The generic pre-model record produced by `parse_statement()`:
 
 `parse_condition()` accepts both keyword and symbolic Boolean operators (`AND`/`&`, `OR`/`|`, `NOT`/`¬`, with `^`/`~` for `¬`) and `ABEND`/`RUN` tests written as `= TRUE` / `= FALSE`. It returns `None` rather than a partial AST whenever it cannot consume the whole expression: `ABENDCC` tests, a non-numeric RC value (`RC GT &MAX`), leftover tokens, a character outside the grammar (`S1.RC = -1`, `;`, `*`, ...), and a bare `RC` / `STEP.RC` with no comparison (since 2026-10-04, issue #63: the tokenizer used to skip unknown characters, so `S1.RC = -1` read as `S1.RC EQ 1`, and a bare `RC` was invented as `RC EQ 0`). A bare number (`4`, `4 AND RC = 0`) is `None` too (since 2026-10-13, issue #86; it used to be invented as `RC EQ 4`). A missing final `)` and a stray trailing `)` are tolerated. A value-first comparison is mirrored into RC-first form: `4 LT RC` is `RC GT 4`, `4 LT S1.RC` is `S1.RC GT 4` (fixed 2026-09-27; the operator used to be kept as written, inverting the test), and `4 GT` with no RC after it is `None`. The mnemonic `NG` (not greater, → `LE`) and `NL` (not less, → `GE`) operators are accepted (since 2026-09-28; they used to make the result `None`). When evaluating, `step_results` maps an uppercase step name to `(rc, abended)`, or to `condition_parser.NOT_RUN` for a step known not to have executed: `STEP.RC op n`, `STEP.ABEND` and `STEP.RUN` on a `NOT_RUN` step are `False` (IBM), whereas a step absent from the mapping is unknown and its `RC`/`ABEND`/`RUN` tests give `None` (`RC`/`ABEND` since 2026-09-28; `STEP.RUN` returned `False` for an absent step until 2026-10-04, issue #61). `NOT`/`AND`/`OR` combine `None` with Kleene three-valued logic (`None AND False` = `False`, `None OR True` = `True`, otherwise `None`). A condition with no step name follows IBM semantics: `RC` is the **highest** RC of the steps that ran, and `ABEND` is true if **any** of them abended (`NOT_RUN` steps are ignored). `NOT_RUN` is not re-exported from `jclparser`; import it from `jclparser.condition_parser`.
 
+**Operator precedence (IBM, since 2026-10-15, issue #101).** Per the *z/OS MVS JCL Reference*, "IF/THEN/ELSE/ENDIF statement construct" (operator table): `NOT` is evaluated first, the comparison operators second, and `AND` and `OR` third, **at the same level, left to right**. `parse_condition()` builds one left-associative chain for `AND`/`OR`, so `S1.RC = 0 | S1.RC = 4 & S2.ABEND` is `AndCondition(OrCondition(RC=0, RC=4), ABEND)` — false when S1 ended RC 0 and S2 did not abend. It used to give `AND` higher precedence (C-style), reading it as `S1.RC = 0 | (S1.RC = 4 & S2.ABEND)`, which is true. Parentheses still group.
+
 # Key Field Notes
 
 - **Comments are dropped.** `Job.comments` / `Step.comments` / `DDStatement.comments`
   exist but are never populated, and there is no `job.statements` holding raw
   statements. The only statements kept verbatim are `COMMAND` / `SCHEDULE` /
-  `CNTL`, in `job.control_statements`. See [development/invariants](../development/invariants.md) #8.
+  `CNTL` / `NOTIFY` (z/OS 2.3, since 2026-10-15), in `job.control_statements`. See [development/invariants](../development/invariants.md) #8.
 - `ConditionalBlock.condition` is always set; `condition_ast` may be `None`.
 - `DDStatement.is_temporary()` is a **method**: `dd.is_temporary()`, not `dd.is_temporary`.
   `True` when `DSN=&&TEMP...` — double-`&&` signals a temporary dataset.

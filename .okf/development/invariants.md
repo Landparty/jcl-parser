@@ -3,7 +3,7 @@ type: Invariants
 title: Key Invariants
 description: 19 non-obvious behaviors in jcl-parser that cause contributor bugs; read before touching any parsing code.
 tags: [invariants, gotchas, development]
-timestamp: 2026-10-04T00:00:00Z
+timestamp: 2026-10-15T00:00:00Z
 ---
 
 # Overview
@@ -18,7 +18,7 @@ timestamp: 2026-10-04T00:00:00Z
 
 3. **Inline PROCs always win.** Same-name external PROC or builtin template is ignored. No override possible.
 
-4. **`&&` is an escaped ampersand in JCL — except in a dataset name.** Symbol substitution replaces `&NAME` → value and `&&` → `&`. In a DSN (`DDStatement.dataset_name` and the `DSN` / `DSNAME` parameters) `&&TEMP` signals a temporary dataset, so `substitute_dd_statement` always keeps the `&&` there — including during `explode_job()` — and `is_temporary()` stays true. Likewise a DSN that is one bare single-`&` name with no symbol of that name (`DSN=&TEMP`, the single-ampersand temporary spelling) is kept as written rather than blanked, unless `strict_symbols=True` (fixed 2026-09-28; `is_temporary()` still keys on `&&`). Symbolic parameter values on a PROC call keep `&&` too (`TMP='&&WORK'` feeds a DSN); EXEC keyword override values collapse it.
+4. **`&&` is an escaped ampersand in JCL — except in a dataset name.** Symbol substitution replaces `&NAME` → value and `&&` → `&` — including an `&&` inside a symbol's value, collapsed once after the value's own nested symbols are resolved (fixed 2026-10-15, #127). In a DSN (`DDStatement.dataset_name` and the `DSN` / `DSNAME` parameters) `&&TEMP` signals a temporary dataset, so `substitute_dd_statement` always keeps the `&&` there — including during `explode_job()` — and `is_temporary()` stays true. Likewise a DSN that is one bare single-`&` name with no symbol of that name (`DSN=&TEMP`, the single-ampersand temporary spelling) is kept as written rather than blanked, unless `strict_symbols=True` (fixed 2026-09-28; `is_temporary()` still keys on `&&`). Symbolic parameter values on a PROC call keep `&&` too (`TMP='&&WORK'` feeds a DSN); EXEC keyword override values collapse it.
 
 5. **Dataset names are case-insensitive on z/OS but stored as-is.** Comparisons against DSN values must account for case variation.
 
@@ -40,9 +40,9 @@ timestamp: 2026-10-04T00:00:00Z
 
 14. **`builtin_procs.py` contains non-verbatim templates.** Built-in IBM utility PROCs are structural approximations for static analysis only — must not be submitted to a real mainframe.
 
-15. **Every `_STATEMENT_TYPES` entry needs an explicit branch in `JobBuilder.handle_statement`.** `continuation_handler.JCL_KEYWORDS` is derived from `_STATEMENT_TYPES` for the same reason — a recognized type missing from either falls through silently: no dispatch (`SCHEDULE`, fixed 2026-07-24) or misclassified as a continuation and merged into the previous statement, corrupting it (`EXPORT`/`COMMAND`/`SCHEDULE`/`XMIT`/`THEN`/`NULL`, fixed 2026-07-24). `tests/unit/test_silent_drop_fixes.py::TestStatementDispatchCompleteness` guards the dispatch side structurally — it will fail the next time someone adds a type to `_STATEMENT_TYPES` without a matching branch.
+15. **Every `_STATEMENT_TYPES` entry needs an explicit entry in `JobBuilder._HANDLERS`** (the statement-type → handler table `handle_statement` dispatches through). `continuation_handler.JCL_KEYWORDS` is derived from `_STATEMENT_TYPES` for the same reason — a recognized type missing from either falls through silently: no dispatch (`SCHEDULE`, fixed 2026-07-24) or misclassified as a continuation and merged into the previous statement, corrupting it (`EXPORT`/`COMMAND`/`SCHEDULE`/`XMIT`/`THEN`/`NULL`, fixed 2026-07-24). `NOTIFY` (z/OS 2.3) was missing from `_STATEMENT_TYPES` altogether, so `// NOTIFY EMAIL=…` was folded into the JOB statement; it is now recognized and kept in `job.control_statements` (issue #123, fixed 2026-10-15). `tests/unit/test_silent_drop_fixes.py::TestStatementDispatchCompleteness` guards the dispatch side structurally — it will fail the next time someone adds a type to `_STATEMENT_TYPES` without a matching `_HANDLERS` entry.
 
-16. **Known limitation: a nameless, indented statement using an operation keyword this parser doesn't recognize at all is ambiguous.** `ContinuationLineHandler` and `_statement_parser.parse_statement()` both use the same first-keyword heuristic (not true z/OS column-field parsing) to decide "continuation of the previous statement" vs. "a new statement of an unknown type" — for a genuinely unrecognized keyword there is no reliable way to tell, so it is either merged into the previous statement (corrupting it) or dropped, with no warning either way. This is *not* the same failure as a keyword this parser does support (see invariant 15, which is fully fixed) — it is inherent to the heuristic and would need real column-based parsing to close. Named statements with unrecognized keywords are unaffected (they always survive with a warning — see `TestDanglingCommaDoesNotSwallowNextStatement`).
+16. **Known limitation: a nameless, indented statement using an operation keyword this parser doesn't recognize at all is ambiguous.** `ContinuationLineHandler` and `_statement_parser.parse_statement()` both use the same first-keyword heuristic (not true z/OS column-field parsing) to decide "continuation of the previous statement" vs. "a new statement of an unknown type" — for a genuinely unrecognized keyword there is no reliable way to tell. After a statement whose operand field ends with a comma (or an open quote/paren) it is merged into that statement; after a *complete* statement it is never merged (since 2026-10-15, issue #123): `ContinuationLineHandler.is_stray_continuation_record()` flags it, its operands are ignored, and `_merge_source_lines` adds `Line N: continuation record ignored because the statement before it does not end with a comma (missing comma?): …` to `job.warnings`. That is what catches the classic missing-comma slip (`DSN=PROD.MASTER` / `DISP=SHR` used to become `DSN=PROD.MASTERDISP=SHR` silently). This is *not* the same failure as a keyword this parser does support (see invariant 15, which is fully fixed) — it is inherent to the heuristic and would need real column-based parsing to close. Named statements with unrecognized keywords are unaffected (they always survive with a warning — see `TestDanglingCommaDoesNotSwallowNextStatement`).
 
 17. **A statement's operand field ends at the first blank outside quotes and parens.** Everything
     after it is a comment field, and `_statement_parser.split_comment_field()` removes it *before*
@@ -53,9 +53,12 @@ timestamp: 2026-10-04T00:00:00Z
     comment used to raise "Unclosed quote"; fixed 2026-09-27). An IF with no `THEN` yet continues on
     the next blank-name-field record, joined with a blank (`ContinuationLineHandler._continues_if`).
     The IF's label (`//CHK1 IF ...`) is not part of `ConditionalBlock.condition`. And
-    a blank after a comma still counts as inside the operands when a quoted string, `(` or
-    `KEY=VALUE` follows. A removed comment containing `=` is reported on `job.warnings` rather than
-    vanishing. Fixed 2026-09-02. Inside a parenthesised list, a blank after a subparameter's comma starts a
+    a blank after a comma still counts as inside the operands when a `KEY=VALUE` token follows, or
+    a quoted string or parenthesised group followed by `,` or the end of the record (a group must
+    also hold no unquoted blank) — so `JOB (ACCT), 'PGMR'` keeps its programmer name, while
+    `DSN=A,   (CUSTOMER MASTER FILE)` and `DSN=A,   'CUSTOMER' MASTER` are comments (issue #120,
+    fixed 2026-10-15; `_statement_parser._resumes_operands`). A removed comment containing `=` is
+    reported on `job.warnings` rather than vanishing. Fixed 2026-09-02. Inside a parenthesised list, a blank after a subparameter's comma starts a
     comment too when the rest of the record neither resumes operands nor closes the list
     (`DISP=(NEW,     COMMENT` / `//   CATLG)`), including on a record that continues an open list;
     `DISP=(NEW, CATLG)` on one record is still tolerated. Fixed 2026-10-09.

@@ -7,9 +7,7 @@ against known step return-code results.
 
 Grammar (simplified)::
 
-    condition  := or_expr
-    or_expr    := and_expr ( ('OR' | '|') and_expr )*
-    and_expr   := not_expr ( ('AND' | '&') not_expr )*
+    condition  := not_expr ( ('AND' | '&' | 'OR' | '|') not_expr )*
     not_expr   := ('NOT' | '¬' | '^' | '~') not_expr | primary
     primary    := '(' condition ')' | atom
     atom       := step_ref 'RC' op integer
@@ -25,6 +23,14 @@ Usage::
     ast = parse_condition("STEP1.RC EQ 0 AND NOT STEP2.ABEND")
     result = ast.evaluate({"STEP1": (0, False), "STEP2": (4, False)})
     # result is True
+
+Operator precedence follows the IBM *z/OS MVS JCL Reference*, "IF/THEN/ELSE/
+ENDIF statement construct" (the operator table under "Relational-expression
+keywords"): ``NOT`` is evaluated first, the comparison operators second, and
+``AND`` and ``OR`` third, *at the same level*, left to right.  So
+``S1.RC = 0 | S1.RC = 4 & S2.ABEND`` is ``(S1.RC = 0 | S1.RC = 4) & S2.ABEND``,
+not the C-style ``S1.RC = 0 | (S1.RC = 4 & S2.ABEND)``.  Parentheses group as
+usual.
 
 Without a step name, ``RC`` is the highest return code of the steps run so far
 and ``ABEND`` is true if any of them abended (IBM semantics).
@@ -412,19 +418,19 @@ class _Parser:
         return node
 
     def _parse_or(self) -> ConditionNode:
-        left = self._parse_and()
-        while self._peek_upper() == "OR":
-            self._consume()
-            right = self._parse_and()
-            left = OrCondition(left, right)
-        return left
+        """``AND`` / ``OR`` chain: one precedence level, left to right.
 
-    def _parse_and(self) -> ConditionNode:
+        IBM ranks ``AND`` and ``OR`` equally (see the module docstring), so
+        ``A | B & C`` is ``(A | B) & C`` -- not ``A | (B & C)`` as in C.
+        """
         left = self._parse_not()
-        while self._peek_upper() == "AND":
+        while (op := self._peek_upper()) in ("AND", "OR"):
             self._consume()
             right = self._parse_not()
-            left = AndCondition(left, right)
+            if op == "AND":
+                left = AndCondition(left, right)
+            else:
+                left = OrCondition(left, right)
         return left
 
     def _parse_not(self) -> ConditionNode:

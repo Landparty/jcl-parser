@@ -23,7 +23,12 @@ from typing import Any
 
 from .errors import JCLSyntaxError
 from .model import DDStatement, Job, Statement, Step
-from .utils import MAX_SYMBOL_VALUE_LENGTH, POSITIONAL_PARAM_PREFIX, is_positional_key
+from .utils import (
+    MAX_SYMBOL_VALUE_LENGTH,
+    POSITIONAL_PARAM_PREFIX,
+    is_positional_key,
+    jcl_value_text,
+)
 
 _SET_SYMBOL_PATTERN = re.compile(r"&&|&([A-Z0-9@#$]+)\.?")
 
@@ -95,6 +100,23 @@ def _report_set_overflow(
     if warnings is not None:
         prefix = f"Line {line_number}: " if line_number else ""
         warnings.append(f"{prefix}{message}; value left unresolved")
+
+
+def _resolve_jcllib_library(library: str, known_symbols: dict[str, str]) -> str | None:
+    """Substitute SET symbols into one ``JCLLIB ORDER`` library name.
+
+    z/OS resolves the SET symbols defined before the JCLLIB statement, so
+    *known_symbols* must be the SET table in effect at that statement. Returns
+    ``None`` when a ``&symbol`` is still unresolved afterwards (a system symbol
+    such as ``&SYSUID``, or a SET coded later); the caller keeps the library as
+    written then.
+    """
+    if "&" not in library:
+        return library
+    resolved = _resolve_set_value(library, known_symbols)
+    if _has_unresolved_symbol_ref(resolved):
+        return None
+    return resolved
 
 
 def _has_unresolved_symbol_ref(
@@ -215,6 +237,11 @@ def _create_dd_from_statement(stmt: Statement) -> DDStatement:
     dataset_name = stmt.parameters.get("DSN")
     if dataset_name is None:
         dataset_name = stmt.parameters.get("DSNAME")
+    if isinstance(dataset_name, list):
+        # ``DSN=(A.B)`` tokenizes to a list; dataset_name is always text, so
+        # keep it as coded ("(A.B)") for validate_jcl() to report as an
+        # invalid dataset name instead of crashing on it (#121).
+        dataset_name = jcl_value_text(dataset_name)
     disposition = stmt.parameters.get("DISP")
 
     return DDStatement(

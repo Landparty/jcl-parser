@@ -53,6 +53,13 @@ class StatementPlugin(ABC):
         """
         List of JCL statement types this plugin handles.
 
+        Advisory metadata describing the ``Statement.type`` values
+        :meth:`parse_statement` returns; the parser does not dispatch on it
+        (:meth:`can_parse` selects the plugin).  A returned statement whose
+        type is a built-in one (``"EXEC"``, ``"DD"``, ...) is processed like a
+        native statement of that type; any other (custom) type is kept
+        verbatim, in source order, in :attr:`jclparser.model.Job.custom_statements`.
+
         Returns:
             List of statement type strings (e.g., ["JOB", "EXEC", "DD"])
         """

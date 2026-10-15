@@ -66,7 +66,9 @@ from .include_loader import (
     DictMemberLoader,
     IncludeMemberLoader,
     JCLLIBMemberLoader,
+    LineOrigin,
     resolve_includes,
+    resolve_includes_with_origins,
 )
 from .jcl_file_type import (
     FileType,
@@ -241,7 +243,9 @@ __all__ = [  # noqa: RUF022 — grouped by API tier, not alphabetically
     "IncludeMemberLoader",
     "DictMemberLoader",
     "JCLLIBMemberLoader",
+    "LineOrigin",
     "resolve_includes",
+    "resolve_includes_with_origins",
     # ── Tier 2: Dataset lifecycle analysis ───────────────────────────────────
     "DatasetEvent",
     "analyze_dataset_lifecycle",

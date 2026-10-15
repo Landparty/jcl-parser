@@ -154,7 +154,9 @@ def _main(argv: list[str] | None = None) -> int:  # noqa: C901 -- complexity bas
 
     # --- validate mode ---
     if args.validate:
-        return _cmd_validate(path, json_output=args.json_output)
+        return _cmd_validate(
+            path, json_output=args.json_output, proc_path=args.proc_path
+        )
 
     # --- detect mode (no parse needed) ---
     tokens_early = args.query
@@ -297,8 +299,12 @@ def _main(argv: list[str] | None = None) -> int:  # noqa: C901 -- complexity bas
 # ---------------------------------------------------------------------------
 
 
-def _cmd_validate(path: Path, json_output: bool = False) -> int:
-    errors = validate_jcl(path, level="structure")
+def _cmd_validate(
+    path: Path, json_output: bool = False, proc_path: str | None = None
+) -> int:
+    # --proc-path is the base for external PROCs and INCLUDE members, as for
+    # every other command; without it JCL_PROCLIB_PATH still applies (#129).
+    errors = validate_jcl(path, level="structure", proc_base_path=proc_path)
     if json_output:
         items = [
             {
@@ -672,7 +678,29 @@ def _print_procs(job: Job, proc_path: str | None = None) -> None:
                     _print_dd_brief(dd, indent=6)
             print()
     if proc_path and not any(p.is_external for p in job.procedures):
-        print(f"Note: external PROCs from '{proc_path}' are expanded with --explode")
+        print(_no_external_procs_note(job, proc_path))
+
+
+def _no_external_procs_note(job: Job, proc_path: str) -> str:
+    """Why ``procs`` lists no PROC from *proc_path*.
+
+    The parse already loads every PROC the job calls from *proc_path* (they
+    are listed as ``[external]``), so none listed means the job calls no PROC
+    that is there; ``--explode`` would not find one either.
+    """
+    missing = sorted(
+        {
+            step.procedure
+            for step in iter_execution_steps(job.steps)
+            if step.procedure and job.get_procedure(step.procedure) is None
+        }
+    )
+    if missing:
+        return f"Note: PROC(s) {', '.join(missing)} not found under '{proc_path}'"
+    return (
+        f"Note: this job calls no PROC from '{proc_path}' "
+        "(procs --list-available lists the PROCs there)"
+    )
 
 
 def _print_proc_detail(proc: Procedure) -> None:

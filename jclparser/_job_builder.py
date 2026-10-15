@@ -34,6 +34,7 @@ from ._model_factories import (
     _create_step_from_statement,
     _exec_has_program_spec,
     _has_unresolved_symbol_ref,
+    _resolve_jcllib_library,
     _resolve_set_value,
 )
 from ._post_parse import (
@@ -59,6 +60,8 @@ from .utils import (
     instream_delimiter,
     is_positional_key,
     jcl_value_text,
+    jes_xmit_delimiter,
+    xmit_delimiter,
 )
 
 logger = logging.getLogger(__name__)
@@ -103,8 +106,8 @@ class JobBuilder:
 
     # Statement type -> name of its ``_on_<type>`` handler.  Every type in
     # ``_STATEMENT_TYPES`` must appear here, even when its handler is a
-    # deliberate no-op (NULL, ENDCNTL): an unlisted type is dropped
-    # without a trace.
+    # deliberate no-op (NULL, ENDCNTL).  Any other type -- a custom type
+    # returned by a StatementPlugin -- is kept in ``Job.custom_statements``.
     _HANDLERS: ClassVar[dict[str, str]] = {
         "JOB": "_on_job",
         "EXEC": "_on_exec",
@@ -122,10 +125,12 @@ class JobBuilder:
         "JES": "_on_jes",
         "OUTPUT": "_on_output",
         "NULL": "_on_null",
-        # No richer model representation for COMMAND / SCHEDULE / CNTL.
+        # No richer model representation for COMMAND / SCHEDULE / CNTL /
+        # NOTIFY (z/OS 2.3).
         "COMMAND": "_on_control",
         "SCHEDULE": "_on_control",
         "CNTL": "_on_control",
+        "NOTIFY": "_on_control",
         "ENDCNTL": "_on_endcntl",
         "UNKNOWN": "_on_unknown",
         "XMIT": "_on_xmit",
@@ -151,8 +156,15 @@ class JobBuilder:
         self.pending_procedures: list[Procedure] = []
         self.current_delimiter = "/*"
         self.current_terminates_on_slash = False
-        #: Track DDs that appear before first EXEC
+        #: Job-level DDs that appear before the first job-level EXEC (e.g.
+        #: ``SYSCHK``/``JOBCAT``); attached to that step, never to a step of an
+        #: in-stream PROC defined in between (#103).
         self.orphaned_dds: list[DDStatement] = []
+        #: DDs inside a PROC/PEND body before the procedure's first EXEC.
+        self.proc_orphaned_dds: list[DDStatement] = []
+        #: ``len(conditional_stack)`` when the open PROC began: IF blocks at
+        #: or below it belong to the enclosing job, not to the procedure.
+        self.proc_cond_depth = 0
         #: True while accumulating JOBLIB concatenation lines
         self.in_joblib_concat = False
         #: Qualified name (``PROCSTEP.DDNAME``) of the override DD the current
@@ -185,6 +197,9 @@ class JobBuilder:
         self.pending_conditionals: list[ConditionalBlock] = []
         self.pending_steps: list[Step | ConditionalBlock] = []
         self.pending_control: list[Statement] = []
+        #: Statements of a type the builder has no handler for (e.g. a custom
+        #: type returned by a StatementPlugin) seen before the JOB statement.
+        self.pending_custom: list[Statement] = []
         #: The open ``CNTL`` block, whose program control records are collected
         #: verbatim until its ``ENDCNTL``.
         self.current_cntl: Statement | None = None
@@ -284,13 +299,17 @@ class JobBuilder:
     # ------------------------------------------------------------------ #
 
     def handle_statement(self, stmt: Statement, line_num: int) -> None:
-        """Record statement warnings, then dispatch to the type handler."""
+        """Record statement warnings, then dispatch to the type handler.
+
+        A statement whose type has no handler in :attr:`_HANDLERS` (e.g. a
+        custom type returned by a :class:`~jclparser.plugins.StatementPlugin`)
+        is kept verbatim in :attr:`Job.custom_statements` (#130).
+        """
         if stmt.warnings:
             self._warnings_sink().extend(stmt.warnings)
 
-        handler_name = self._HANDLERS.get(stmt.type)
-        if handler_name is not None:
-            getattr(self, handler_name)(stmt, line_num)
+        handler_name = self._HANDLERS.get(stmt.type, "_on_custom")
+        getattr(self, handler_name)(stmt, line_num)
 
     # ------------------------------------------------------------------ #
     # Per-statement-type handlers
@@ -327,24 +346,19 @@ class JobBuilder:
         self.in_joblib_concat = False  # JOBLIB concatenation ends at first EXEC
         self.concat_override_key = None
 
-        # Attach any orphaned DDs to this first step
-        if self.orphaned_dds:
-            for dd in self.orphaned_dds:
-                self.current_step.add_dd(dd)
-            self.orphaned_dds = []
-
-        # Add step to procedure if we're inside PROC/PEND, otherwise to job
-        if self.conditional_stack:
-            active_cond, active_branch = self.conditional_stack[-1]
-            if active_branch == "THEN":
-                active_cond.add_then_step(self.current_step)
-            else:
-                active_cond.add_else_step(self.current_step)
-        elif self.current_procedure is not None:
-            self.current_procedure.steps.append(self.current_step)
+        # Attach DDs seen before the first EXEC of this scope to this step.
+        # Job-level DDs (SYSCHK, JOBCAT, ...) wait for the first job-level
+        # EXEC: a step inside an in-stream PROC definition must never pick
+        # them up, or every expansion of the PROC would copy them (#103).
+        if self.current_procedure is not None:
+            pending_dds, self.proc_orphaned_dds = self.proc_orphaned_dds, []
         else:
-            assert self.job is not None
-            self.job.add_step(self.current_step)
+            pending_dds, self.orphaned_dds = self.orphaned_dds, []
+        for dd in pending_dds:
+            self.current_step.add_dd(dd)
+
+        # Add step to the open IF branch, the PROC being defined, or the job
+        self._attach(self.current_step)
 
     def _on_dd(self, stmt: Statement, line_num: int) -> None:
         # Create the DD statement
@@ -360,9 +374,12 @@ class JobBuilder:
             elif not stmt.name and self.in_joblib_concat and self.job is not None:
                 # Empty-name DD concatenating onto the JOBLIB group
                 self.job.joblib_dds.append(current_dd)
+            elif self.current_procedure is not None:
+                # DD in a PROC body before its first EXEC
+                self.proc_orphaned_dds.append(current_dd)
             else:
                 self.in_joblib_concat = False
-                # Store as orphaned DD to be attached to next step
+                # Job-level DD: attached to the next job-level step
                 self.orphaned_dds.append(current_dd)
         elif stmt.name and "." in stmt.name:
             # This is a DD override for a procedure step
@@ -428,13 +445,42 @@ class JobBuilder:
             self.job.add_procedure(self.current_procedure)
         else:
             self.pending_procedures.append(self.current_procedure)
+        # IF blocks already open belong to the job, not to this procedure.
+        self.proc_cond_depth = len(self.conditional_stack)
         # Reset current_step since we're now inside procedure
         self.current_step = None
+        self.in_joblib_concat = False
+        self.proc_orphaned_dds = []
 
     def _on_pend(self, stmt: Statement, line_num: int) -> None:
-        # End of procedure definition - stop tracking
+        # End of procedure definition - stop tracking.  PEND closes the PROC
+        # scope: an IF opened in the body and never closed by ENDIF ends here
+        # (it is already attached to the procedure), so later job steps are
+        # not read into it (#102).
+        procedure = self.current_procedure
+        if procedure is not None:
+            while len(self.conditional_stack) > self.proc_cond_depth:
+                cond, _branch = self.conditional_stack.pop()
+                self._warnings_sink().append(
+                    f"Line {cond.line_number}: IF block in PROC {procedure.name} "
+                    f"has no matching ENDIF; closed at PEND (line {line_num})"
+                )
+            self._warn_proc_orphaned_dds(procedure, line_num)
+        self.proc_orphaned_dds = []
+        self.proc_cond_depth = 0
         self.current_procedure = None
         self.current_step = None
+
+    def _warn_proc_orphaned_dds(self, procedure: Procedure, line_num: int) -> None:
+        """Report DDs of a PROC body that had no EXEC step to attach to."""
+        if self.proc_orphaned_dds:
+            dd_names = ", ".join(
+                dd.name or "(unnamed)" for dd in self.proc_orphaned_dds
+            )
+            self._warnings_sink().append(
+                f"Line {line_num}: PROC {procedure.name} has DD statement(s) "
+                f"but no EXEC step to attach them to; discarded: {dd_names}"
+            )
 
     def _on_set(self, stmt: Statement, line_num: int) -> None:
         # SET symbol=value statement.  A SET before the JOB statement (or in a
@@ -507,11 +553,26 @@ class JobBuilder:
         order_value = stmt.parameters["ORDER"]
         sink = self.job.jcllib_order if self.job else self.pending_jcllib
         # ORDER parameter might already be parsed as a list
+        libs: list[str] = []
         if isinstance(order_value, list):
-            sink.extend(order_value)
+            libs = [str(lib) for lib in order_value]
         elif isinstance(order_value, str):
-            libs = order_value.strip("()").split(",")
-            sink.extend([lib.strip() for lib in libs])
+            libs = [lib.strip() for lib in order_value.strip("()").split(",")]
+        # Only the SETs coded before this statement are in effect here.
+        symbols = (
+            {**self.pending_sets, **self.job.set_statements}
+            if self.job
+            else self.pending_sets
+        )
+        for lib in libs:
+            resolved = _resolve_jcllib_library(lib, symbols)
+            if resolved is None:
+                self._warnings_sink().append(
+                    f"Line {stmt.line_number}: JCLLIB ORDER library {lib} "
+                    "contains an unresolved symbol; kept as written"
+                )
+                resolved = lib
+            sink.append(resolved)
 
     def _on_include(self, stmt: Statement, line_num: int) -> None:
         # INCLUDE MEMBER=name
@@ -554,20 +615,32 @@ class JobBuilder:
             condition = condition[:-5]
         return condition
 
-    def _attach_conditional(self, conditional: ConditionalBlock) -> None:
-        """Place a new IF block in the enclosing branch, PROC, job or buffer."""
-        if self.conditional_stack:
-            active_cond, active_branch = self.conditional_stack[-1]
+    def _innermost_if(self) -> tuple[ConditionalBlock, str] | None:
+        """The innermost IF block open in the current scope, or None.
+
+        Inside a PROC/PEND body only IF blocks opened in that body count; an
+        IF the job opened before the PROC statement stays the job's (#102).
+        """
+        floor = self.proc_cond_depth if self.current_procedure is not None else 0
+        if len(self.conditional_stack) > floor:
+            return self.conditional_stack[-1]
+        return None
+
+    def _attach(self, item: Step | ConditionalBlock) -> None:
+        """Place a step or IF block in the open branch, PROC, job or buffer."""
+        open_if = self._innermost_if()
+        if open_if is not None:
+            active_cond, active_branch = open_if
             if active_branch == "THEN":
-                active_cond.add_then_step(conditional)
+                active_cond.add_then_step(item)
             else:
-                active_cond.add_else_step(conditional)
+                active_cond.add_else_step(item)
         elif self.current_procedure is not None:
-            self.current_procedure.steps.append(conditional)
+            self.current_procedure.steps.append(item)
         elif self.job is not None:
-            self.job.steps.append(conditional)
+            self.job.steps.append(item)
         else:
-            self.pending_steps.append(conditional)
+            self.pending_steps.append(item)
 
     def _open_if(self, stmt: Statement) -> None:
         """Handle ``IF``: record a new :class:`ConditionalBlock` and enter it."""
@@ -581,14 +654,14 @@ class JobBuilder:
             self.job.add_conditional(conditional)
         else:
             self.pending_conditionals.append(conditional)
-        self._attach_conditional(conditional)
+        self._attach(conditional)
         self.conditional_stack.append((conditional, "THEN"))
 
     def _switch_branch(self, branch: str, line_num: int) -> None:
         """Handle ``THEN`` / ``ELSE``: make *branch* the open IF's active one."""
-        if self.conditional_stack:
-            active_cond, _ = self.conditional_stack.pop()
-            self.conditional_stack.append((active_cond, branch))
+        open_if = self._innermost_if()
+        if open_if is not None:
+            self.conditional_stack[-1] = (open_if[0], branch)
         else:
             self._warnings_sink().append(
                 f"Line {line_num}: {branch} with no matching IF; ignored"
@@ -596,7 +669,7 @@ class JobBuilder:
 
     def _close_if(self, line_num: int) -> None:
         """Handle ``ENDIF``: leave the innermost open IF block."""
-        if self.conditional_stack:
+        if self._innermost_if() is not None:
             self.conditional_stack.pop()
         else:
             self._warnings_sink().append(
@@ -610,6 +683,13 @@ class JobBuilder:
         from .jes_statements import parse_jes_control
 
         typed = parse_jes_control(stmt.name, raw_params, stmt.line_number)
+        if stmt.name.upper() == "XMIT":
+            # The records that follow are a job stream for another node,
+            # not JCL of this job; they end at /* or DLM= (issue #117).
+            self.current_dd = None
+            self._start_transmitted_data(
+                jes_xmit_delimiter(raw_params), stmt.line_number
+            )
         if self.dialect == "jes3" and stmt.name.upper() not in _JES3_SLASH_STAR:
             # JES3 does not process JES2 control statements: keep the text,
             # but do not interpret it, and say so.
@@ -649,7 +729,7 @@ class JobBuilder:
         pass
 
     def _on_control(self, stmt: Statement, line_num: int) -> None:
-        """Record a COMMAND / SCHEDULE / CNTL statement verbatim."""
+        """Record a COMMAND / SCHEDULE / CNTL / NOTIFY statement verbatim."""
         # No richer model representation, but they are real statements —
         # record them verbatim rather than discarding them.
         if stmt.type == "CNTL":
@@ -667,6 +747,22 @@ class JobBuilder:
         """Collect a program control record from inside a CNTL/ENDCNTL block."""
         if self.current_cntl is not None:
             self.current_cntl.parameters["_records"].append(line)
+
+    def _on_custom(self, stmt: Statement, line_num: int) -> None:
+        """Keep a statement of a type the builder has no handler for.
+
+        Such statements come from a :class:`~jclparser.plugins.StatementPlugin`
+        returning a custom ``Statement.type``; they used to be dropped
+        silently (#130).
+        """
+        logger.debug(
+            "no handler for statement type %r at line %d; kept in "
+            "Job.custom_statements",
+            stmt.type,
+            line_num,
+        )
+        sink = self.job.custom_statements if self.job else self.pending_custom
+        sink.append(stmt)
 
     def _on_unknown(self, stmt: Statement, line_num: int) -> None:
         # Unknown statement type - log but continue processing
@@ -691,8 +787,6 @@ class JobBuilder:
                 line_number=stmt.line_number,
             )
             self.current_step.add_dd(self.current_dd)
-            self.in_inline_data = True
-            self.inline_data_lines = []
         else:
             # Job-level XMIT has no step to attach a DD to, but the
             # transmitted data block that follows must still be
@@ -702,12 +796,29 @@ class JobBuilder:
             # it; clear current_dd so the inline-data-end handler
             # doesn't misattach it to an unrelated earlier DD.
             self.current_dd = None
-            self.in_inline_data = True
-            self.inline_data_lines = []
             self._warnings_sink().append(
                 f"Line {stmt.line_number}: job-level XMIT has no step to attach "
                 f"its data to; the transmitted records were discarded"
             )
+        self._start_transmitted_data(xmit_delimiter(stmt.parameters), stmt.line_number)
+
+    def _start_transmitted_data(self, delimiter: Any, line_num: int) -> None:
+        """Open the data block of an XMIT / ``/*XMIT`` statement.
+
+        The transmitted records are a job stream for another node, so a
+        ``//`` record never ends them: only ``/*`` or the ``DLM=`` delimiter
+        does (the pre-scan in ``_merge_source_lines`` uses the same rule).
+        """
+        if not isinstance(delimiter, str):
+            raise JCLSyntaxError(
+                f"DLM= must be a one- or two-character delimiter, got "
+                f"{jcl_value_text(delimiter)}",
+                line_num,
+            )
+        self.in_inline_data = True
+        self.inline_data_lines = []
+        self.current_delimiter = delimiter
+        self.current_terminates_on_slash = False
 
     # ------------------------------------------------------------------ #
     # Finalisation
@@ -814,6 +925,7 @@ class JobBuilder:
         job.conditionals[:0] = self.pending_conditionals
         job.steps[:0] = self.pending_steps
         job.control_statements[:0] = self.pending_control
+        job.custom_statements[:0] = self.pending_custom
 
     def _flush_pending_sets(self, job: Job) -> None:
         # Statements seen before the JOB statement (or in a JOB-less member)
@@ -838,8 +950,8 @@ class JobBuilder:
 
     def _warn_orphaned_dds(self, job: Job) -> None:
         # orphaned_dds is only ever non-empty here when the whole job had no
-        # EXEC statement at all (the first EXEC always flushes and clears the
-        # list) -- those DD statements have nowhere to attach and are
+        # job-level EXEC statement at all (the first one always flushes and
+        # clears the list) -- those DD statements have nowhere to attach and are
         # discarded, so record what was lost instead of vanishing them silently.
         if self.orphaned_dds:
             dd_names = ", ".join(dd.name or "(unnamed)" for dd in self.orphaned_dds)

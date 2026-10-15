@@ -33,14 +33,21 @@ class TestContinuationLineHandler:
         """Test detection of standard continuation lines."""
         handler = ContinuationLineHandler()
 
+        prev = "//S1 EXEC PGM=X,"  # trailing comma: a continuation is expected
+
         # Standard continuation (2-14 spaces - columns 4-16)
-        assert handler.is_continuation_line("//" + " " * 13 + "PARM=VALUE")
+        assert handler.is_continuation_line("//" + " " * 13 + "PARM=VALUE", prev)
 
         # Continuation at column 16 (14 spaces)
-        assert handler.is_continuation_line("//" + " " * 14 + "PARM=VALUE")
+        assert handler.is_continuation_line("//" + " " * 14 + "PARM=VALUE", prev)
 
         # Continuation at column 4 (2 spaces) - minimum
-        assert handler.is_continuation_line("//" + " " * 2 + "PARM=VALUE")
+        assert handler.is_continuation_line("//" + " " * 2 + "PARM=VALUE", prev)
+
+        # Without a trailing comma the previous statement is complete, so the
+        # record is a stray continuation, not merged (issue #123).
+        assert not handler.is_continuation_line("//" + " " * 2 + "PARM=VALUE")
+        assert handler.is_stray_continuation_record("//" + " " * 2 + "PARM=VALUE")
 
         # Not a continuation (1 space = column 3)
         assert not handler.is_continuation_line("//" + " " * 1 + "PARM=VALUE")

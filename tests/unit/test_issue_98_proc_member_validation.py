@@ -63,7 +63,16 @@ def test_job_with_only_instream_proc_is_not_an_orphan_dd_error():
     src = "//J JOB\n" + _MEMBER_WITH_DD
     messages = [e.message for e in validate_jcl(src)]
     assert not any("DD statement found before any EXEC" in m for m in messages)
-    # A JOB that runs nothing is still an error on z/OS.
+    # A JOB whose only content is in-stream PROCs is how a PROC-library
+    # member is wrapped for parsing (the backend's synthetic JOB card), so
+    # its procedures count as its content (#100).
+    assert "Job must contain at least one execution step" not in messages
+    parse_jcl(src, strict_mode=True)
+
+
+def test_job_with_nothing_to_run_is_still_an_error():
+    src = "//J JOB 1\n//* only a comment\n"
+    messages = [e.message for e in validate_jcl(src)]
     assert "Job must contain at least one execution step" in messages
     with pytest.raises(JCLValidationError):
         parse_jcl(src, strict_mode=True)

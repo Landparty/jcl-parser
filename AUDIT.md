@@ -101,7 +101,7 @@ The audit concentrated on those two areas.
 
 | ID | Issue | Location / evidence | Effort |
 |---|---|---|---|
-| M1 | `\'` is treated as an escape (JCL has no backslash escape), so the next statement is merged into a quoted value | `continuation_handler.py:359`. `SET DIR='C:\'` followed by `SET HLQ=PROD` gives `DIR = "'C:\\'SET HLQ=PROD"` | 15 min |
+| M1 | **Resolved (#122):** `\'` is treated as an escape (JCL has no backslash escape), so the next statement is merged into a quoted value | `continuation_handler.py:359`. `SET DIR='C:\'` followed by `SET HLQ=PROD` gives `DIR = "'C:\\'SET HLQ=PROD"` | 15 min |
 | M2 | A blank in column 71 inside a quoted continuation is lost | `utils.py:75` (rstrip) and `continuation_handler.py:218,272`. `PARM='WORD1 …` + `WORD2'` gives `'WORD1WORD2'` | 2 h |
 | M3 | `DLM=(AB)` crashes with `AttributeError` | `_job_builder.py:358`: `'list' object has no attribute 'startswith'` | 15 min |
 | M4 | `validate_jcl` reports every WARNING as ERROR and drops line numbers | `parser.py:592-598, 607-612`. `job.validate()` returns WARNING, while `validate_jcl(level="structure")` returns `('ERROR', 0, …)` | 15 min |

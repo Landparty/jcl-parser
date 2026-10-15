@@ -113,6 +113,23 @@ status (`DISP=(,CATLG)`) is valid — it defaults to `NEW`.
 
 `str(error)` produces a human-readable message (used by the backend adapter).
 
+**Line numbers** (fixed 2026-10-15, #119): every `job.validate()` finding about a step,
+DD or the job itself carries that statement's line — the step rules (invalid step name,
+no PGM/PROC, both, duplicate step name) use `Step.line_number`; the DD rules (invalid DD
+name, dataset name, DISP, conflicting / missing data source, duplicate DD name) use
+`DDStatement.line_number`; the job-name and "at least one execution step" rules use the
+JOB statement's line; the temporary-dataset rules use the DD that creates the dataset a
+second time, or the first DD that reads one never created. They used to come back at
+line 0 (`str(error)` had no `Line N:` prefix).
+
+**"Job must contain at least one execution step"** is not reported for a job whose
+only content is in-stream PROCs (no top-level steps, `job.procedures` non-empty — fixed
+2026-10-15, #100): that is how a PROC-library member is wrapped for parsing (the
+backend's synthetic `//LEGACYLN JOB`, see [backend-contract](../integration/backend-contract.md)),
+and a valid PROC wrapped that way validates clean. A JOB with neither steps nor
+procedures still gets the error; a JOB-less PROC member (`job.is_procedure_member`)
+never did.
+
 # Exception Types (raised by parse_jcl / validate_jcl)
 
 | Exception | Trigger |
@@ -138,6 +155,8 @@ The catalog check follows a *state* per dataset, not a count: any normal-termina
 **Libraries and GDG generations** (fixed 2026-10-13, #81): a DISP applies to a whole library, so `validate_dataset_lifecycle` checks the members of a PDS and the library itself as one dataset, reported under the library name: `P.L(M1),DISP=(NEW,CATLG)` then `P.L(M2),DISP=(NEW,CATLG)` is a duplicate allocation, and `P.L,DISP=(OLD,DELETE)` then `P.L(M2),DISP=SHR` is a use after uncatalog (`&&T(M)` is `&&T`, still skipped here). The parenthesised part is a member unless it is an integer: relative GDG generations (`G.H(0)`, `G.H(+1)`, `G.H(-1)`) stay separate datasets, with one spelling per number (`(+01)` = `(+1)`, `(00)` = `(-0)` = `(0)`). `analyze_dataset_lifecycle` is unchanged and still keys its log by the name as coded (`P.L(M1)`).
 
 A backward reference `DSN=*.STEP.DD` is recorded under the dataset of the DD it refers to, so a delete through a referback ends that dataset (`NULLFILE` and unresolvable references record no event). `IF`/`THEN`/`ELSE` branches are walked separately, each from the state before the IF, and merged at `ENDIF`: the same `NEW,CATLG` in the THEN and the ELSE branch is not a duplicate, a duplicate within one branch still is, and after `ENDIF` a dataset counts as cataloged (or uncataloged) when either branch left it so. Both fixed 2026-09-28.
+
+**Step `COND=`** (fixed 2026-10-15, #108): a step whose `COND=` can bypass it — `COND=ONLY`, or any RC test (`COND=(4,LT)`, `COND=((0,NE,S1),EVEN)`, ...), or an unresolved `COND=&C` — is walked like a THEN branch with an empty ELSE, so after it a dataset counts as cataloged (or uncataloged) when either the run or the bypass left it so. `COND=EVEN` alone runs the step on the normal path and is treated as always running. So `//S2 EXEC PGM=IEFBR14,COND=ONLY` deleting a dataset no longer makes a later `SHR` of it warn "opened ... after being uncataloged", the same as `// IF ABEND THEN` around S2; a second `NEW,CATLG` inside a bypassable step is still a duplicate. Regression tests: `tests/unit/test_medium_analysis_fixes.py::TestLifecycleStepCond`.
 
 **PROC-call overrides on an unexploded job** (fixed 2026-10-12): a `//PROCSTEP.DD` override under `EXEC procname` (and the unnamed concatenation members after it) lives in `Step.dd_overrides` / `dd_override_concatenations`, not `dd_statements`. Both checks — the catalog check and `validate_data_dependencies` below — now read a step's DDs through `model._dataset_dds()`, which adds those overrides in source order for a PROC call, so `&&T` created by `//PS1.OUT DD DSN=&&T,DISP=(NEW,PASS)` is no longer "used but never created" in the next step, and a `NEW,CATLG` in an override counts toward duplicate cataloging (both already held on the exploded job). The event is recorded under the calling step (`S1`) with the qualified DD name (`PS1.OUT`), so a referback `*.S1.PS1.OUT` resolves to it. Overrides under an `EXEC PGM=` step are ignored, as z/OS ignores them. Regression tests: `tests/unit/test_bughunt_validation.py::TestProcCallOverrideDatasets`. The forward-reference warning ("opened DISP=OLD/SHR ... before it is allocated in a later step") only counts allocations on a path that also runs the open: an `OLD` in the THEN branch is not a forward reference to a `NEW` in the ELSE of the same IF (fixed 2026-10-10); one in a later, separate IF still is.
 
