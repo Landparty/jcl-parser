@@ -18,6 +18,8 @@ timestamp: 2026-10-04T00:00:00Z
 1. InlineProcedureLoader (PROC…PEND in the same JCL)  ← always wins; no override possible
 2. JCLLIBProcedureLoader  (JCL_PROCLIB_PATH env var or proc_base_path arg;
    with neither, NO files are read -- the cwd is never searched implicitly)
+   Searches the JCLLIB ORDER libraries, then DEFAULT_SYSTEM_PROCLIBS
+   (SYS1.PROCLIB) -- also with no JCLLIB at all (issue #116)
    Layout: <base_path>/<DATASET.NAME>/<PROCNAME>.jcl
    Members over utils.MAX_LIBRARY_MEMBER_BYTES (4 MiB) are refused (warning)
 3. builtin_procs.py   BUILTIN_UTILITY_PROCS  ← last resort (create_builtin_proc_loader)
@@ -30,7 +32,9 @@ timestamp: 2026-10-04T00:00:00Z
 
 **Builtins are structural approximations, not verbatim IBM PROCs.** Safe for static analysis; must not be submitted to a real mainframe.
 
-**Which loader `explode_job()` uses** (fixed 2026-09-28): the caller's `proc_loader=` if given; else, when `parse_jcl()` was given `proc_base_path` / found a `JCLLIB`, a `CompositeProcedureLoader` of the job's inline PROCs followed by the loader `parse_jcl()` attached to the job (`job._proc_loader`); else `create_default_loader(job.procedures)`. So an external PROC called from inside another external PROC (or from an IF block) is found in the same libraries as the top-level ones; before, the default chain was always rebuilt and such a nested call raised `ProcedureNotFoundError`. `parse_jcl()`'s pre-loading of external PROCs also walks `IF`/`THEN`/`ELSE` blocks (`iter_execution_steps`), not just top-level steps.
+**What `parse_jcl()` loads** (since 2026-10-15, issue #116): with `enable_external_procs` (the default) it always attaches the default chain to the job, JCLLIB or not, and adds every PROC the chain finds to `job.procedures` (so a builtin such as `IGYWCL` and `<base>/SYS1.PROCLIB/MYPROC.jcl` resolve with no JCLLIB). A PROC still not found is a strict-parse error only when the job has a `JCLLIB ORDER`; with none it may be in the JES PROCLIB, so it is a `job.warnings` entry and a WARNING from `job.validate()` (`validators.validate_procedure_references`, reported by `validate_jcl` at `structure`/`semantic`). With `enable_external_procs=False` strict mode still raises for any PROC that is not in-stream.
+
+**Which loader `explode_job()` uses** (fixed 2026-09-28): the caller's `proc_loader=` if given; else, when `parse_jcl()` attached one (always, unless `enable_external_procs=False`), a `CompositeProcedureLoader` of the job's inline PROCs followed by the loader `parse_jcl()` attached to the job (`job._proc_loader`); else `create_default_loader(job.procedures)`. So an external PROC called from inside another external PROC (or from an IF block) is found in the same libraries as the top-level ones; before, the default chain was always rebuilt and such a nested call raised `ProcedureNotFoundError`. `parse_jcl()`'s pre-loading of external PROCs also walks `IF`/`THEN`/`ELSE` blocks (`iter_execution_steps`), not just top-level steps.
 
 # Usage
 

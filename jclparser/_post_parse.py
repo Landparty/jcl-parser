@@ -19,6 +19,7 @@ layout changed. Nothing here is public API — import
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -177,55 +178,68 @@ def load_external_procedures(
 ) -> None:
     """Attach a PROC loader and resolve external PROC references on *job*.
 
-    In strict mode a referenced-but-unresolvable procedure raises
-    :class:`JCLSyntaxError`; otherwise unresolved references are left as-is.
+    The default loader chain (in-stream, then the ``JCLLIB ORDER`` libraries
+    followed by the system PROCLIB under *proc_base_path* /
+    ``JCL_PROCLIB_PATH``, then the built-in templates) is attached whenever
+    external loading is enabled, JCLLIB or not, and every PROC it finds is
+    added to ``job.procedures``.
+
+    A PROC that is still not found is an error in strict mode only when the
+    job names a JCLLIB.  With no JCLLIB the PROC is looked up in the JES
+    PROCLIB, which may simply not be available here: that is a warning
+    (issue #116).  With external loading disabled, strict mode raises for
+    any PROC that is not in-stream.
     """
-    if enable_external_procs and job.jcllib_order:
-        logger.debug("loading external PROCs via JCLLIB order: %s", job.jcllib_order)
-        from .proc_loader import create_default_loader
-
-        proc_loader = create_default_loader(
-            inline_procedures=job.procedures,
-            base_path=Path(proc_base_path)
-            if isinstance(proc_base_path, str)
-            else proc_base_path,
-            include_jcllib=True,
-        )
-        # Store loader on job for later use (e.g., in explosion)
-        job._proc_loader = proc_loader
-
-        # Try to load any external PROCs that were referenced but not found inline
-        # This happens when EXEC PROC is used but PROC is not defined inline.
-        # A call inside an IF/THEN/ELSE block is a call all the same.
-        for step in iter_execution_steps(job.steps):
-            if step.procedure and not job.get_procedure(step.procedure):
-                # Try to load external PROC
-                libraries_list = list(job.jcllib_order) if job.jcllib_order else None
-                proc = proc_loader.load_procedure(step.procedure, libraries_list)
-                if proc:
-                    job.add_procedure(proc)
-                elif strict_mode:
-                    raise JCLSyntaxError(
-                        f"Procedure '{step.procedure}' not found. "
-                        f"Searched in: inline={len(job.procedures)} procedures, "
-                        f"libraries={job.jcllib_order}",
-                        step.line_number,
-                    )
-    else:
-        # External loading disabled or no JCLLIB - check for missing PROCs in strict mode
+    if not enable_external_procs:
         if strict_mode:
-            for step in iter_execution_steps(job.steps):
-                if step.procedure and not job.get_procedure(step.procedure):
-                    reason = (
-                        "external PROC loading is disabled"
-                        if not enable_external_procs
-                        else "no JCLLIB ORDER specified"
-                    )
-                    raise JCLSyntaxError(
-                        f"Procedure '{step.procedure}' not found ({reason}). "
-                        f"Searched in: inline={len(job.procedures)} procedures",
-                        step.line_number,
-                    )
+            for step in _unresolved_proc_calls(job):
+                raise JCLSyntaxError(
+                    f"Procedure '{step.procedure}' not found (external PROC "
+                    "loading is disabled). "
+                    f"Searched in: inline={len(job.procedures)} procedures",
+                    step.line_number,
+                )
+        return
+
+    from .proc_loader import DEFAULT_SYSTEM_PROCLIBS, create_default_loader
+
+    logger.debug("loading external PROCs; JCLLIB order: %s", job.jcllib_order)
+    proc_loader = create_default_loader(
+        inline_procedures=job.procedures,
+        base_path=Path(proc_base_path)
+        if isinstance(proc_base_path, str)
+        else proc_base_path,
+        include_jcllib=True,
+    )
+    # Store loader on job for later use (e.g., in explosion)
+    job._proc_loader = proc_loader
+
+    libraries = list(job.jcllib_order) or None
+    for step in _unresolved_proc_calls(job):
+        proc = proc_loader.load_procedure(step.procedure or "", libraries)
+        if proc:
+            job.add_procedure(proc)
+        elif not job.jcllib_order:
+            job.warnings.append(
+                f"Line {step.line_number}: procedure '{step.procedure}' not "
+                f"found in-stream, in {', '.join(DEFAULT_SYSTEM_PROCLIBS)} or "
+                "among the built-in PROCs; with no JCLLIB ORDER it is assumed "
+                "to be in a system PROCLIB that is not available here"
+            )
+        elif strict_mode:
+            raise JCLSyntaxError(
+                f"Procedure '{step.procedure}' not found. "
+                f"Searched in: inline={len(job.procedures)} procedures, "
+                f"libraries={job.jcllib_order}",
+                step.line_number,
+            )
+
+
+def _unresolved_proc_calls(job: Job) -> Iterator[Step]:
+    """The PROC calls of *job* (IF blocks included) not yet in job.procedures."""
+    for step in iter_execution_steps(job.steps):
+        if step.procedure and not job.get_procedure(step.procedure):
+            yield step
 
 
 def enforce_strict_dd_structure(content: str) -> None:

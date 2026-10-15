@@ -415,10 +415,16 @@ class TestUndefinedProc:
         job = parse_jcl(FIXTURES_DIR / "error_undefined_proc.jcl")
         assert job.name == "BADJOB"
 
-    def test_undefined_proc_validate_reports_error(self):
-        """validate_jcl must surface at least one error for the missing EXEC target."""
-        errors = validate_jcl(FIXTURES_DIR / "error_undefined_proc.jcl")
-        assert len(errors) > 0
+    def test_undefined_proc_validate_reports_warning(self):
+        """validate_jcl surfaces the missing EXEC target as a warning.
+
+        With no JCLLIB the PROC may live in the JES PROCLIB, so it is not an
+        error at the basic level (issue #116).
+        """
+        path = FIXTURES_DIR / "error_undefined_proc.jcl"
+        assert validate_jcl(path) == []
+        findings = validate_jcl(path, level="structure")
+        assert any("NONEXIST" in f.message for f in findings)
 
     def test_undefined_proc_explode_raises(self):
         """explode_job must raise ProcedureNotFoundError."""
