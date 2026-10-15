@@ -7,7 +7,14 @@ in conditions, and malformed expressions.
 
 import pytest
 
-from jclparser.condition_parser import NotCondition, parse_condition
+from jclparser.condition_parser import (
+    AbendCondition,
+    AndCondition,
+    NotCondition,
+    OrCondition,
+    ReturnCodeCondition,
+    parse_condition,
+)
 
 
 @pytest.mark.unit
@@ -32,9 +39,29 @@ class TestDeeplyNestedConditions:
         assert result is not None
 
     def test_mixed_and_or_precedence(self):
-        """Parse condition with mixed AND/OR requiring precedence handling."""
+        """AND and OR rank equally, left to right (IBM JCL Reference, #101)."""
+        result = parse_condition("S1.RC = 0 | S1.RC = 4 & S2.ABEND")
+        assert result == AndCondition(
+            OrCondition(
+                ReturnCodeCondition("S1", "EQ", 0),
+                ReturnCodeCondition("S1", "EQ", 4),
+            ),
+            AbendCondition("S2"),
+        )
+        # C-style precedence would read ``RC=0 | (RC=4 & ABEND)`` -> True.
+        assert result.evaluate({"S1": (0, False), "S2": (0, False)}) is False
+
+    def test_and_then_or_left_to_right(self):
+        """``A & B | C`` is ``(A & B) | C`` -- the same either way, but pinned."""
         result = parse_condition("STEP1.RC EQ 0 AND STEP2.RC EQ 0 OR STEP3.RC EQ 4")
-        assert result is not None
+        assert isinstance(result, OrCondition)
+        assert isinstance(result.left, AndCondition)
+
+    def test_parentheses_still_group(self):
+        result = parse_condition("S1.RC = 0 | (S1.RC = 4 & S2.ABEND)")
+        assert isinstance(result, OrCondition)
+        assert isinstance(result.right, AndCondition)
+        assert result.evaluate({"S1": (0, False), "S2": (0, False)}) is True
 
     def test_deeply_nested_with_not(self):
         """Double-NOT nests two NotCondition nodes."""
