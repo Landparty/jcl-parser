@@ -51,6 +51,11 @@ class ParseError:
 class JCLParseError(Exception):
     """Base exception class for JCL parsing errors"""
 
+    #: Set when the error is about a line read from an ``// INCLUDE`` member:
+    #: ``"INCLUDE member NAME, line K"``.  :attr:`line_number` is then the
+    #: line of the INCLUDE statement in the main source (issue #118).
+    include_note: str = ""
+
     def __init__(
         self,
         message: str,
@@ -66,13 +71,14 @@ class JCLParseError(Exception):
 
     def _format_message(self) -> str:
         """Format error message with context information"""
-        if self.line_number > 0 and self.column_number > 0:
-            return (
-                f"Line {self.line_number}, column {self.column_number}: {self.message}"
-            )
-        if self.line_number > 0:
-            return f"Line {self.line_number}: {self.message}"
-        return self.message
+        if self.line_number <= 0:
+            return self.message
+        location = f"Line {self.line_number}"
+        if self.include_note:
+            location += f" ({self.include_note})"
+        if self.column_number > 0:
+            location += f", column {self.column_number}"
+        return f"{location}: {self.message}"
 
 
 class JCLSyntaxError(JCLParseError):

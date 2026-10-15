@@ -3,6 +3,8 @@
 * #119 -- step / DD / job validation findings carry their source line.
 * #100 -- a standalone PROC wrapped in the contract's synthetic JOB statement
   validates clean.
+* #129 -- validate_jcl / CLI --validate honour the PROC base path.
+* #118 -- line numbers after an INCLUDE are reported against the main source.
 """
 
 from __future__ import annotations
@@ -12,8 +14,16 @@ from pathlib import Path
 import pytest
 
 from jclparser import parse_jcl, validate_jcl
-from jclparser.errors import ErrorSeverity
-from jclparser.model import DDStatement, Step
+from jclparser._include_origins import IncludeLineMap
+from jclparser.errors import ErrorSeverity, JCLSyntaxError
+from jclparser.include_loader import (
+    DictMemberLoader,
+    LineOrigin,
+    resolve_includes,
+    resolve_includes_with_origins,
+)
+from jclparser.model import DDStatement, Step, iter_execution_steps
+from jclparser.utils import split_source_lines
 from jclparser.validators import validate_step_structure
 
 pytestmark = pytest.mark.unit
@@ -263,3 +273,227 @@ class TestIssue129ValidateProcPath:
         out = capsys.readouterr().out
         assert "PROC: EXTP  [external]" in out
         assert "Note:" not in out
+
+
+# ---------------------------------------------------------------------------
+# #118 -- INCLUDE expansion no longer shifts later line numbers
+# ---------------------------------------------------------------------------
+
+_COMMON = "//C1 EXEC PGM=A\n//C2 EXEC PGM=B\n//C3 EXEC PGM=C\n//C4 EXEC PGM=D\n"
+
+_MEMBERS = {
+    "COMMON": _COMMON,
+    "BAD": "//B1 EXEC PGM=A\n//B2 EXEC\n",
+    "OUTER": "//O1 EXEC PGM=A\n//O2 EXEC PGM=B\n// INCLUDE MEMBER=BAD\n",
+    "WARN": "//W1 EXEC PGM=A\n//D1 DD DSN=X.Y,DISP=SHR,DISP=OLD\n",
+    "EMPTY": "",
+    "NOEOL": "//N1 EXEC PGM=A",
+}
+
+_ISSUE_118_JCL = (
+    "//J1 JOB (A),'X'\n// INCLUDE MEMBER=COMMON\n//S5 EXEC PGM=MYPGM\n//S6 EXEC\n"
+)
+
+
+def _loader() -> DictMemberLoader:
+    return DictMemberLoader(_MEMBERS)
+
+
+class TestIssue118IncludeLineNumbers:
+    def test_issue_repro_error_line(self) -> None:
+        with pytest.raises(JCLSyntaxError) as info:
+            parse_jcl(_ISSUE_118_JCL, include_loader=_loader())
+        assert info.value.line_number == 4
+        assert str(info.value) == "Line 4: EXEC statement missing program or procedure"
+
+    def test_steps_after_include_keep_their_lines(self) -> None:
+        source = _ISSUE_118_JCL.replace("//S6 EXEC\n", "")
+        job = parse_jcl(source, include_loader=_loader())
+        lines = {s.name: s.line_number for s in iter_execution_steps(job.steps)}
+        # Member steps are reported at the INCLUDE statement's line.
+        assert lines == {"C1": 2, "C2": 2, "C3": 2, "C4": 2, "S5": 3}
+
+    def test_member_error_names_member_and_member_line(self) -> None:
+        source = "//J1 JOB (A)\n//S0 EXEC PGM=X\n// INCLUDE MEMBER=BAD\n"
+        with pytest.raises(JCLSyntaxError) as info:
+            parse_jcl(source, include_loader=_loader())
+        assert info.value.line_number == 3
+        assert info.value.include_note == "INCLUDE member BAD, line 2"
+        assert str(info.value) == (
+            "Line 3 (INCLUDE member BAD, line 2): "
+            "EXEC statement missing program or procedure"
+        )
+
+    def test_nested_include_uses_outermost_line_and_innermost_member(self) -> None:
+        source = (
+            "//J1 JOB (A)\n//S0 EXEC PGM=X\n//S1 EXEC PGM=Y\n// INCLUDE MEMBER=OUTER\n"
+        )
+        with pytest.raises(JCLSyntaxError) as info:
+            parse_jcl(source, include_loader=_loader())
+        assert str(info.value).startswith("Line 4 (INCLUDE member BAD, line 2): ")
+
+    def test_warnings_are_relabelled(self) -> None:
+        source = (
+            "//J1 JOB (A)\n"
+            "// INCLUDE MEMBER=WARN\n"
+            "//S9 EXEC PGM=Y\n"
+            "//DD9 DD DSN=A.B,DISP=SHR,DISP=OLD\n"
+        )
+        job = parse_jcl(source, include_loader=_loader())
+        dup = [w for w in job.warnings if "duplicate parameter 'DISP'" in w]
+        assert [w.split(":")[0] for w in dup] == [
+            "Line 2 (INCLUDE member WARN, line 2)",
+            "Line 4",
+        ]
+        step = job.get_step("S9")
+        assert step is not None
+        assert step.dd_statements[0].line_number == 4
+        member_step = job.get_step("W1")
+        assert member_step is not None
+        assert member_step.dd_statements[0].line_number == 2
+
+    def test_unresolved_output_refs_are_relabelled(self) -> None:
+        loader = DictMemberLoader(
+            {"OUT": "//O1 EXEC PGM=A\n//D1 DD SYSOUT=A,OUTPUT=*.NOPE\n"}
+        )
+        source = "//J1 JOB (A)\n// INCLUDE MEMBER=OUT\n//S2 EXEC PGM=B\n"
+        job = parse_jcl(source, include_loader=loader)
+        assert [line for _, _, line in job.unresolved_output_refs] == [2]
+
+    def test_validation_findings_use_main_source_lines(self) -> None:
+        loader = DictMemberLoader({"DUP": "//S1 EXEC PGM=A\n"})
+        source = (
+            "//J1 JOB (A)\n//S1 EXEC PGM=X\n// INCLUDE MEMBER=DUP\n//S2 EXEC PGM=Y\n"
+        )
+        job = parse_jcl(source, include_loader=loader)
+        [dup] = [e for e in job.validate() if "Duplicate step" in e.message]
+        assert dup.line_number == 3
+        step = job.get_step("S2")
+        assert step is not None and step.line_number == 4
+
+    def test_validate_jcl_reports_member_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("JCL_PROCLIB_PATH", raising=False)
+        (tmp_path / "BAD.jcl").write_text(_MEMBERS["BAD"], encoding="utf-8")
+        source = "//J1 JOB (A)\n//S0 EXEC PGM=X\n// INCLUDE MEMBER=BAD\n//S9 EXEC\n"
+        findings = validate_jcl(source, proc_base_path=tmp_path)
+        assert [(f.line_number, f.message) for f in findings] == [
+            (
+                3,
+                (
+                    "EXEC statement missing program or procedure "
+                    "(INCLUDE member BAD, line 2)"
+                ),
+            ),
+            (4, "EXEC statement missing program or procedure"),
+        ]
+
+    def test_external_proc_lines_are_not_relabelled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("JCL_PROCLIB_PATH", raising=False)
+        (tmp_path / "SYS1.PROCLIB").mkdir()
+        (tmp_path / "SYS1.PROCLIB" / "EXTP.jcl").write_text(
+            "//EXTP PROC\n//PS1 EXEC PGM=A\n//PS2 EXEC PGM=B\n", encoding="utf-8"
+        )
+        (tmp_path / "COMMON.jcl").write_text(_COMMON, encoding="utf-8")
+        source = "//J1 JOB (A)\n// INCLUDE MEMBER=COMMON\n//S1 EXEC EXTP\n"
+        job = parse_jcl(source, proc_base_path=tmp_path)
+        proc = job.get_procedure("EXTP")
+        assert proc is not None and proc.is_external
+        # The PROC's lines are its own library member's (as without INCLUDE),
+        # never translated through this source's INCLUDE map.
+        plain = parse_jcl("//J1 JOB (A)\n//S1 EXEC EXTP\n", proc_base_path=tmp_path)
+        plain_proc = plain.get_procedure("EXTP")
+        assert plain_proc is not None
+        expected = [s.line_number for s in iter_execution_steps(plain_proc.steps)]
+        assert [s.line_number for s in iter_execution_steps(proc.steps)] == expected
+        assert expected[0] > 2  # would collapse to the INCLUDE line if relabelled
+        step = job.get_step("S1")
+        assert step is not None and step.line_number == 3
+
+    def test_instream_proc_from_member_is_relabelled(self) -> None:
+        loader = DictMemberLoader({"PROCS": "//P PROC\n//PS1 EXEC PGM=A\n// PEND\n"})
+        source = "//J1 JOB (A)\n// INCLUDE MEMBER=PROCS\n//S1 EXEC P\n"
+        job = parse_jcl(source, include_loader=loader)
+        proc = job.get_procedure("P")
+        assert proc is not None and proc.line_number == 2
+        assert [s.line_number for s in proc.steps] == [2]
+        step = job.get_step("S1")
+        assert step is not None and step.line_number == 3
+
+    def test_no_include_keeps_line_numbers(self) -> None:
+        job = parse_jcl("//J1 JOB (A)\n//S1 EXEC PGM=A\n//S2 EXEC PGM=B\n")
+        assert [s.line_number for s in iter_execution_steps(job.steps)] == [2, 3]
+
+
+class TestResolveIncludesWithOrigins:
+    def test_origins_map_every_line(self) -> None:
+        source = "//J1 JOB\n// INCLUDE MEMBER=OUTER\n//S9 EXEC PGM=Y\n"
+        text, origins = resolve_includes_with_origins(source, _loader())
+        assert text == resolve_includes(source, _loader())
+        assert len(origins) == len(split_source_lines(text))
+        assert origins == [
+            LineOrigin(None, 1),
+            LineOrigin("OUTER", 2, 1),
+            LineOrigin("OUTER", 2, 2),
+            LineOrigin("BAD", 2, 1),
+            LineOrigin("BAD", 2, 2),
+            LineOrigin(None, 3),
+        ]
+
+    def test_collected_members(self) -> None:
+        collected: list[str] = []
+        resolve_includes_with_origins(
+            "// INCLUDE MEMBER=OUTER\n", _loader(), collected=collected
+        )
+        assert collected == ["OUTER", "BAD"]
+
+    def test_empty_member_and_missing_newline(self) -> None:
+        source = "// INCLUDE MEMBER=EMPTY\n// INCLUDE MEMBER=NOEOL\n//X EXEC PGM=Z"
+        text, origins = resolve_includes_with_origins(source, _loader())
+        assert text == "\n//N1 EXEC PGM=A\n//X EXEC PGM=Z"
+        assert origins == [
+            LineOrigin("EMPTY", 1, 1),
+            LineOrigin("NOEOL", 2, 1),
+            LineOrigin(None, 3),
+        ]
+
+    def test_unresolved_member_left_intact(self) -> None:
+        source = "// INCLUDE MEMBER=MISSING\n"
+        assert resolve_includes_with_origins(source, _loader()) == (
+            source,
+            [LineOrigin(None, 1)],
+        )
+
+    def test_depth_limit_keeps_include_line(self) -> None:
+        text, origins = resolve_includes_with_origins(
+            "// INCLUDE MEMBER=OUTER\n", _loader(), max_depth=1
+        )
+        assert "// INCLUDE MEMBER=BAD" in text
+        assert origins[-1] == LineOrigin("OUTER", 1, 3)
+
+
+class TestIncludeLineMap:
+    def test_out_of_range_lines_pass_through(self) -> None:
+        line_map = IncludeLineMap([LineOrigin(None, 1), LineOrigin("M", 1, 1)])
+        assert line_map.translate(0) == 0
+        assert line_map.translate(9) == 9
+        assert line_map.label(2) == "Line 1 (INCLUDE member M, line 1)"
+        assert line_map.label(1) == "Line 1"
+        assert line_map.relabel_text("ended on line 2") == "ended on line 1"
+
+    def test_error_without_line_is_untouched(self) -> None:
+        exc = JCLSyntaxError("no line")
+        IncludeLineMap([LineOrigin("M", 1, 1)]).relabel_error(exc)
+        assert str(exc) == "no line"
+        assert exc.include_note == ""
+
+    def test_error_with_column(self) -> None:
+        exc = JCLSyntaxError("bad", line_number=2, column_number=5)
+        IncludeLineMap([LineOrigin(None, 1), LineOrigin("M", 1, 1)]).relabel_error(exc)
+        assert str(exc) == "Line 1 (INCLUDE member M, line 1), column 5: bad"
+        assert str(JCLSyntaxError("bad", 3, column_number=4)) == (
+            "Line 3, column 4: bad"
+        )

@@ -73,6 +73,7 @@ from .continuation_handler import ContinuationLineHandler  # noqa: F401
 from .errors import (
     ErrorSeverity,
     ErrorType,
+    JCLParseError,
     JCLStructureError,
     JCLSyntaxError,
     JCLValidationError,
@@ -106,6 +107,7 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
+    from ._include_origins import IncludeLineMap
     from .include_loader import IncludeMemberLoader
 
 logger = logging.getLogger(__name__)
@@ -132,12 +134,56 @@ def _parse_jcl_core(
     strict_mode = strict_mode or (config is not None and config.strict_mode)
     # Handle different input source types (FileNotFoundError propagates)
     content = read_source(source)
-    content, expanded_includes = _expand_includes(
+    content, expanded_includes, line_map = _expand_includes(
         content, include_loader, proc_base_path
     )
 
+    try:
+        job, own_procedures = _parse_expanded(
+            content,
+            config,
+            strict_mode=strict_mode,
+            proc_base_path=proc_base_path,
+            enable_external_procs=enable_external_procs,
+        )
+        _resolve_references(job, expanded_includes, strict=strict_mode)
+    except JCLParseError as exc:
+        # Report the error against the main source, not the expanded text.
+        if line_map is not None:
+            line_map.relabel_error(exc)
+        raise
+    if line_map is not None:
+        line_map.relabel_job(job, own_procedures)
+
+    if strict_mode and validate_job:
+        _raise_on_fatal_findings(job)
+
+    # Optional: auto-run SQL detection when requested via ParserConfig
+    if config is not None and getattr(config, "detect_sql", False):
+        _detect_sql(job)
+
+    if logger.isEnabledFor(logging.INFO):
+        _log_parse_summary(job)
+
+    return job
+
+
+def _parse_expanded(
+    content: str,
+    config: ParserConfig | None,
+    *,
+    strict_mode: bool,
+    proc_base_path: str | Path | None,
+    enable_external_procs: bool,
+) -> tuple[Job, list[Procedure]]:
+    """Parse the INCLUDE-expanded *content*: scan, build, load PROCs.
+
+    Also returns the in-stream procedures, read from *content* itself (the
+    external ones loaded afterwards come from their own library members).
+    """
     scanned = _merge_source_lines(content)
     job = _build_job(scanned, config, strict=strict_mode)
+    own_procedures = list(job.procedures)
 
     # Anything the line-classification pass discarded or repaired (a comment
     # field that looked like operands, an unterminated CNTL block) is reported
@@ -155,37 +201,30 @@ def _parse_jcl_core(
     # In strict mode, a DD statement with no preceding EXEC is a structural error
     if strict_mode and not job.steps:
         enforce_strict_dd_structure(content)
-
-    _resolve_references(job, expanded_includes, strict=strict_mode)
-
-    if strict_mode and validate_job:
-        _raise_on_fatal_findings(job)
-
-    # Optional: auto-run SQL detection when requested via ParserConfig
-    if config is not None and getattr(config, "detect_sql", False):
-        _detect_sql(job)
-
-    if logger.isEnabledFor(logging.INFO):
-        _log_parse_summary(job)
-
-    return job
+    return job, own_procedures
 
 
 def _expand_includes(
     content: str,
     include_loader: IncludeMemberLoader | None,
     proc_base_path: str | Path | None,
-) -> tuple[str, list[str]]:
-    """Expand INCLUDE MEMBER= statements; return the content and the members.
+) -> tuple[str, list[str], IncludeLineMap | None]:
+    """Expand INCLUDE MEMBER= statements.
 
     This runs before the main parse loop so that inlined content participates
     in continuation-line merging and everything else that follows.
+
+    Returns:
+        The expanded content, the members expanded, and the map from its
+        line numbers back to the main source (``None`` when nothing was
+        expanded, so the line numbers are the source's own).
     """
     expanded: list[str] = []
     if not _has_include_statement(content):
-        return content, expanded
+        return content, expanded, None
 
-    from .include_loader import JCLLIBMemberLoader, resolve_includes
+    from ._include_origins import IncludeLineMap
+    from .include_loader import JCLLIBMemberLoader, resolve_includes_with_origins
 
     if include_loader is None:
         include_loader = JCLLIBMemberLoader(base_path=proc_base_path)
@@ -194,18 +233,18 @@ def _expand_includes(
     # ORDER values spread across continuation lines are not picked up here
     # (those are rare in practice).
     jcllib_libs = _extract_jcllib_order(content) or None
-    content = resolve_includes(
+    content, origins = resolve_includes_with_origins(
         content,
         loader=include_loader,
         libraries=jcllib_libs,
-        _collected=expanded,
+        collected=expanded,
     )
     logger.debug(
         "expanded %d INCLUDE member(s) before parse: %s",
         len(expanded),
         expanded,
     )
-    return content, expanded
+    return content, expanded, IncludeLineMap(origins) if expanded else None
 
 
 def _build_job(
@@ -505,9 +544,12 @@ def _strict_parse_error(
         (t for cls, t in _STRICT_ERROR_TYPES.items() if isinstance(exc, cls)),
         ErrorType.SYNTAX_ERROR,
     )
+    # A line read from an INCLUDE member is reported at the INCLUDE line; the
+    # message names the member and the line within it (#118).
+    message = f"{exc.message} ({exc.include_note})" if exc.include_note else exc.message
     return ParseError(
         error_type=error_type,
-        message=exc.message,
+        message=message,
         line_number=exc.line_number or 0,
         context=exc.context,
         severity=ErrorSeverity.ERROR,
