@@ -50,9 +50,9 @@ Flags may appear anywhere, including between `FILE` and the query (`jcl-parser F
 | Flag | Description |
 |------|-------------|
 | `--json` | Output as JSON instead of text |
-| `--validate` | `validate_jcl(path, level="structure")`; exits 1 if it reports anything (warnings included; `job.validate()` ERRORs such as a duplicate step name are reported since #57, they used to print `OK`), else prints `OK - no errors found.` |
+| `--validate` | `validate_jcl(path, level="structure", proc_base_path=<--proc-path>)`; exits 1 if it reports anything (warnings included; `job.validate()` ERRORs such as a duplicate step name are reported since #57, they used to print `OK`), else prints `OK - no errors found.` `--proc-path` is honoured since 2026-10-15 (#129): it used to be ignored, so a job calling a PROC under `--proc-path` through `JCLLIB ORDER` printed `[ERROR] line N Procedure 'X' not found` unless `JCL_PROCLIB_PATH` was set. Without `--proc-path`, `JCL_PROCLIB_PATH` still applies |
 | `--explode` | Expand procedure calls (`job.explode()`) before displaying |
-| `--proc-path PATH` | Base path for external PROC libraries (enables `enable_external_procs`) |
+| `--proc-path PATH` | Base path for external PROC libraries and INCLUDE members (enables `enable_external_procs`); used by the parse and by `--validate`. The parse already loads every PROC the job calls from it (`procs` lists them `[external]`); when none is listed, `procs` notes which called PROCs were not found there, or that the job calls none (the note used to claim they "are expanded with --explode", which they are not) |
 | `--list-available` | With `procs`: list PROCs found under `--proc-path` (requires `--proc-path`) |
 | `--lint-list` | List all registered lint rule codes + descriptions, then exit (no FILE required) |
 | `--profile` | Profile the parse; includes timing/memory metrics in output |

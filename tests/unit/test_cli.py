@@ -546,13 +546,13 @@ class TestCLIProcs:
         assert "(no inline procedures)" in out
 
     def test_procs_proc_path_hint(self, capsys):
-        """When --proc-path is given without --explode, a hint is shown."""
+        """With --proc-path and no external PROC loaded, a note says why (#129)."""
         proclibs = str(FIXTURES / "proclibs")
         rc = main([SORT_JCL, "procs", "--proc-path", proclibs])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "external" in out.lower()
-        assert "--explode" in out
+        assert f"this job calls no PROC from '{proclibs}'" in out
+        assert "--explode" not in out
 
     def test_procs_json(self, capsys):
         rc = main([COMPLEX_JCL, "procs", "--json"])

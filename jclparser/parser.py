@@ -422,6 +422,9 @@ def validate_jcl(
     source: str | Path | IO,
     level: ValidationLevel | str | None = None,
     config: ParserConfig | None = None,
+    *,
+    proc_base_path: str | Path | None = None,
+    enable_external_procs: bool = True,
 ) -> list[ParseError]:
     """
     Validate JCL syntax and structure without full parsing.
@@ -435,6 +438,12 @@ def validate_jcl(
         config: Optional parser configuration.  Its ``dialect`` and enabled
             plugins apply to the parse; at the semantic level only the
             validation plugins it enables run (with no config, none do).
+        proc_base_path: Base directory for external PROC libraries and
+            INCLUDE members, exactly as for :func:`parse_jcl` (defaults to
+            the JCL_PROCLIB_PATH env var; with neither, none is read).
+        enable_external_procs: Load PROCs from the file system via JCLLIB
+            ORDER / the system PROCLIB, exactly as for :func:`parse_jcl`.
+            When False, a call to a PROC that is not in-stream is an error.
 
     Returns:
         List of ParseError objects (empty if valid)
@@ -459,7 +468,12 @@ def validate_jcl(
         # mode turns its ERROR findings into one JCLValidationError, which
         # used to land in the syntax-only fallback below and vanish (#57).
         job = _parse_jcl_core(
-            source, strict_mode=True, config=config, validate_job=False
+            source,
+            strict_mode=True,
+            config=config,
+            proc_base_path=proc_base_path,
+            enable_external_procs=enable_external_procs,
+            validate_job=False,
         )
         _add_job_findings(job, effective_level, errors)
         # Plugin-based validation (opt-in: only the plugins the config enables)

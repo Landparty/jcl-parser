@@ -159,3 +159,107 @@ class TestIssue100WrappedProcMember:
         assert [e.message for e in job.validate()] == [
             "Invalid job name 'LEGACYLENS': must be 1-8 characters, alphanumeric + @#$"
         ]
+
+
+# ---------------------------------------------------------------------------
+# #129 -- validate_jcl / CLI --validate honour the PROC base path
+# ---------------------------------------------------------------------------
+
+_JCLLIB_JOB = "//J1 JOB (A),'X'\n//JL JCLLIB ORDER=SYS1.PROCLIB\n//S1 EXEC EXTP\n"
+
+
+@pytest.fixture
+def proc_lib(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A PROC library with SYS1.PROCLIB(EXTP); JCL_PROCLIB_PATH unset."""
+    monkeypatch.delenv("JCL_PROCLIB_PATH", raising=False)
+    lib = tmp_path / "lib"
+    (lib / "SYS1.PROCLIB").mkdir(parents=True)
+    (lib / "SYS1.PROCLIB" / "EXTP.jcl").write_text(
+        "//EXTP PROC\n//PS1 EXEC PGM=IEFBR14\n", encoding="utf-8"
+    )
+    (tmp_path / "d.jcl").write_text(_JCLLIB_JOB, encoding="utf-8")
+    return lib
+
+
+class TestIssue129ValidateProcPath:
+    def test_without_base_path_the_proc_is_not_found(self, proc_lib: Path) -> None:
+        findings = validate_jcl(_JCLLIB_JOB, level="structure")
+        assert [(f.line_number, f.severity) for f in findings] == [
+            (3, ErrorSeverity.ERROR)
+        ]
+        assert "Procedure 'EXTP' not found" in findings[0].message
+
+    def test_proc_base_path_finds_the_proc(self, proc_lib: Path) -> None:
+        assert validate_jcl(_JCLLIB_JOB, "structure", proc_base_path=proc_lib) == []
+        assert validate_jcl(_JCLLIB_JOB, proc_base_path=str(proc_lib)) == []
+
+    def test_env_var_still_applies(
+        self, proc_lib: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("JCL_PROCLIB_PATH", str(proc_lib))
+        assert validate_jcl(_JCLLIB_JOB, level="structure") == []
+
+    def test_enable_external_procs_false(self, proc_lib: Path) -> None:
+        findings = validate_jcl(
+            _JCLLIB_JOB, proc_base_path=proc_lib, enable_external_procs=False
+        )
+        assert len(findings) == 1
+        assert "external PROC loading is disabled" in findings[0].message
+
+    def test_parameters_are_keyword_only(self, proc_lib: Path) -> None:
+        with pytest.raises(TypeError):
+            validate_jcl(_JCLLIB_JOB, "structure", None, proc_lib)  # type: ignore[misc]
+
+    def test_cli_validate_forwards_proc_path(
+        self, proc_lib: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from jclparser.cli import main
+
+        job_file = proc_lib.parent / "d.jcl"
+        assert main([str(job_file), "--proc-path", str(proc_lib), "--validate"]) == 0
+        assert "OK - no errors found." in capsys.readouterr().out
+
+        assert main([str(job_file), "--validate"]) == 1
+        assert "line 3 Procedure 'EXTP' not found" in capsys.readouterr().out
+
+    def test_cli_validate_json_forwards_proc_path(
+        self, proc_lib: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from jclparser.cli import main
+
+        argv = [str(proc_lib.parent / "d.jcl"), "--validate", "--json"]
+        assert main([*argv, "--proc-path", str(proc_lib)]) == 0
+        assert '"valid": true' in capsys.readouterr().out
+
+    def test_procs_note_names_procs_not_found(
+        self, proc_lib: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from jclparser.cli import main
+
+        job_file = proc_lib.parent / "f.jcl"
+        job_file.write_text("//J1 JOB (A)\n//S1 EXEC NOPE\n", encoding="utf-8")
+        assert main([str(job_file), "--proc-path", str(proc_lib), "procs"]) == 0
+        out = capsys.readouterr().out
+        assert f"Note: PROC(s) NOPE not found under '{proc_lib}'" in out
+        assert "expanded with --explode" not in out
+
+    def test_procs_note_when_job_calls_no_proc(
+        self, proc_lib: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from jclparser.cli import main
+
+        job_file = proc_lib.parent / "e.jcl"
+        job_file.write_text("//J1 JOB (A)\n//S1 EXEC PGM=X\n", encoding="utf-8")
+        assert main([str(job_file), "--proc-path", str(proc_lib), "procs"]) == 0
+        assert f"this job calls no PROC from '{proc_lib}'" in capsys.readouterr().out
+
+    def test_procs_lists_external_proc_without_note(
+        self, proc_lib: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from jclparser.cli import main
+
+        job_file = proc_lib.parent / "d.jcl"
+        assert main([str(job_file), "--proc-path", str(proc_lib), "procs"]) == 0
+        out = capsys.readouterr().out
+        assert "PROC: EXTP  [external]" in out
+        assert "Note:" not in out
