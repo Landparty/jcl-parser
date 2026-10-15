@@ -17,7 +17,9 @@ Detected issues
   then opened ``OLD`` / ``SHR`` in step M (M > N).
 
 The THEN and ELSE branches of an ``IF`` are analysed separately (they never
-both run) and their catalog state is merged at ``ENDIF``.  Backward references
+both run) and their catalog state is merged at ``ENDIF``.  A step whose
+``COND=`` can bypass it is analysed as such a THEN branch with an empty ELSE;
+``COND=EVEN`` alone does not bypass a step on the normal path.  Backward references
 (``DSN=*.STEP.DD``) count as the dataset they point at.
 
 Note: temporary datasets (``&&name``) are intentionally skipped here — they
@@ -178,6 +180,61 @@ def _iter_step_events(nodes: list[_Node]) -> Iterator[_StepEvents]:
 _Node = _StepEvents | _Branch
 
 
+def _cond_may_bypass(step: Step) -> bool:
+    """True when *step*'s ``COND=`` can bypass it on the normal path.
+
+    ``COND=ONLY`` runs the step only after an abend, and any RC test
+    (``COND=(4,LT)``, ``COND=((0,NE,S1),EVEN)``) bypasses it when the test
+    is true; an unresolved ``COND=&C`` may be either.  ``COND=EVEN`` alone
+    runs the step whether or not an earlier step abended, so it always runs
+    on the normal path.
+    """
+    cond = step.parameters.get("COND")
+    if not cond:
+        return False
+    raw = ",".join(cond) if isinstance(cond, list) else str(cond)
+    tokens = [t.strip().upper() for t in re.split(r"[(),]", raw) if t.strip()]
+    return any(token != "EVEN" for token in tokens)
+
+
+def _step_events(
+    step: Step,
+    lifecycle: dict[str, list[DatasetEvent]],
+    by_dd: dict[str, str],
+    path: _Path,
+) -> _StepEvents | None:
+    """Record *step*'s events into *lifecycle*; ``None`` when it has none."""
+    step_name = step.name or ""
+    step_events: list[_Event] = []
+    for dd in _dataset_dds(step):
+        if not dd.dataset_name:
+            continue
+        # A backward reference names the dataset of the DD it points at;
+        # NULLFILE and an unresolvable reference name none.
+        dsn_key = _counted_dataset_name(dd.dataset_name, step_name, by_dd)
+        if dsn_key is None:
+            continue
+        if dd.name:
+            by_dd[f"{step_name}.{dd.name}".upper()] = dsn_key
+        status, normal, abnormal = _parse_disp_tokens(dd.disposition)
+        if not status:
+            continue
+
+        event = DatasetEvent(
+            step_name=step.name or "(unnamed)",
+            dd_name=dd.name or "",
+            action=_action_from_disp(status),
+            disp_status=status,
+            disp_normal=normal,
+            disp_abnormal=abnormal,
+            line_number=dd.line_number,
+        )
+        events = lifecycle.setdefault(dsn_key, [])
+        step_events.append((dsn_key, len(events), event))
+        events.append(event)
+    return _StepEvents(step_events, path) if step_events else None
+
+
 def _collect_events(
     items: list[Step | ConditionalBlock],
     lifecycle: dict[str, list[DatasetEvent]],
@@ -192,6 +249,10 @@ def _collect_events(
     state can be run through them separately.  *by_dd* maps ``"STEP.DD"`` to
     the dataset seen so far, to resolve ``DSN=*.STEP.DD`` backward references.
     *path* is the IF branches *items* sit in.
+
+    A step whose ``COND=`` can bypass it (:func:`_cond_may_bypass`) is a
+    THEN branch with an empty ELSE, like ``// IF ... THEN`` around it
+    (issue #108).
     """
     nodes: list[_Node] = []
     for item in items:
@@ -210,36 +271,12 @@ def _collect_events(
             continue
         if not isinstance(item, Step):
             continue
-        step_name = item.name or ""
-        step_events: list[_Event] = []
-        for dd in _dataset_dds(item):
-            if not dd.dataset_name:
-                continue
-            # A backward reference names the dataset of the DD it points at;
-            # NULLFILE and an unresolvable reference name none.
-            dsn_key = _counted_dataset_name(dd.dataset_name, step_name, by_dd)
-            if dsn_key is None:
-                continue
-            if dd.name:
-                by_dd[f"{step_name}.{dd.name}".upper()] = dsn_key
-            status, normal, abnormal = _parse_disp_tokens(dd.disposition)
-            if not status:
-                continue
-
-            event = DatasetEvent(
-                step_name=item.name or "(unnamed)",
-                dd_name=dd.name or "",
-                action=_action_from_disp(status),
-                disp_status=status,
-                disp_normal=normal,
-                disp_abnormal=abnormal,
-                line_number=dd.line_number,
-            )
-            events = lifecycle.setdefault(dsn_key, [])
-            step_events.append((dsn_key, len(events), event))
-            events.append(event)
-        if step_events:
-            nodes.append(_StepEvents(step_events, path))
+        bypassable = _cond_may_bypass(item)
+        step_path = path + ((id(item), True),) if bypassable else path
+        node = _step_events(item, lifecycle, by_dd, step_path)
+        if node is None:
+            continue
+        nodes.append(_Branch([node], []) if bypassable else node)
     return nodes
 
 
