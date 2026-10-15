@@ -201,6 +201,15 @@ def load_external_procedures(
                 )
         return
 
+    # Nothing to resolve and nothing explode_job()'s own default chain would
+    # not find the same way: skip building the loader (most jobs).
+    if (
+        proc_base_path is None
+        and not job.jcllib_order
+        and next(_unresolved_proc_calls(job), None) is None
+    ):
+        return
+
     from .proc_loader import DEFAULT_SYSTEM_PROCLIBS, create_default_loader
 
     logger.debug("loading external PROCs; JCLLIB order: %s", job.jcllib_order)
@@ -317,9 +326,20 @@ def resolve_set_symbols(job: Job, strict: bool = False) -> None:
 
     _flat_steps = list(iter_execution_steps(job.steps))
     for _owner, _dd in _dds_with_owners(_flat_steps):
+        _scope = _scope_for_step(_owner, job, _set_scope, _step_scopes, strict)
+        if _owner.is_procedure:
+            # Merged into the called PROC: resolved in its scope at explode
+            # time; only job symbols the PROC cannot shadow are resolved now.
+            substitute_dd_statement(
+                _dd,
+                _without_proc_symbols(_scope, _owner, job),
+                allow_undefined=True,
+                collapse_double_amp=False,
+            )
+            continue
         substitute_dd_statement(
             _dd,
-            _scope_for_step(_owner, job, _set_scope, _step_scopes, strict),
+            _scope,
             strict=False,
             warnings=job.warnings,
             collapse_double_amp=False,
@@ -328,8 +348,67 @@ def resolve_set_symbols(job: Job, strict: bool = False) -> None:
 
     for _step in _flat_steps:
         _step_scope = _scope_for_step(_step, job, _set_scope, _step_scopes, strict)
-        _substitute_step_parameters(_step, _step_scope, job.warnings)
+        if _step.is_procedure:
+            _substitute_proc_call_parameters(_step, _step_scope, job)
+        else:
+            _substitute_step_parameters(_step, _step_scope, job.warnings)
         _substitute_step_names(_step, _step_scope)
+
+
+def _proc_scope_symbols(step: Step, job: Job) -> set[str]:
+    """Symbols the PROC called by *step* defines over the job's SETs.
+
+    The EXEC statement's symbolic values, the PROC statement's defaults and
+    the PROC's own SETs all take precedence over a job-level SET inside the
+    procedure (issue #126).  The PROC's are known only once it is loaded.
+    """
+    from .explosion import is_exec_override_keyword
+
+    names = {
+        key.upper() for key in step.parameters if not is_exec_override_keyword(key)
+    }
+    procedure = job.get_procedure(step.procedure or "")
+    if procedure is not None:
+        names |= {key.upper() for key in procedure.parameters}
+        names |= {key.upper() for key in procedure.set_statements}
+    return names
+
+
+def _without_proc_symbols(scope: SymbolScope, step: Step, job: Job) -> SymbolScope:
+    """*scope* minus the SETs the PROC called by *step* shadows."""
+    from .explosion import SymbolScope
+
+    shadowed = _proc_scope_symbols(step, job)
+    return SymbolScope(
+        set_symbols={
+            k: v for k, v in scope.set_symbols.items() if k.upper() not in shadowed
+        },
+        system_provider=scope.system_provider,
+    )
+
+
+def _substitute_proc_call_parameters(step: Step, scope: SymbolScope, job: Job) -> None:
+    """Substitute job SET symbols into an ``EXEC procname`` statement.
+
+    Its symbolic values (``HLQ=&ENV``) belong to the job: they resolve
+    against the job's SETs.  Its keyword overrides (``PARM.S1='&HLQ'``) are
+    merged into the PROC and resolve in its scope at explode time, so only
+    job symbols the PROC does not shadow are resolved here.  Nothing is
+    blanked: a symbol the job does not define may be the PROC's, and an
+    emptied ``PARM.S1=`` would nullify the PROC's PARM (issue #126).
+    """
+    from .explosion import is_exec_override_keyword, substitute_parameters_dict
+
+    proc_scope = _without_proc_symbols(scope, step, job)
+    step.parameters = {
+        key: substitute_parameters_dict(
+            {key: value},
+            proc_scope if is_exec_override_keyword(key) else scope,
+            allow_undefined=True,
+            collapse_double_amp=False,
+        )[key]
+        for key, value in step.parameters.items()
+    }
 
 
 def _preresolve_set_table(table: dict[str, str]) -> tuple[dict[str, str], list[str]]:
