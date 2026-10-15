@@ -158,6 +158,9 @@ class JobBuilder:
         self.current_terminates_on_slash = False
         #: Track DDs that appear before first EXEC
         self.orphaned_dds: list[DDStatement] = []
+        #: ``len(conditional_stack)`` when the open PROC began: IF blocks at
+        #: or below it belong to the enclosing job, not to the procedure.
+        self.proc_cond_depth = 0
         #: True while accumulating JOBLIB concatenation lines
         self.in_joblib_concat = False
         #: Qualified name (``PROCSTEP.DDNAME``) of the override DD the current
@@ -338,18 +341,8 @@ class JobBuilder:
                 self.current_step.add_dd(dd)
             self.orphaned_dds = []
 
-        # Add step to procedure if we're inside PROC/PEND, otherwise to job
-        if self.conditional_stack:
-            active_cond, active_branch = self.conditional_stack[-1]
-            if active_branch == "THEN":
-                active_cond.add_then_step(self.current_step)
-            else:
-                active_cond.add_else_step(self.current_step)
-        elif self.current_procedure is not None:
-            self.current_procedure.steps.append(self.current_step)
-        else:
-            assert self.job is not None
-            self.job.add_step(self.current_step)
+        # Add step to the open IF branch, the PROC being defined, or the job
+        self._attach(self.current_step)
 
     def _on_dd(self, stmt: Statement, line_num: int) -> None:
         # Create the DD statement
@@ -433,11 +426,25 @@ class JobBuilder:
             self.job.add_procedure(self.current_procedure)
         else:
             self.pending_procedures.append(self.current_procedure)
+        # IF blocks already open belong to the job, not to this procedure.
+        self.proc_cond_depth = len(self.conditional_stack)
         # Reset current_step since we're now inside procedure
         self.current_step = None
 
     def _on_pend(self, stmt: Statement, line_num: int) -> None:
-        # End of procedure definition - stop tracking
+        # End of procedure definition - stop tracking.  PEND closes the PROC
+        # scope: an IF opened in the body and never closed by ENDIF ends here
+        # (it is already attached to the procedure), so later job steps are
+        # not read into it (#102).
+        procedure = self.current_procedure
+        if procedure is not None:
+            while len(self.conditional_stack) > self.proc_cond_depth:
+                cond, _branch = self.conditional_stack.pop()
+                self._warnings_sink().append(
+                    f"Line {cond.line_number}: IF block in PROC {procedure.name} "
+                    f"has no matching ENDIF; closed at PEND (line {line_num})"
+                )
+        self.proc_cond_depth = 0
         self.current_procedure = None
         self.current_step = None
 
@@ -574,20 +581,32 @@ class JobBuilder:
             condition = condition[:-5]
         return condition
 
-    def _attach_conditional(self, conditional: ConditionalBlock) -> None:
-        """Place a new IF block in the enclosing branch, PROC, job or buffer."""
-        if self.conditional_stack:
-            active_cond, active_branch = self.conditional_stack[-1]
+    def _innermost_if(self) -> tuple[ConditionalBlock, str] | None:
+        """The innermost IF block open in the current scope, or None.
+
+        Inside a PROC/PEND body only IF blocks opened in that body count; an
+        IF the job opened before the PROC statement stays the job's (#102).
+        """
+        floor = self.proc_cond_depth if self.current_procedure is not None else 0
+        if len(self.conditional_stack) > floor:
+            return self.conditional_stack[-1]
+        return None
+
+    def _attach(self, item: Step | ConditionalBlock) -> None:
+        """Place a step or IF block in the open branch, PROC, job or buffer."""
+        open_if = self._innermost_if()
+        if open_if is not None:
+            active_cond, active_branch = open_if
             if active_branch == "THEN":
-                active_cond.add_then_step(conditional)
+                active_cond.add_then_step(item)
             else:
-                active_cond.add_else_step(conditional)
+                active_cond.add_else_step(item)
         elif self.current_procedure is not None:
-            self.current_procedure.steps.append(conditional)
+            self.current_procedure.steps.append(item)
         elif self.job is not None:
-            self.job.steps.append(conditional)
+            self.job.steps.append(item)
         else:
-            self.pending_steps.append(conditional)
+            self.pending_steps.append(item)
 
     def _open_if(self, stmt: Statement) -> None:
         """Handle ``IF``: record a new :class:`ConditionalBlock` and enter it."""
@@ -601,14 +620,14 @@ class JobBuilder:
             self.job.add_conditional(conditional)
         else:
             self.pending_conditionals.append(conditional)
-        self._attach_conditional(conditional)
+        self._attach(conditional)
         self.conditional_stack.append((conditional, "THEN"))
 
     def _switch_branch(self, branch: str, line_num: int) -> None:
         """Handle ``THEN`` / ``ELSE``: make *branch* the open IF's active one."""
-        if self.conditional_stack:
-            active_cond, _ = self.conditional_stack.pop()
-            self.conditional_stack.append((active_cond, branch))
+        open_if = self._innermost_if()
+        if open_if is not None:
+            self.conditional_stack[-1] = (open_if[0], branch)
         else:
             self._warnings_sink().append(
                 f"Line {line_num}: {branch} with no matching IF; ignored"
@@ -616,7 +635,7 @@ class JobBuilder:
 
     def _close_if(self, line_num: int) -> None:
         """Handle ``ENDIF``: leave the innermost open IF block."""
-        if self.conditional_stack:
+        if self._innermost_if() is not None:
             self.conditional_stack.pop()
         else:
             self._warnings_sink().append(
