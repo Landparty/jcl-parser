@@ -2,9 +2,10 @@
 
 In-stream data records were normalized like JCL statements: columns 72-80
 were dropped from 80-column card images and tabs were expanded.  Data now
-reaches the DD as coded (only trailing blanks are trimmed); the program
-profiles and SQL detection, which read control statements, still see
-columns 1-71 only.
+reaches the DD as coded: an 80-column card image whole, any other record
+with its trailing blanks trimmed.  The program profiles and SQL detection,
+which read control statements, see columns 1-71 of a card image only, and
+an editor line of 72-79 characters whole.
 """
 
 from __future__ import annotations
@@ -55,9 +56,21 @@ def test_columns_72_to_80_and_tabs_are_kept():
     )
 
 
-def test_trailing_blanks_of_fixed_records_are_trimmed():
-    data = parse_jcl(_job(_card("DATA1"))).steps[0].dd_statements[0].inline_data
-    assert data == "DATA1"
+def test_card_image_kept_whole_other_records_trimmed():
+    jcl = _job(_card("DATA1"), "DATA2   ")
+    data = parse_jcl(jcl).steps[0].dd_statements[0].inline_data
+    assert data == _card("DATA1") + "\nDATA2"
+
+
+def test_editor_control_line_of_72_to_79_columns_read_whole():
+    # Not a card image: no sequence field to drop (review of PR #137).
+    name = "PROD.VERY.LONG.DATASET.NAME.THAT.GOES.PAST.COLUMN.SEVENTY.ONE.TOO"
+    line = f"  DELETE {name}"
+    assert 71 < len(line) < 80
+    jcl = _job(line, program="IDCAMS", dd="SYSIN")
+    analysis = analyze_step(parse_jcl(jcl).steps[0])
+    assert analysis is not None
+    assert analysis.notes == [f"IDCAMS DELETE {name}"]
 
 
 def test_dd_data_and_dlm_keep_columns_too():
@@ -90,10 +103,12 @@ def test_delimiter_with_sequence_number_still_ends_data():
     assert job.steps[0].dd_statements[0].inline_data == _numbered("REC1", 10)
 
 
-def test_control_card_text_drops_columns_72_to_80():
+def test_control_card_text_drops_columns_72_to_80_of_cards_only():
+    editor = "  DELETE " + "A" * 70
     assert control_card_text(_numbered("  DELETE A.B", 1) + "\nSHORT") == (
         "  DELETE A.B\nSHORT"
     )
+    assert control_card_text(editor) == editor
 
 
 def test_numbered_idcams_continuation_still_continues():

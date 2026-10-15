@@ -144,18 +144,31 @@ def is_continued_card_image(line: str, next_line: str | None = None) -> bool:
     return _has_column_72_indicator(line, next_line)
 
 
-def control_card_text(text: str) -> str:
-    """In-stream control statements as a utility reads them: columns 1-71.
+#: Length of a card-image record: columns 1-71 text, 72 continuation,
+#: 73-80 sequence field.
+CARD_IMAGE_LENGTH = 80
 
-    In-stream data keeps whole records (issue #115), so on an 80-column card
-    image columns 72-80 -- a continuation indicator and a sequence field to
-    the utilities that read control statements -- are still in the text.
-    This drops them from every record longer than 71 characters, as
-    :func:`normalize_jcl_line` does for JCL, so a numbered deck does not
-    leak its sequence numbers into the statements.
+
+def is_card_image(record: str) -> bool:
+    """Whether in-stream *record* is an 80-column card image.
+
+    In-stream data keeps a card image whole and trims the trailing blanks of
+    any other record (issue #115), so exactly 80 columns is what tells a card
+    -- whose columns 72-80 are not statement text -- from an editor line of
+    72-79 characters, which is text to its last column.
+    """
+    return len(record) == CARD_IMAGE_LENGTH
+
+
+def control_card_text(text: str) -> str:
+    """In-stream control statements as a utility reads them.
+
+    A card image (:func:`is_card_image`) is cut to columns 1-71, so a
+    numbered deck does not leak its continuation column and sequence field
+    into the statements; any other record is taken whole.
     """
     return "\n".join(
-        record[:71].rstrip() if len(record) > 71 else record
+        record[:71].rstrip() if is_card_image(record) else record
         for record in split_source_lines(text)
     )
 

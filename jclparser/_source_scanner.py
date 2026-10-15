@@ -30,6 +30,7 @@ from .continuation_handler import ContinuationLineHandler
 from .errors import JCLSyntaxError
 from .utils import (
     instream_delimiter,
+    is_card_image,
     is_continued_card_image,
     normalize_jcl_lines,
     split_source_lines,
@@ -80,7 +81,7 @@ def _merge_source_lines(content: str) -> ScannedSource:
     # raw record is woven in (trailing blanks aside) rather than the
     # normalized one (issue #115).  CNTL control records are statements
     # with JCL's column rules and stay normalized.
-    data_lines = {i: raw_lines[i].rstrip(" ") for i in classifier.inline_data_indices}
+    data_lines = {i: _data_record(raw_lines[i]) for i in classifier.inline_data_indices}
     merged_lines = _weave_lines(
         lines,
         merged_start,
@@ -129,6 +130,17 @@ def merge_continuations(
             )
         },
     )
+
+
+def _data_record(record: str) -> str:
+    """An in-stream data record as woven into the parse (issue #115).
+
+    A card image (exactly 80 columns, :func:`utils.is_card_image`) is kept
+    whole, so readers of control statements can still tell its columns
+    72-80 from text (:func:`utils.control_card_text`); any other record only
+    loses its trailing blanks.
+    """
+    return record if is_card_image(record) else record.rstrip(" ")
 
 
 def _weave_lines(

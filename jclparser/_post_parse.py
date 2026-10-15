@@ -30,7 +30,7 @@ from .utils import split_source_lines
 
 if TYPE_CHECKING:
     from .explosion import SymbolScope
-    from .model import DDStatement
+    from .model import Procedure
 
 logger = logging.getLogger(__name__)
 
@@ -181,14 +181,18 @@ def load_external_procedures(
     The default loader chain (in-stream, then the ``JCLLIB ORDER`` libraries
     followed by the system PROCLIB under *proc_base_path* /
     ``JCL_PROCLIB_PATH``, then the built-in templates) is attached whenever
-    external loading is enabled, JCLLIB or not, and every PROC it finds is
-    added to ``job.procedures``.
+    external loading is enabled and anything needs it (a JCLLIB,
+    *proc_base_path*, or a PROC call that is not in-stream), and every PROC
+    it finds is added to ``job.procedures``.
 
     A PROC that is still not found is an error in strict mode only when the
     job names a JCLLIB.  With no JCLLIB the PROC is looked up in the JES
-    PROCLIB, which may simply not be available here: that is a warning
-    (issue #116).  With external loading disabled, strict mode raises for
-    any PROC that is not in-stream.
+    PROCLIB, which may simply not be available here (issue #116).  Either
+    way ``job.validate()`` reports every call to a PROC not in
+    ``job.procedures`` as a WARNING
+    (:func:`~jclparser.validators.validate_procedure_references`), the one
+    place it is reported.  With external loading disabled, strict mode
+    raises for any PROC that is not in-stream.
     """
     if not enable_external_procs:
         if strict_mode:
@@ -210,7 +214,7 @@ def load_external_procedures(
     ):
         return
 
-    from .proc_loader import DEFAULT_SYSTEM_PROCLIBS, create_default_loader
+    from .proc_loader import create_default_loader
 
     logger.debug("loading external PROCs; JCLLIB order: %s", job.jcllib_order)
     proc_loader = create_default_loader(
@@ -228,14 +232,7 @@ def load_external_procedures(
         proc = proc_loader.load_procedure(step.procedure or "", libraries)
         if proc:
             job.add_procedure(proc)
-        elif not job.jcllib_order:
-            job.warnings.append(
-                f"Line {step.line_number}: procedure '{step.procedure}' not "
-                f"found in-stream, in {', '.join(DEFAULT_SYSTEM_PROCLIBS)} or "
-                "among the built-in PROCs; with no JCLLIB ORDER it is assumed "
-                "to be in a system PROCLIB that is not available here"
-            )
-        elif strict_mode:
+        elif job.jcllib_order and strict_mode:
             raise JCLSyntaxError(
                 f"Procedure '{step.procedure}' not found. "
                 f"Searched in: inline={len(job.procedures)} procedures, "
@@ -313,7 +310,7 @@ def resolve_set_symbols(job: Job, strict: bool = False) -> None:
     warning). With *strict*, :class:`~jclparser.errors.JCLSyntaxError` is
     raised instead.
     """
-    from .explosion import substitute_dd_statement
+    from .explosion import _step_dds_and_overrides, substitute_dd_statement
     from .system_symbols import is_system_symbol_name
 
     _set_scope = _scope_for_table(job.set_statements, job.warnings, strict)
@@ -325,90 +322,85 @@ def resolve_set_symbols(job: Job, strict: bool = False) -> None:
     from .model import iter_execution_steps
 
     _flat_steps = list(iter_execution_steps(job.steps))
-    for _owner, _dd in _dds_with_owners(_flat_steps):
-        _scope = _scope_for_step(_owner, job, _set_scope, _step_scopes, strict)
-        if _owner.is_procedure:
-            # Merged into the called PROC: resolved in its scope at explode
-            # time; only job symbols the PROC cannot shadow are resolved now.
-            substitute_dd_statement(
-                _dd,
-                _without_proc_symbols(_scope, _owner, job),
-                allow_undefined=True,
-                collapse_double_amp=False,
-            )
-            continue
-        substitute_dd_statement(
-            _dd,
-            _scope,
-            strict=False,
-            warnings=job.warnings,
-            collapse_double_amp=False,
-            keep_undefined=is_system_symbol_name,
-        )
-
     for _step in _flat_steps:
         _step_scope = _scope_for_step(_step, job, _set_scope, _step_scopes, strict)
         if _step.is_procedure:
-            _substitute_proc_call_parameters(_step, _step_scope, job)
+            _resolve_proc_call_set_symbols(_step, _step_scope, job)
         else:
+            for _dd in _step_dds_and_overrides(_step):
+                substitute_dd_statement(
+                    _dd,
+                    _step_scope,
+                    strict=False,
+                    warnings=job.warnings,
+                    collapse_double_amp=False,
+                    keep_undefined=is_system_symbol_name,
+                )
             _substitute_step_parameters(_step, _step_scope, job.warnings)
         _substitute_step_names(_step, _step_scope)
 
 
-def _proc_scope_symbols(step: Step, job: Job) -> set[str]:
-    """Symbols the PROC called by *step* defines over the job's SETs.
+def _resolve_proc_call_set_symbols(step: Step, scope: SymbolScope, job: Job) -> None:
+    """Substitute job SET symbols into an ``EXEC procname`` statement.
+
+    Its symbolic values (``HLQ=&ENV``) belong to the job: they resolve
+    against the job's SETs.  Its keyword overrides (``PARM.S1='&HLQ'``) and
+    DDs are merged into the PROC and resolve in its scope at explode time
+    (issue #126), so only the job SETs the PROC cannot shadow are resolved
+    here -- none at all when the PROC is not loaded yet, since its defaults
+    and SETs are unknown (``explode_job(proc_loader=...)``).  Nothing is
+    blanked: a symbol the job does not define may be the PROC's, and an
+    emptied ``PARM.S1=`` would nullify the PROC's PARM.
+    """
+    from .explosion import (
+        _resolve_symbolic_values,
+        _step_dds_and_overrides,
+        is_exec_override_keyword,
+        substitute_dd_statement,
+        substitute_parameters_dict,
+    )
+
+    _resolve_symbolic_values(step, scope)
+    procedure = job.get_procedure(step.procedure or "")
+    if procedure is None:
+        return
+    proc_scope = _without_proc_symbols(scope, step, procedure)
+    for dd in _step_dds_and_overrides(step):
+        substitute_dd_statement(
+            dd, proc_scope, allow_undefined=True, collapse_double_amp=False
+        )
+    for key, value in list(step.parameters.items()):
+        if is_exec_override_keyword(key):
+            step.parameters[key] = substitute_parameters_dict(
+                {key: value},
+                proc_scope,
+                allow_undefined=True,
+                collapse_double_amp=False,
+            )[key]
+
+
+def _without_proc_symbols(
+    scope: SymbolScope, step: Step, procedure: Procedure
+) -> SymbolScope:
+    """*scope* minus the job SETs the PROC called by *step* shadows.
 
     The EXEC statement's symbolic values, the PROC statement's defaults and
     the PROC's own SETs all take precedence over a job-level SET inside the
-    procedure (issue #126).  The PROC's are known only once it is loaded.
+    procedure (issue #126).
     """
-    from .explosion import is_exec_override_keyword
+    from .explosion import SymbolScope, is_exec_override_keyword
 
-    names = {
+    shadowed = {
         key.upper() for key in step.parameters if not is_exec_override_keyword(key)
     }
-    procedure = job.get_procedure(step.procedure or "")
-    if procedure is not None:
-        names |= {key.upper() for key in procedure.parameters}
-        names |= {key.upper() for key in procedure.set_statements}
-    return names
-
-
-def _without_proc_symbols(scope: SymbolScope, step: Step, job: Job) -> SymbolScope:
-    """*scope* minus the SETs the PROC called by *step* shadows."""
-    from .explosion import SymbolScope
-
-    shadowed = _proc_scope_symbols(step, job)
+    shadowed |= {key.upper() for key in procedure.parameters}
+    shadowed |= {key.upper() for key in procedure.set_statements}
     return SymbolScope(
         set_symbols={
             k: v for k, v in scope.set_symbols.items() if k.upper() not in shadowed
         },
         system_provider=scope.system_provider,
     )
-
-
-def _substitute_proc_call_parameters(step: Step, scope: SymbolScope, job: Job) -> None:
-    """Substitute job SET symbols into an ``EXEC procname`` statement.
-
-    Its symbolic values (``HLQ=&ENV``) belong to the job: they resolve
-    against the job's SETs.  Its keyword overrides (``PARM.S1='&HLQ'``) are
-    merged into the PROC and resolve in its scope at explode time, so only
-    job symbols the PROC does not shadow are resolved here.  Nothing is
-    blanked: a symbol the job does not define may be the PROC's, and an
-    emptied ``PARM.S1=`` would nullify the PROC's PARM (issue #126).
-    """
-    from .explosion import is_exec_override_keyword, substitute_parameters_dict
-
-    proc_scope = _without_proc_symbols(scope, step, job)
-    step.parameters = {
-        key: substitute_parameters_dict(
-            {key: value},
-            proc_scope if is_exec_override_keyword(key) else scope,
-            allow_undefined=True,
-            collapse_double_amp=False,
-        )[key]
-        for key, value in step.parameters.items()
-    }
 
 
 def _preresolve_set_table(table: dict[str, str]) -> tuple[dict[str, str], list[str]]:
@@ -530,26 +522,6 @@ def _scope_for_step(
             {**job.set_statements, **step.set_symbols}, job.warnings, strict
         )
     return step_scopes[id(step)]
-
-
-def _dds_with_owners(steps: list[Step]) -> list[tuple[Step, DDStatement]]:
-    """Return every ``(step, dd)`` pair SET substitution must visit.
-
-    Step DD statements come first, then PROCSTEP.DDNAME overrides.
-    """
-    # PROCSTEP.DDNAME overrides (and their concatenation members) are job-level
-    # JCL too; they live outside ``dd_statements``, so get_dd_statements()
-    # alone left ``&HLQ`` unresolved in them even after explosion.
-    _override_dds = [
-        (_step, _dd)
-        for _step in steps
-        for _dd in [
-            *_step.dd_overrides.values(),
-            *(m for ms in _step.dd_override_concatenations.values() for m in ms),
-        ]
-    ]
-    _step_dds = [(_step, _dd) for _step in steps for _dd in _step.dd_statements]
-    return [*_step_dds, *_override_dds]
 
 
 def _substitute_step_parameters(

@@ -73,7 +73,7 @@ def test_loader_does_not_search_system_proclib_twice(base, monkeypatch):
 def test_unknown_proc_without_jcllib_is_a_warning():
     jcl = "//J JOB\n//R EXEC NOSUCH\n"
     job = parse_jcl(jcl, strict_mode=True)
-    assert any("'NOSUCH' not found" in w for w in job.warnings)
+    assert job.warnings == []
     assert validate_jcl(jcl) == []
     (finding,) = validate_jcl(jcl, level="structure")
     assert finding.severity == ErrorSeverity.WARNING
@@ -84,6 +84,17 @@ def test_unknown_proc_with_jcllib_is_still_an_error(base):
     with pytest.raises(JCLSyntaxError, match="'NOSUCH' not found"):
         parse_jcl(jcl, strict_mode=True, proc_base_path=base)
     assert validate_jcl(jcl)
+
+
+def test_unknown_proc_reported_once_with_or_without_jcllib(base):
+    # Lenient parse: one WARNING from job.validate(), nothing in
+    # job.warnings, whether or not the job names a JCLLIB (review of #137).
+    for jcllib in ("", "// JCLLIB ORDER=USER.PROCLIB\n"):
+        job = parse_jcl(f"//J JOB\n{jcllib}//R EXEC NOSUCH\n", proc_base_path=base)
+        assert job.warnings == []
+        (finding,) = job.validate()
+        assert finding.severity == ErrorSeverity.WARNING
+        assert finding.message.startswith("Procedure 'NOSUCH' not found")
 
 
 def test_external_loading_disabled_still_strict():

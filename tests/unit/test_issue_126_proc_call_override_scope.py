@@ -126,3 +126,80 @@ def test_temporary_dataset_in_override_kept():
     src = _job("//R EXEC P\n", "//S1.IN DD DSN=&&TEMP,DISP=(OLD,DELETE)\n")
     step, _ = _exploded_s1(src)
     assert step.get_dd("IN").dataset_name == "&&TEMP"
+
+
+def test_override_sees_proc_sets_in_effect_at_its_procstep():
+    # Review of #137: the PROC's SETs as of the overridden procstep, not
+    # the PROC's last SET of each symbol.
+    src = """//J JOB
+//MYPROC PROC
+// SET X=FIRST
+//S1 EXEC PGM=A,PARM='&X'
+//IN DD DSN=&X..A,DISP=SHR
+// SET X=SECOND
+//S2 EXEC PGM=B
+//OUT DD DSN=&X..B,DISP=SHR
+// PEND
+//C EXEC MYPROC,PARM.S1='&X',PARM.S2='&X'
+//S1.IN DD DSN=&X..OVR,DISP=SHR
+//S2.OUT DD DSN=&X..OVR,DISP=SHR
+"""
+    s1, s2 = explode_job(parse_jcl(src)).steps
+    assert (s1.parameters["PARM"], s1.get_dd("IN").dataset_name) == (
+        "FIRST",
+        "FIRST.OVR",
+    )
+    assert (s2.parameters["PARM"], s2.get_dd("OUT").dataset_name) == (
+        "SECOND",
+        "SECOND.OVR",
+    )
+
+
+def test_proc_unknown_at_parse_time_keeps_symbols_for_explode():
+    # Review of #137: with the PROC only known to explode_job's loader, a
+    # job SET must not pre-empt the PROC's default at parse time.
+    from jclparser import DictProcedureLoader
+
+    src = "//J JOB\n// SET HLQ=JOBSET\n//C EXEC MYPROC\n//S1.IN DD DSN=&HLQ..OVR\n"
+    loader = DictProcedureLoader(
+        {"MYPROC": "//MYPROC PROC HLQ=PROD\n//S1 EXEC PGM=A\n//IN DD DSN=X\n// PEND\n"}
+    )
+    job = parse_jcl(src, enable_external_procs=False)
+    assert job.steps[0].dd_overrides["S1.IN"].dataset_name == "&HLQ..OVR"
+    (step,) = explode_job(job, proc_loader=loader).steps
+    assert step.get_dd("IN").dataset_name == "PROD.OVR"
+
+
+def test_nested_call_override_resolves_in_inner_proc_then_outer():
+    # Review of #137: a call nested in a PROC resolves its overrides like a
+    # job-level one, with the calling PROC's symbols as the fallback.
+    src = """//J JOB
+//INNER PROC Y=INNERVAL
+//IS1 EXEC PGM=A,PARM=X
+//DD1 DD DSN=INNER.DATA,DISP=SHR
+// PEND
+//OUTER PROC HLQ=OUTER
+//OS EXEC INNER,PARM.IS1='&Y'
+//IS1.DD1 DD DSN=&HLQ..&Y,DISP=SHR
+// PEND
+//S1 EXEC OUTER
+"""
+    exploded = explode_job(parse_jcl(src))
+    (step,) = exploded.steps
+    assert step.parameters["PARM"] == "INNERVAL"
+    assert step.get_dd("DD1").dataset_name == "OUTER.INNERVAL"
+    assert exploded.warnings == []
+
+
+def test_nested_call_symbolic_value_still_from_outer_proc():
+    src = """//J JOB
+//INNER PROC Y=INNERVAL
+//IS1 EXEC PGM=A,PARM='&Y'
+// PEND
+//OUTER PROC HLQ=OUTER
+//OS EXEC INNER,Y=&HLQ
+// PEND
+//S1 EXEC OUTER
+"""
+    (step,) = explode_job(parse_jcl(src)).steps
+    assert step.parameters["PARM"] == "OUTER"

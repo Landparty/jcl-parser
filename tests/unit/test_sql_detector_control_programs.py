@@ -164,3 +164,29 @@ class TestDb2UtilityProcCall:
         result = detect_sql_in_step(step)
         assert ("DELETE", "DML", "SYSIN") in result.sql_statements
         assert result.is_db2_program
+
+
+@pytest.mark.unit
+class TestProcCallOverrideDds:
+    """Issue #94 / review of #137: //PROCSTEP.DD overrides are scanned."""
+
+    def test_dsnuproc_sysin_override_scanned_as_utility_input(self):
+        jcl = (
+            "//J JOB\n//S1 EXEC DSNUPROC,SYSTEM=DB2P\n//DSNUPROC.SYSIN DD *\n"
+            "  EXEC SQL DELETE FROM T ENDEXEC\n  RUNSTATS TABLESPACE A.B UPDATE ALL\n/*\n"
+        )
+        (result,) = detect_sql_in_job(parse_jcl(jcl))
+        assert result.sql_statements == [
+            ("EXEC SQL", "EMBEDDED", "DSNUPROC.SYSIN"),
+            ("DELETE", "DML", "DSNUPROC.SYSIN"),
+        ]
+
+    def test_override_read_as_input_to_its_procstep_program(self):
+        jcl = (
+            "//J JOB\n//P PROC\n//PS EXEC PGM=IDCAMS\n//SYSIN DD DUMMY\n"
+            "//PT EXEC PGM=DSNTEP2\n//SYSIN DD DUMMY\n// PEND\n//S1 EXEC P\n"
+            "//PS.SYSIN DD *\n  DELETE A.B PURGE\n/*\n"
+            "//PT.SYSIN DD *\n  SELECT A FROM T;\n/*\n"
+        )
+        (result,) = detect_sql_in_job(parse_jcl(jcl))
+        assert result.sql_statements == [("SELECT", "DML", "PT.SYSIN")]

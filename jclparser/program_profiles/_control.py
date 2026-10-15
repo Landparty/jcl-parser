@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..utils import is_card_image
+
 
 @dataclass
 class ControlStatement:
@@ -84,11 +86,12 @@ def split_operands(operands: str) -> list[str]:
 def _card_body(line: str) -> tuple[str, bool]:
     """The statement columns of *line* and whether column 72 continues it.
 
-    Columns 73-80 are a sequence field on an 80-column card; a longer line
-    is free-form text and is taken whole.
+    Columns 73-80 are a sequence field on an 80-column card
+    (:func:`~jclparser.utils.is_card_image`); any other line is free-form
+    text and is taken whole.
     """
     line = line.rstrip("\r\n")
-    if 72 <= len(line) <= 80:
+    if is_card_image(line):
         return line[:71].rstrip(), line[71] not in " \t"
     return line.rstrip(), False
 

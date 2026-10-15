@@ -78,7 +78,8 @@ class TestBasicExternalProcLoading:
 //STEP1 EXEC NOSUCHP"""
 
         job = parse_jcl(jcl, strict_mode=True, proc_base_path=FIXTURES_DIR)
-        assert any("'NOSUCHP' not found" in w for w in job.warnings)
+        (finding,) = job.validate()
+        assert finding.message.startswith("Procedure 'NOSUCHP' not found")
 
 
 class TestLibrarySearchOrder:
