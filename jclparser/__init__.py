@@ -90,6 +90,15 @@ from .jes_statements import (
     XmitStatement,
     parse_jes_control,
 )
+from .lineage import (
+    DatasetLineage,
+    DatasetUse,
+    JobDependency,
+    JobStream,
+    LineageReport,
+    build_lineage,
+    load_job_stream,
+)
 from .lint import (
     LintConfig,
     LintRule,
@@ -257,6 +266,14 @@ __all__ = [  # noqa: RUF022 — grouped by API tier, not alphabetically
     "job_to_json",
     "JOB_JSON_SCHEMA",
     "SCHEMA_VERSION",
+    # ── Tier 2: Cross-job dataset lineage ─────────────────────────────────────
+    "load_job_stream",
+    "build_lineage",
+    "JobStream",
+    "LineageReport",
+    "DatasetLineage",
+    "DatasetUse",
+    "JobDependency",
     # ── Tier 2: Dataset lifecycle analysis ───────────────────────────────────
     "DatasetEvent",
     "analyze_dataset_lifecycle",

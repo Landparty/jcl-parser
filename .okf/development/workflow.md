@@ -115,6 +115,7 @@ Line counts as of 2026-10-15 (`wc -l`).
 | `dataset_lifecycle.py` | 595 | Cross-step dataset lifecycle analysis |
 | `rc_analysis.py` | 555 | RC feasibility (`compute_feasible_paths`) |
 | `metrics.py` | 170 | `compute_metrics` |
+| `lineage.py` | 363 | Cross-job dataset lineage: `load_job_stream()`, `build_lineage()`, DOT / Mermaid |
 | `serialization.py` | 330 | JSON export: `job_to_dict()`, `JOB_JSON_SCHEMA`, `SCHEMA_VERSION` |
 | `sql_detector.py` | 324 | SQL / DB2 detection |
 | `jes_statements.py` | 382 | Typed JES2/JES3 control statements |

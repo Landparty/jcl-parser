@@ -99,7 +99,8 @@ See [`.okf/core/parsing-pipeline.md`](.okf/core/parsing-pipeline.md) for the ful
 | `plugins/` | `StatementPlugin`, `ValidationPlugin`, `PluginRegistry` |
 | `program_profiles/` | Known z/OS program analysis (SORT, IEBGENER, IDCAMS, …) |
 | `serialization.py` | JSON export — `job_to_dict()`, `JOB_JSON_SCHEMA`, `SCHEMA_VERSION` (also `Job.to_dict()`) |
-| `cli.py` | `jcl-parser` CLI — `steps`, `procs`, `detect`, `metrics`, `lint`, `datasets`, `sql`, `analyze`, `paths` |
+| `lineage.py` | Cross-job dataset lineage — `load_job_stream()`, `build_lineage()` (run order, dependencies, DOT/Mermaid) |
+| `cli.py` | `jcl-parser` CLI — `steps`, `procs`, `detect`, `metrics`, `lint`, `datasets`, `sql`, `analyze`, `paths`; `DIR lineage` |
 | `builtin_procs.py` | Last-resort IBM utility PROC templates (IMS, DB2, COBOL) |
 
 Full inventory with line counts: [`.okf/development/workflow.md`](.okf/development/workflow.md).

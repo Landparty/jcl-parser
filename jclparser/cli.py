@@ -21,6 +21,7 @@ Usage:
     jcl-parser FILE sql                          SQL/DB2 detection
     jcl-parser FILE analyze [STEPNAME]           Program profile analysis
     jcl-parser FILE paths                        RC feasibility path analysis
+    jcl-parser DIR [lineage] [dot|mermaid]       Cross-job dataset lineage
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +45,7 @@ from .errors import (
     UndefinedSymbolError,
 )
 from .jcl_file_type import detect_file_type
+from .lineage import JobStream, LineageReport, load_job_stream
 from .lint import all_rules, lint_job
 from .metrics import compute_metrics
 from .model import (
@@ -54,6 +57,7 @@ from .model import (
 )
 from .parser import parse_jcl, validate_jcl
 from .proc_loader import JCLLIBProcedureLoader
+from .profiling import ProfilingResult
 from .program_profiles import analyze_job, analyze_step
 from .rc_analysis import FeasibilityReport, compute_feasible_paths
 from .serialization import (
@@ -81,9 +85,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-def _main(argv: list[str] | None = None) -> int:  # noqa: C901 -- complexity baseline, split when touched
+def _main(argv: list[str] | None = None) -> int:
     """:func:`main` without the OS-error guard."""
-    # --lint-list doesn't require FILE — handle before argparse
+    # --lint-list / --json-schema don't require FILE — handle before argparse
     _argv = argv if argv is not None else sys.argv[1:]
     if "--lint-list" in _argv:
         return _cmd_lint_list()
@@ -91,18 +95,53 @@ def _main(argv: list[str] | None = None) -> int:  # noqa: C901 -- complexity bas
         print(json.dumps(JOB_JSON_SCHEMA, indent=2))
         return 0
 
+    # Intermixed: flags may sit between FILE and the query tokens
+    # ("FILE --explode steps"); plain parse_args() hands the whole positional
+    # run to FILE/query before the flag and then rejects "steps".
+    args = _build_arg_parser().parse_intermixed_args(argv)
+    path = Path(args.file)
+
+    if not path.exists():
+        print(f"Error: file not found: {path}", file=sys.stderr)
+        return 1
+
+    if path.is_dir():
+        return _cmd_directory(path, args)
+
+    if args.validate:
+        return _cmd_validate(
+            path, json_output=args.json_output, proc_path=args.proc_path
+        )
+
+    # --- detect mode (no parse needed) ---
+    if args.query and args.query[0].lower() == "detect":
+        return _cmd_detect(path, args.json_output)
+
+    loaded = _load_job(path, args)
+    if loaded is None:
+        return 1
+    job, prof = loaded
+    return _run_query(job, args, prof)
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jcl-parser",
         description="Parse and inspect IBM JCL files.",
     )
-    parser.add_argument("file", metavar="FILE", help="JCL file to parse")
+    parser.add_argument(
+        "file",
+        metavar="FILE",
+        help="JCL file to parse, or a directory of jobs for 'lineage'",
+    )
     parser.add_argument(
         "query",
         nargs="*",
         default=[],
         help=(
             "Query: 'steps', 'procs [PROCNAME]', a step name, STEP.DDNAME, "
-            "or a DD name to find across all steps"
+            "or a DD name to find across all steps; for a directory, "
+            "'lineage [dot|mermaid]'"
         ),
     )
     parser.add_argument(
@@ -140,6 +179,12 @@ def _main(argv: list[str] | None = None) -> int:  # noqa: C901 -- complexity bas
         help="Print the JSON Schema of the --json job document, then exit",
     )
     parser.add_argument(
+        "--glob",
+        default="*",
+        metavar="PATTERN",
+        help="Files of a directory FILE to read (default '*'; '**/*.jcl' recurses)",
+    )
+    parser.add_argument(
         "--profile",
         action="store_true",
         help="Profile the parse and include timing/memory metrics in output",
@@ -157,33 +202,17 @@ def _main(argv: list[str] | None = None) -> int:  # noqa: C901 -- complexity bas
         metavar="PATH",
         help="Write cProfile binary to PATH (.prof file)",
     )
+    return parser
 
-    # Intermixed: flags may sit between FILE and the query tokens
-    # ("FILE --explode steps"); plain parse_args() hands the whole positional
-    # run to FILE/query before the flag and then rejects "steps".
-    args = parser.parse_intermixed_args(argv)
-    path = Path(args.file)
 
-    if not path.exists():
-        print(f"Error: file not found: {path}", file=sys.stderr)
-        return 1
-
-    # --- validate mode ---
-    if args.validate:
-        return _cmd_validate(
-            path, json_output=args.json_output, proc_path=args.proc_path
-        )
-
-    # --- detect mode (no parse needed) ---
-    tokens_early = args.query
-    if tokens_early and tokens_early[0].lower() == "detect":
-        return _cmd_detect(path, args.json_output)
-
-    # --- parse ---
-    enable_profiling = args.profile
+def _load_job(
+    path: Path, args: argparse.Namespace
+) -> tuple[Job, ProfilingResult | None] | None:
+    """Parse (and with ``--explode`` explode) *path*; ``None`` after printing
+    the error when that fails."""
     prof = None
     try:
-        if enable_profiling:
+        if args.profile:
             from .profiling import ProfilerContext
 
             ctx = ProfilerContext(
@@ -191,22 +220,14 @@ def _main(argv: list[str] | None = None) -> int:  # noqa: C901 -- complexity bas
                 prof_output=args.profile_output,
             )
             with ctx:
-                job = parse_jcl(
-                    path,
-                    proc_base_path=args.proc_path,
-                    enable_external_procs=args.proc_path is not None,
-                )
+                job = _parse_file(path, args.proc_path)
             assert ctx.result is not None
             prof = ctx.result
         else:
-            job = parse_jcl(
-                path,
-                proc_base_path=args.proc_path,
-                enable_external_procs=args.proc_path is not None,
-            )
+            job = _parse_file(path, args.proc_path)
     except (JCLSyntaxError, JCLValidationError, JCLStructureError) as exc:
         print(f"Parse error: {exc}", file=sys.stderr)
-        return 1
+        return None
 
     if args.explode:
         try:
@@ -218,15 +239,23 @@ def _main(argv: list[str] | None = None) -> int:  # noqa: C901 -- complexity bas
             UndefinedSymbolError,
         ) as exc:
             print(f"Explosion error: {exc}", file=sys.stderr)
-            return 1
+            return None
+    return job, prof
 
-    # --- resolve query target ---
+
+def _parse_file(path: Path, proc_path: str | None) -> Job:
+    return parse_jcl(
+        path,
+        proc_base_path=proc_path,
+        enable_external_procs=proc_path is not None,
+    )
+
+
+def _run_query(job: Job, args: argparse.Namespace, prof: ProfilingResult | None) -> int:
+    """Answer the query tokens of *args* about *job*."""
     tokens = args.query  # list[str]
-    query = tokens[0] if tokens else None
-    subquery = tokens[1].upper() if len(tokens) > 1 else None
     json_out = args.json_output
-
-    if query is None:
+    if not tokens:
         if json_out:
             data = _job_to_dict(job)
             if prof is not None:
@@ -236,24 +265,14 @@ def _main(argv: list[str] | None = None) -> int:  # noqa: C901 -- complexity bas
             _print_summary(job)
         return 0
 
-    if query.lower() == "metrics":
-        return _cmd_metrics(job, json_out)
-
-    if query.lower() == "lint":
-        return _cmd_lint(job, json_out)
-
-    if query.lower() == "datasets":
-        return _cmd_datasets(job, json_out)
-
-    if query.lower() == "sql":
-        return _cmd_sql(job, json_out)
+    query = tokens[0]
+    command = _JOB_QUERIES.get(query.lower())
+    if command is not None:
+        return command(job, json_out)
 
     if query.lower() == "analyze":
         step_filter = tokens[1].upper() if len(tokens) > 1 else None
         return _cmd_analyze(job, json_out, step_filter=step_filter)
-
-    if query.lower() == "paths":
-        return _cmd_paths(job, json_out)
 
     if query.lower() == "steps":
         if json_out:
@@ -264,33 +283,42 @@ def _main(argv: list[str] | None = None) -> int:  # noqa: C901 -- complexity bas
         return 0
 
     if query.lower() == "procs":
-        # jcl-parser FILE procs PROCNAME  — single proc detail
-        if subquery:
-            proc = job.get_procedure(subquery)
-            if proc is None:
-                print(f"Procedure not found: {subquery}", file=sys.stderr)
-                return 1
-            if json_out:
-                print(json.dumps(_proc_to_dict(proc), indent=2))
-            else:
-                _print_proc_detail(proc)
-            return 0
-        # jcl-parser FILE procs --list-available
-        if args.list_available:
-            return _cmd_list_available(args.proc_path, job, json_out)
-        # jcl-parser FILE procs [--explode]
-        if args.explode:
-            if json_out:
-                print(json.dumps(_explosion_audit_to_dict(job), indent=2))
-            else:
-                _print_explosion_audit(job)
-        else:
-            if json_out:
-                print(json.dumps(_procs_to_dict(job), indent=2))
-            else:
-                _print_procs(job, proc_path=args.proc_path)
-        return 0
+        subquery = tokens[1].upper() if len(tokens) > 1 else None
+        return _cmd_procs(job, args, subquery)
 
+    return _cmd_step_or_dd(job, query, json_out)
+
+
+def _cmd_procs(job: Job, args: argparse.Namespace, subquery: str | None) -> int:
+    json_out = args.json_output
+    # jcl-parser FILE procs PROCNAME  — single proc detail
+    if subquery:
+        proc = job.get_procedure(subquery)
+        if proc is None:
+            print(f"Procedure not found: {subquery}", file=sys.stderr)
+            return 1
+        if json_out:
+            print(json.dumps(_proc_to_dict(proc), indent=2))
+        else:
+            _print_proc_detail(proc)
+        return 0
+    # jcl-parser FILE procs --list-available
+    if args.list_available:
+        return _cmd_list_available(args.proc_path, job, json_out)
+    # jcl-parser FILE procs [--explode]
+    if args.explode:
+        if json_out:
+            print(json.dumps(_explosion_audit_to_dict(job), indent=2))
+        else:
+            _print_explosion_audit(job)
+    elif json_out:
+        print(json.dumps(_procs_to_dict(job), indent=2))
+    else:
+        _print_procs(job, proc_path=args.proc_path)
+    return 0
+
+
+def _cmd_step_or_dd(job: Job, query: str, json_out: bool) -> int:
     # Try as step name first -- an exploded step name ("CALLER.PROCSTEP")
     # contains a dot itself, so this must come before the STEP.DDNAME split.
     step = job.get_step(query.upper())
@@ -308,6 +336,68 @@ def _main(argv: list[str] | None = None) -> int:  # noqa: C901 -- complexity bas
 
     # Fall back to DD name across all steps
     return _print_dd_across_steps(job, query.upper(), json_out)
+
+
+def _cmd_directory(path: Path, args: argparse.Namespace) -> int:
+    """``jcl-parser DIR [lineage [dot|mermaid]]``: cross-job dataset lineage."""
+    tokens = [t.lower() for t in args.query]
+    if args.validate or (tokens and tokens[0] != "lineage"):
+        print(
+            f"Error: {path} is a directory; only 'lineage' applies to one",
+            file=sys.stderr,
+        )
+        return 1
+    fmt = tokens[1] if len(tokens) > 1 else "text"
+    if fmt not in ("text", "dot", "mermaid"):
+        print(f"Error: unknown lineage format: {fmt}", file=sys.stderr)
+        return 1
+    stream = load_job_stream(path, args.glob, proc_base_path=args.proc_path)
+    if not stream.jobs:
+        print(f"Error: no JCL jobs found in {path}", file=sys.stderr)
+        for job_id, message in stream.errors.items():
+            print(f"  {job_id}: {message}", file=sys.stderr)
+        return 1
+    report = stream.lineage()
+    if fmt == "dot":
+        print(report.to_dot(), end="")
+    elif fmt == "mermaid":
+        print(report.to_mermaid(), end="")
+    elif args.json_output:
+        print(json.dumps({**stream.to_dict(), **report.to_dict()}, indent=2))
+    else:
+        _print_lineage(stream, report)
+    return 0
+
+
+def _print_lineage(stream: JobStream, report: LineageReport) -> None:
+    print(f"Jobs: {len(stream.jobs)}  (directory {stream.root})")
+    for job_id, job in stream.jobs.items():
+        print(f"  {job_id}: {job.name}")
+    if stream.procedures:
+        print(f"PROC members skipped: {', '.join(stream.procedures)}")
+    for label, entries in (("Not parsed", stream.errors), ("Note", stream.warnings)):
+        for job_id, message in entries.items():
+            print(f"{label}: {job_id}: {message}")
+    print()
+    print("Run order: " + (" -> ".join(report.run_order) or "(none)"))
+    if report.cycles:
+        print("Not orderable (dependency cycle): " + ", ".join(report.cycles))
+    print()
+    print("Dependencies:")
+    for dep in report.dependencies:
+        print(f"  {dep.producer} -> {dep.consumer}: {', '.join(dep.datasets)}")
+    if not report.dependencies:
+        print("  (none)")
+    if report.external_inputs:
+        print()
+        print("External inputs (read, written by no job):")
+        for dsn in report.external_inputs:
+            print(f"  {dsn}")
+    if report.final_outputs:
+        print()
+        print("Final outputs (written, read by no job):")
+        for dsn in report.final_outputs:
+            print(f"  {dsn}")
 
 
 # ---------------------------------------------------------------------------
@@ -964,3 +1054,13 @@ def _explosion_audit_to_dict(job: Job) -> list[dict[str, Any]]:
             d["source_line_numbers"] = info.source_line_numbers
         result.append(d)
     return result
+
+
+#: Query words that take only the job and ``--json``.
+_JOB_QUERIES: dict[str, Callable[[Job, bool], int]] = {
+    "metrics": _cmd_metrics,
+    "lint": _cmd_lint,
+    "datasets": _cmd_datasets,
+    "sql": _cmd_sql,
+    "paths": _cmd_paths,
+}
