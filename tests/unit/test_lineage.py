@@ -171,6 +171,21 @@ class TestBuildLineage:
         assert not any(k.startswith("&&") for k in report.datasets)
         assert "NULLFILE" not in report.datasets
 
+    def test_delete_is_a_read_and_scratch_is_ignored(self):
+        creator = parse_jcl(
+            "//A JOB\n//S EXEC PGM=X\n//O DD DSN=D.ONE,DISP=(NEW,CATLG)\n"
+        )
+        cleaner = parse_jcl(
+            "//B JOB\n//S EXEC PGM=IEFBR14\n//D DD DSN=D.ONE,DISP=(MOD,DELETE)\n"
+            "//W DD DSN=D.WORK,DISP=(NEW,DELETE)\n"
+        )
+        report = build_lineage({"B": cleaner, "A": creator})
+        assert report.datasets["D.ONE"].writer_jobs == ["A"]
+        assert report.datasets["D.ONE"].reader_jobs == ["B"]
+        assert report.run_order == ["A", "B"]
+        assert not report.datasets["D.WORK"].writers
+        assert not report.datasets["D.WORK"].readers
+
     def test_cycle(self):
         a = parse_jcl(
             "//A JOB\n//S EXEC PGM=X\n//I DD DSN=D.TWO,DISP=SHR\n"

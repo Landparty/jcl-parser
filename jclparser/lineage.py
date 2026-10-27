@@ -15,7 +15,9 @@ the next, and both are ``G.H``).  The name as coded is kept on each
 
 A DD's role comes from its ``DISP`` status: ``NEW`` / ``MOD`` write the
 dataset, ``SHR`` / ``OLD`` read it (``OLD`` may also update it in place, which
-DISP alone can't tell).  Temporary datasets (``&&TEMP``), ``NULLFILE``,
+DISP alone can't tell).  A normal disposition of ``DELETE`` makes any status
+but ``NEW`` a read (a delete runs after the dataset's producer), and
+``(NEW,DELETE)`` -- a scratch dataset -- neither.  Temporary datasets (``&&TEMP``), ``NULLFILE``,
 ``SYSOUT`` and DDs without a ``DISP`` are left out; a ``DSN=*.STEP.DD``
 backward reference counts as the dataset it points at.
 """
@@ -211,10 +213,28 @@ def _record_uses(job_id: str, job: Job, datasets: dict[str, DatasetLineage]) -> 
                 disp=evt.disp_status,
                 line_number=evt.line_number,
             )
-            if evt.disp_status in _WRITE_STATUSES:
+            role = _role(evt.disp_status, evt.disp_normal)
+            if role == "write":
                 lineage.writers.append(use)
-            elif evt.disp_status in _READ_STATUSES:
+            elif role == "read":
                 lineage.readers.append(use)
+
+
+def _role(status: str, normal: str) -> str | None:
+    """``"write"``, ``"read"`` or ``None`` (not a lasting use) for a DISP.
+
+    A normal disposition of ``DELETE`` deletes the dataset: it must run after
+    the job that created it, so it counts as a read, whatever the status --
+    the IEFBR14 ``DISP=(MOD,DELETE)`` clean-up idiom is not a write.
+    ``(NEW,DELETE)`` is a scratch dataset and counts as neither.
+    """
+    if normal == "DELETE":
+        return None if status == "NEW" else "read"
+    if status in _WRITE_STATUSES:
+        return "write"
+    if status in _READ_STATUSES:
+        return "read"
+    return None
 
 
 def _dependencies(datasets: Mapping[str, DatasetLineage]) -> list[JobDependency]:
