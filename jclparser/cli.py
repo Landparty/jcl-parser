@@ -16,6 +16,7 @@ Usage:
     jcl-parser FILE metrics                      Structural metrics for the job
     jcl-parser FILE lint                         Run lint rules against the job
     jcl-parser --lint-list                       List all available lint rule codes
+    jcl-parser --json-schema                     JSON Schema of the --json output
     jcl-parser FILE datasets                     Dataset lifecycle analysis
     jcl-parser FILE sql                          SQL/DB2 detection
     jcl-parser FILE analyze [STEPNAME]           Program profile analysis
@@ -45,7 +46,6 @@ from .jcl_file_type import detect_file_type
 from .lint import all_rules, lint_job
 from .metrics import compute_metrics
 from .model import (
-    ConditionalBlock,
     DDStatement,
     Job,
     Procedure,
@@ -56,6 +56,14 @@ from .parser import parse_jcl, validate_jcl
 from .proc_loader import JCLLIBProcedureLoader
 from .program_profiles import analyze_job, analyze_step
 from .rc_analysis import FeasibilityReport, compute_feasible_paths
+from .serialization import (
+    JOB_JSON_SCHEMA,
+    dd_to_dict,
+    job_to_dict,
+    procedure_to_dict,
+    step_or_conditional_to_dict,
+    step_to_dict,
+)
 from .sql_detector import detect_sql_in_job
 from .utils import is_positional_key, split_source_lines
 
@@ -79,6 +87,9 @@ def _main(argv: list[str] | None = None) -> int:  # noqa: C901 -- complexity bas
     _argv = argv if argv is not None else sys.argv[1:]
     if "--lint-list" in _argv:
         return _cmd_lint_list()
+    if "--json-schema" in _argv:
+        print(json.dumps(JOB_JSON_SCHEMA, indent=2))
+        return 0
 
     parser = argparse.ArgumentParser(
         prog="jcl-parser",
@@ -122,6 +133,11 @@ def _main(argv: list[str] | None = None) -> int:  # noqa: C901 -- complexity bas
         "--lint-list",
         action="store_true",
         help="List all available lint rule codes and descriptions, then exit",
+    )
+    parser.add_argument(
+        "--json-schema",
+        action="store_true",
+        help="Print the JSON Schema of the --json job document, then exit",
     )
     parser.add_argument(
         "--profile",
@@ -920,67 +936,11 @@ def _print_dd_detail(dd: DDStatement) -> None:  # noqa: C901 -- complexity basel
 # ---------------------------------------------------------------------------
 
 
-def _job_to_dict(job: Job) -> dict[str, Any]:
-    return {
-        "name": job.name,
-        "accounting_info": job.accounting_info,
-        "parameters": job.parameters,
-        "steps": [_step_or_cond_to_dict(s) for s in job.steps],
-        "procedures": [
-            {
-                "name": p.name,
-                "parameters": p.parameters,
-                "steps": [_step_or_cond_to_dict(s) for s in p.steps],
-            }
-            for p in job.procedures
-        ],
-        "set_statements": job.set_statements,
-        "jcllib_order": job.jcllib_order,
-        "comments": job.comments,
-    }
-
-
-def _step_or_cond_to_dict(item: Step | ConditionalBlock) -> dict[str, Any]:
-    if isinstance(item, ConditionalBlock):
-        return {
-            "type": "conditional",
-            "condition": item.condition,
-            "then_steps": [_step_or_cond_to_dict(s) for s in item.then_steps],
-            "else_steps": [_step_or_cond_to_dict(s) for s in item.else_steps],
-            "line_number": item.line_number,
-        }
-    return _step_to_dict(item)
-
-
-def _step_to_dict(step: Step) -> dict[str, Any]:
-    return {
-        "type": "step",
-        "name": step.name,
-        "program": step.program,
-        "procedure": step.procedure,
-        "parameters": step.parameters,
-        "dd_statements": [_dd_to_dict(dd) for dd in step.dd_statements],
-        "line_number": step.line_number,
-        "comments": step.comments,
-        "is_exploded": step.is_exploded,
-        "original_proc_call": step.original_proc_call,
-        "dd_overrides": {k: _dd_to_dict(v) for k, v in step.dd_overrides.items()},
-        "dd_override_concatenations": {
-            k: [_dd_to_dict(dd) for dd in v]
-            for k, v in step.dd_override_concatenations.items()
-        },
-    }
-
-
-def _proc_to_dict(proc: Procedure) -> dict[str, Any]:
-    """Serialize a single Procedure to a dict."""
-    return {
-        "name": proc.name,
-        "source": "external" if proc.is_external else "inline",
-        "line_number": proc.line_number,
-        "parameters": proc.parameters,
-        "steps": [_step_or_cond_to_dict(s) for s in proc.steps],
-    }
+_job_to_dict = job_to_dict
+_step_or_cond_to_dict = step_or_conditional_to_dict
+_step_to_dict = step_to_dict
+_proc_to_dict = procedure_to_dict
+_dd_to_dict = dd_to_dict
 
 
 def _procs_to_dict(job: Job) -> list[dict[str, Any]]:
@@ -1004,16 +964,3 @@ def _explosion_audit_to_dict(job: Job) -> list[dict[str, Any]]:
             d["source_line_numbers"] = info.source_line_numbers
         result.append(d)
     return result
-
-
-def _dd_to_dict(dd: DDStatement) -> dict[str, Any]:
-    d: dict[str, Any] = {
-        "name": dd.name,
-        "dataset_name": dd.dataset_name,
-        "disposition": dd.disposition,
-        "parameters": dd.parameters,
-        "line_number": dd.line_number,
-    }
-    if dd.has_inline_data:
-        d["inline_data"] = dd.inline_data
-    return d

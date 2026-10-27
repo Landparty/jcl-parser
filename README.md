@@ -30,7 +30,8 @@ CLI:
 jcl-parser FILE steps          # list all steps
 jcl-parser FILE --validate     # validate JCL
 jcl-parser FILE lint           # run lint rules
-jcl-parser FILE --json         # full parse result as JSON
+jcl-parser FILE --json         # full parse result as JSON (job.to_dict())
+jcl-parser --json-schema       # JSON Schema of that document
 ```
 
 ## Commands

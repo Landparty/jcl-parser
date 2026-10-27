@@ -143,6 +143,12 @@ from .rc_analysis import (
     FeasibilityReport,
     compute_feasible_paths,
 )
+from .serialization import (
+    JOB_JSON_SCHEMA,
+    SCHEMA_VERSION,
+    job_to_dict,
+    job_to_json,
+)
 from .sql_detector import (
     DB2_PROGRAMS,
     SQLDetectionResult,
@@ -246,6 +252,11 @@ __all__ = [  # noqa: RUF022 — grouped by API tier, not alphabetically
     "LineOrigin",
     "resolve_includes",
     "resolve_includes_with_origins",
+    # ── Tier 2: JSON export ───────────────────────────────────────────────────
+    "job_to_dict",
+    "job_to_json",
+    "JOB_JSON_SCHEMA",
+    "SCHEMA_VERSION",
     # ── Tier 2: Dataset lifecycle analysis ───────────────────────────────────
     "DatasetEvent",
     "analyze_dataset_lifecycle",

@@ -27,6 +27,7 @@ jcl-parser FILE detect                   # Detect file type (JCL/PROC/UNKNOWN)
 jcl-parser FILE metrics                  # Structural metrics for the job
 jcl-parser FILE lint                     # Run lint rules against the job
 jcl-parser --lint-list                   # List all available lint rule codes (no FILE needed)
+jcl-parser --json-schema                 # JSON Schema of the --json document (no FILE needed)
 jcl-parser FILE datasets                 # Dataset lifecycle analysis
 jcl-parser FILE sql                      # SQL/DB2 detection
 jcl-parser FILE analyze [STEPNAME]       # Program profile analysis
@@ -57,6 +58,7 @@ Flags may appear anywhere, including between `FILE` and the query (`jcl-parser F
 | `--proc-path PATH` | Base path for external PROC libraries and INCLUDE members (enables `enable_external_procs`); used by the parse and by `--validate`. Without it the parse runs with `enable_external_procs=False`, so no external PROC is loaded and `JCL_PROCLIB_PATH` is not read (unlike `--validate`). The parse already loads every PROC the job calls from it (`procs` lists them `[external]`); when none is listed, `procs` notes which called PROCs were not found there, or that the job calls none (the note used to claim they "are expanded with --explode", which they are not) |
 | `--list-available` | With `procs`: list PROCs found under `--proc-path` (requires `--proc-path`) |
 | `--lint-list` | List all registered lint rule codes + descriptions, then exit (no FILE required) |
+| `--json-schema` | Print `JOB_JSON_SCHEMA`, the JSON Schema of the no-query `--json` document, then exit (no FILE required; added 2026-10-27). The `--json` output of the `steps`, `procs`, step and DD queries uses the same `step` / `procedure` / `dd` shapes as the schema's `$defs` |
 | `--profile` | Profile the parse; the timing/memory metrics appear only as a `profiling` key in the no-query `--json` output (text output and queries do not show them) |
 | `--profile-top-n N` | Number of top functions in profiling output (default 20) |
 | `--profile-output PATH` | Write raw cProfile binary to PATH (`.prof` file) |
