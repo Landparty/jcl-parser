@@ -98,7 +98,9 @@ See [`.okf/core/parsing-pipeline.md`](.okf/core/parsing-pipeline.md) for the ful
 | `lint/` | Lint rules + SARIF output |
 | `plugins/` | `StatementPlugin`, `ValidationPlugin`, `PluginRegistry` |
 | `program_profiles/` | Known z/OS program analysis (SORT, IEBGENER, IDCAMS, …) |
-| `cli.py` | `jcl-parser` CLI — `steps`, `procs`, `detect`, `metrics`, `lint`, `datasets`, `sql`, `analyze`, `paths` |
+| `serialization.py` | JSON export — `job_to_dict()`, `JOB_JSON_SCHEMA`, `SCHEMA_VERSION` (also `Job.to_dict()`) |
+| `lineage.py` | Cross-job dataset lineage — `load_job_stream()`, `build_lineage()` (run order, dependencies, DOT/Mermaid) |
+| `cli.py` | `jcl-parser` CLI — `steps`, `procs`, `detect`, `metrics`, `lint`, `datasets`, `sql`, `analyze`, `paths`; `DIR lineage` |
 | `builtin_procs.py` | Last-resort IBM utility PROC templates (IMS, DB2, COBOL) |
 
 Full inventory with line counts: [`.okf/development/workflow.md`](.okf/development/workflow.md).
@@ -106,7 +108,7 @@ Full inventory with line counts: [`.okf/development/workflow.md`](.okf/developme
 ### Public API tiers
 
 - **Tier 1 (stable):** `parse_jcl`, `validate_jcl`, `parse_statement`, `parse`, core model classes, core error types.
-- **Tier 2 (advanced):** `explode_job`, loader classes, `detect_file_type`, `parse_condition`, SQL detection, lint/metrics/RC-analysis APIs, plugin system.
+- **Tier 2 (advanced):** `explode_job`, loader classes, `detect_file_type`, `parse_condition`, SQL detection, lint/metrics/RC-analysis APIs, plugin system, JSON export (`job_to_dict`, `JOB_JSON_SCHEMA`).
 - **Tier 3 (internal):** `MockSystemSymbolProvider`, individual loader types, `FunctionProfile`/`ProfilingResult`.
 
 Full tables: [`.okf/api/public-api.md`](.okf/api/public-api.md).

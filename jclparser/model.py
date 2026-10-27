@@ -217,6 +217,12 @@ class ConditionalBlock:
         """Add a step to the ELSE block"""
         self.else_steps.append(step)
 
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-ready dict; see :mod:`jclparser.serialization`."""
+        from .serialization import conditional_to_dict
+
+        return conditional_to_dict(self)
+
 
 @dataclass
 class Procedure:
@@ -243,6 +249,12 @@ class Procedure:
     def add_step(self, step: Step | ConditionalBlock) -> None:
         """Add a step to this procedure"""
         self.steps.append(step)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-ready dict; see :mod:`jclparser.serialization`."""
+        from .serialization import procedure_to_dict
+
+        return procedure_to_dict(self)
 
 
 @dataclass
@@ -505,6 +517,12 @@ class DDStatement:
         """True if dataset is temporary (&&name)"""
         return self.dataset_name is not None and self.dataset_name.startswith("&&")
 
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-ready dict; see :mod:`jclparser.serialization`."""
+        from .serialization import dd_to_dict
+
+        return dd_to_dict(self)
+
 
 @dataclass
 class Step:
@@ -557,6 +575,12 @@ class Step:
     def add_dd(self, dd_statement: DDStatement) -> None:
         """Add a DD statement to this step"""
         self.dd_statements.append(dd_statement)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-ready dict; see :mod:`jclparser.serialization`."""
+        from .serialization import step_to_dict
+
+        return step_to_dict(self)
 
     def get_dd(self, name: str) -> DDStatement | None:
         """Find DD statement by name"""
@@ -752,6 +776,20 @@ class Job:
     def add_step(self, step: Step | ConditionalBlock) -> None:
         """Add an execution step to this job"""
         self.steps.append(step)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-ready dict of the whole job, versioned by
+        :data:`jclparser.serialization.SCHEMA_VERSION` and described by
+        :data:`jclparser.serialization.JOB_JSON_SCHEMA`."""
+        from .serialization import job_to_dict
+
+        return job_to_dict(self)
+
+    def to_json(self, **kwargs: Any) -> str:
+        """``json.dumps(self.to_dict(), **kwargs)``."""
+        from .serialization import job_to_json
+
+        return job_to_json(self, **kwargs)
 
     def add_procedure(self, procedure: Procedure) -> None:
         """Add an inline procedure definition"""

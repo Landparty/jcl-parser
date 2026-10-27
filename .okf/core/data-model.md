@@ -171,6 +171,12 @@ The generic pre-model record produced by `parse_statement()`:
   `CNTL` / `NOTIFY` (z/OS 2.3, since 2026-10-15), in `job.control_statements`, and
   plugin statements of a custom type, in `job.custom_statements`. See [development/invariants](../development/invariants.md) #8.
 - `ConditionalBlock.condition` is always set; `condition_ast` may be `None`.
+- **JSON export** (2026-10-27): `Job`, `Step`, `DDStatement`, `ConditionalBlock` and
+  `Procedure` have `to_dict()` (and `Job.to_json(**json_kwargs)`), delegating to
+  `jclparser/serialization.py`. The job document carries `schema_version` and
+  validates against `JOB_JSON_SCHEMA`; it omits `condition_ast` (invariant 3),
+  `explosion_audit` / `explosion_map` and `sql_detections`. See
+  [api/public-api](../api/public-api.md).
 - `DDStatement.is_temporary()` is a **method**: `dd.is_temporary()`, not `dd.is_temporary`.
   `True` when `DSN=&&TEMP...` — double-`&&` signals a temporary dataset.
 - Before `explode_job()`: PROC-calling steps have `procedure` set and
