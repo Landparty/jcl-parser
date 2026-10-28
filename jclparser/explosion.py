@@ -1787,7 +1787,7 @@ def _record_expansion(
                 proc_name=proc_name,
                 parameters=overrides,
                 depth=depth,
-                timestamp=datetime.now(),  # noqa: DTZ005 -- local time, matches SYSTIME
+                timestamp=datetime.now(),  # local time, matches SYSTIME
                 expanded_steps=list(expanded_names),
             )
         )
