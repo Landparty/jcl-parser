@@ -13,7 +13,7 @@ The `jcl-parser` CLI is the command-line interface for the `jclparser` package, 
 ## Usage
 
 ```bash
-jcl-parser FILE                          # Show job summary
+jcl-parser FILE                          # Show job summary (FILE "-" reads stdin)
 jcl-parser FILE steps                    # List all steps
 jcl-parser FILE procs [PROCNAME]         # List/detail procedures
 jcl-parser FILE procs --explode          # Show procedure expansion audit
@@ -37,9 +37,11 @@ jcl-parser DIR [lineage] [dot|mermaid]   # Cross-job dataset lineage of a direct
 
 ## Query Token (`steps` / `procs` / `detect` / `metrics` / `lint` / `datasets` / `sql` / `analyze` / `paths`)
 
-`FILE` is always read as a file (`pathlib.Path(FILE)`; a missing file prints `Error: file not found: <FILE>` to stderr and exits 1; any other OS error, such as an unreadable file, prints `Error: <message>` to stderr and exits 1 instead of a traceback — issue #65, fixed 2026-10-04), unless it is a directory (see Directory Mode below), so the 2026-10-03 "a `str` is always content" rule in `parse_jcl` does not affect the CLI. `--validate` is handled before any query token and before `detect`.
+`FILE` is always read as a file (`pathlib.Path(FILE)`, or stdin when it is `-`, decoded like a file: added 2026-10-28, #132; a missing file prints `Error: file not found: <FILE>` to stderr and exits 1; any other OS error, such as an unreadable file, prints `Error: <message>` to stderr and exits 1 instead of a traceback — issue #65, fixed 2026-10-04), unless it is a directory (see Directory Mode below), so the 2026-10-03 "a `str` is always content" rule in `parse_jcl` does not affect the CLI. `--validate` is handled before any query token and before `detect`.
 
 These are not argparse subcommands — they are matched case-insensitively against the first positional `query` token inside `main()`. `detect` is checked before parsing the file (no parse needed); the rest run after `parse_jcl()` (and after `--explode`, if given).
+
+A token that is, **exactly as typed**, the name of a step or DD in the job wins over the query word (#133, 2026-10-28): JCL names are uppercase, so `jcl-parser FILE SQL` shows a step or DD named `SQL` when there is one, while `sql` is always the SQL query. An uppercase word that names nothing in the job still runs the query (`STEPS` lists the steps as before). For `DETECT` the file is parsed quietly to find out; a file that does not parse runs `detect`. Before 2026-10-28 a step or DD named after a query word (`SQL`, `LINT`, `STEPS`, …) could not be inspected.
 
 A bare step name (`jcl-parser FILE PAYSTEP`) or `STEP.DDNAME` falls through to step/DD lookup: the whole token is tried as a step name first (so exploded names like `CALL.PS` work with `--explode`), then — if it contains a dot — split on the **last** dot into step and DD (`CALL.PS.SYSIN`), else searched as a DD name across all steps. (Fixed 2026-09-27: it split on the first dot, so no exploded step or its DDs could be queried.)
 
@@ -51,7 +53,7 @@ Flags may appear anywhere, including between `FILE` and the query (`jcl-parser F
 
 ## Directory Mode (`lineage`)
 
-When `FILE` is a directory (added 2026-10-27; it used to be an `Error: [Errno 21] Is a directory`), the CLI runs `load_job_stream(DIR, --glob, proc_base_path=--proc-path)` and prints the cross-job lineage: the jobs read, skipped PROC members, files that did not parse, jobs left unexploded, the run order, jobs a dependency cycle keeps out of it, each producer → consumer dependency with its datasets, external inputs and final outputs. The only query is `lineage` (optional); `lineage dot` / `lineage mermaid` print the job graph instead, and `--json` prints `JobStream.to_dict()` merged with `LineageReport.to_dict()` (`job_names`, `procedures`, `errors`, `warnings`, `jobs`, `run_order`, `cycles`, `dependencies`, `external_inputs`, `final_outputs`, `datasets`). Exit 1 with `Error: ...` on stderr for any other query, `--validate`, an unknown format, or a directory with no parseable job. Jobs are always exploded in this mode (`--explode` is implied).
+When `FILE` is a directory (added 2026-10-27; it used to be an `Error: [Errno 21] Is a directory`), the CLI runs `load_job_stream(DIR, --glob, proc_base_path=--proc-path)` and prints the cross-job lineage: the jobs read, the PROC members found (`PROC members (used to explode the jobs): ...`; they were skipped until #144), files that did not parse, jobs left unexploded, the run order, jobs a dependency cycle keeps out of it, each producer → consumer dependency with its datasets, external inputs and final outputs. The only query is `lineage` (optional); `lineage dot` / `lineage mermaid` print the job graph instead, and `--json` prints `JobStream.to_dict()` merged with `LineageReport.to_dict()` (`job_names`, `procedures`, `errors`, `warnings`, `jobs`, `run_order`, `cycles`, `dependencies`, `external_inputs`, `final_outputs`, `datasets`). Exit 1 with `Error: ...` on stderr for any other query, `--validate`, an unknown format, or a directory with no parseable job. Jobs are always exploded in this mode (`--explode` is implied).
 
 ## Flags
 
@@ -65,9 +67,9 @@ When `FILE` is a directory (added 2026-10-27; it used to be an `Error: [Errno 21
 | `--lint-list` | List all registered lint rule codes + descriptions, then exit (no FILE required) |
 | `--glob PATTERN` | Directory mode only: the files of `DIR` to read (`Path.glob` pattern, default `*`; `'**/*.jcl'` recurses). Added 2026-10-27 |
 | `--json-schema` | Print `JOB_JSON_SCHEMA`, the JSON Schema of the no-query `--json` document, then exit (no FILE required; added 2026-10-27). The `--json` output of the `steps`, `procs`, step and DD queries uses the same `step` / `procedure` / `dd` shapes as the schema's `$defs` |
-| `--profile` | Profile the parse; the timing/memory metrics appear only as a `profiling` key in the no-query `--json` output (text output and queries do not show them) |
+| `--profile` | Profile the parse. Text output is followed by a `Profiling:` block (wall clock, CPU when psutil is installed, peak memory, the `.prof` path, top functions); every `--json` view gains a `profiling` key, and a view whose JSON is a list (`steps`, a DD name) is wrapped as `{"result": [...], "profiling": {...}}`. Until 2026-10-28 (#131) only the no-query `--json` output showed the metrics. Peak memory is reset on entry, so it is the peak within the parse even when `tracemalloc` was already running |
 | `--profile-top-n N` | Number of top functions in profiling output (default 20) |
-| `--profile-output PATH` | Write raw cProfile binary to PATH (`.prof` file) |
+| `--profile-output PATH` | Write raw cProfile binary to PATH (`.prof` file); requires `--profile` (usage error, exit 2, without it; it used to be ignored silently) |
 | `--version` | Print `jcl-parser <__version__>` and exit |
 
 There is **no** `--format` flag and **no** `--strict` flag. Lint output format (text vs. SARIF) is a Python-API choice (`lint_to_sarif()`), not exposed as a CLI flag — the CLI's `lint` query only emits plain text or `--json`.
