@@ -7,10 +7,16 @@ which job reads each permanent dataset, and from that derives job-to-job
 dependencies (a job that reads a dataset another job writes runs after it),
 a run order, and the jobs a dependency cycle keeps out of that order.
 
-Datasets are matched by name with the parenthesised part dropped: a PDS
-member is its library (``P.L(M1)`` is ``P.L``), and a relative GDG
+Datasets are matched by name (:func:`dataset_key`).  A relative GDG
 generation is its base (``G.H(+1)`` written by one job is ``G.H(0)`` read by
-the next, and both are ``G.H``).  The name as coded is kept on each
+the next, and both are ``G.H``).  A PDS member keeps its member name: a write
+of ``P.L(M1)`` feeds the reads of ``P.L(M1)`` and the whole-library reads of
+``P.L`` (a STEPLIB, a BIND of the library), but not a read of ``P.L(M2)``;
+a write of the bare ``P.L`` feeds every read of the library or of one of its
+members.  A job that writes members of a library and also reads the whole
+library (a compile job's PRECOMP writes ``DBRMLIB(PROG)``, its BIND reads
+``DBRMLIB``) is taken to read its own members there, so compile jobs that
+share a load library or DBRMLIB do not depend on one another (issue #145).  The name as coded is kept on each
 :class:`DatasetUse`.
 
 A DD's role comes from its ``DISP`` status: ``NEW`` / ``MOD`` write the
@@ -25,27 +31,56 @@ backward reference counts as the dataset it points at.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .dataset_lifecycle import analyze_dataset_lifecycle
 from .errors import JCLParseError
-from .model import Job
+from .explosion import _job_proc_loader
+from .model import Job, Procedure
 from .parser import parse_jcl
+from .proc_loader import (
+    CompositeProcedureLoader,
+    InlineProcedureLoader,
+    ProcedureLoader,
+)
 
 _WRITE_STATUSES = frozenset({"NEW", "MOD"})
 _READ_STATUSES = frozenset({"SHR", "OLD"})
-_RE_PAREN_SUFFIX = re.compile(r"^(?P<base>[^(]+)\(.*\)$")
+_RE_PAREN_SUFFIX = re.compile(r"^(?P<base>[^(]+)\((?P<inner>.*)\)$")
+_RE_GDG_GENERATION = re.compile(r"^[+-]?\d+$")
 
 
 def dataset_key(dsn: str) -> str:
-    """The name lineage matches *dsn* by: uppercased, member or GDG
-    generation dropped."""
+    """The name lineage matches *dsn* by: uppercased, a relative GDG
+    generation dropped (``G.H(+1)`` is ``G.H``), a PDS member kept
+    (``P.L(M)`` stays ``P.L(M)``; see :func:`library_of`)."""
     dsn = dsn.strip().upper()
     match = _RE_PAREN_SUFFIX.match(dsn)
-    return match.group("base") if match else dsn
+    if match and _RE_GDG_GENERATION.match(match.group("inner").strip()):
+        return match.group("base")
+    return dsn
+
+
+def library_of(key: str) -> str:
+    """The library part of a :func:`dataset_key`: ``P.L(M)`` -> ``P.L``."""
+    return key.split("(", 1)[0]
+
+
+def _feeds(written: str, read: str) -> bool:
+    """True if a write of key *written* feeds a read of key *read*.
+
+    Same key; a member write feeds a whole-library read; a whole-library
+    write feeds every read of the library or one of its members.
+    """
+    if written == read:
+        return True
+    library = library_of(written)
+    if library != library_of(read):
+        return False
+    return library in (written, read)
 
 
 @dataclass(frozen=True)
@@ -134,12 +169,22 @@ class LineageReport:
     @property
     def external_inputs(self) -> list[str]:
         """Datasets read but written by none of the jobs."""
-        return [k for k, v in self.datasets.items() if v.readers and not v.writers]
+        written = [k for k, v in self.datasets.items() if v.writers]
+        return [
+            k
+            for k, v in self.datasets.items()
+            if v.readers and not any(_feeds(w, k) for w in written)
+        ]
 
     @property
     def final_outputs(self) -> list[str]:
         """Datasets written but read by none of the jobs."""
-        return [k for k, v in self.datasets.items() if v.writers and not v.readers]
+        read = [k for k, v in self.datasets.items() if v.readers]
+        return [
+            k
+            for k, v in self.datasets.items()
+            if v.writers and not any(_feeds(k, r) for r in read)
+        ]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -237,15 +282,39 @@ def _role(status: str, normal: str) -> str | None:
     return None
 
 
-def _dependencies(datasets: Mapping[str, DatasetLineage]) -> list[JobDependency]:
-    edges: dict[tuple[str, str], list[str]] = {}
+def _member_writers(datasets: Mapping[str, DatasetLineage]) -> dict[str, set[str]]:
+    """Library -> the jobs that write one of its members."""
+    writers: dict[str, set[str]] = {}
     for key, lineage in datasets.items():
-        for producer in lineage.writer_jobs:
-            for consumer in lineage.reader_jobs:
-                if producer != consumer:
-                    edges.setdefault((producer, consumer), []).append(key)
+        if key != library_of(key):
+            writers.setdefault(library_of(key), set()).update(lineage.writer_jobs)
+    return writers
+
+
+def _dependencies(datasets: Mapping[str, DatasetLineage]) -> list[JobDependency]:
+    by_library: dict[str, list[str]] = {}
+    for key in datasets:
+        by_library.setdefault(library_of(key), []).append(key)
+    member_writers = _member_writers(datasets)
+    edges: dict[tuple[str, str], list[str]] = {}
+    for library, keys in by_library.items():
+        for written, read in ((w, r) for w in keys for r in keys if _feeds(w, r)):
+            # Label the edge with the more specific name (the member).
+            label = read if written == library else written
+            consumers = datasets[read].reader_jobs
+            if read == library != written:
+                # A job that writes members of the library and reads the
+                # whole of it (a compile job's BIND of its DBRMLIB) is taken
+                # to read its own members, not the ones other jobs write.
+                consumers = [c for c in consumers if c not in member_writers[library]]
+            for producer in datasets[written].writer_jobs:
+                for consumer in consumers:
+                    if producer != consumer:
+                        labels = edges.setdefault((producer, consumer), [])
+                        if label not in labels:
+                            labels.append(label)
     return [
-        JobDependency(producer, consumer, tuple(keys))
+        JobDependency(producer, consumer, tuple(sorted(keys)))
         for (producer, consumer), keys in sorted(edges.items())
     ]
 
@@ -302,6 +371,7 @@ class JobStream:
         jobs: Job id (path relative to *root*, ``/``-separated) -> job,
             exploded when that succeeded.
         procedures: Ids of the JOB-less PROC members found (not jobs).
+            The jobs are exploded with them (see :func:`load_job_stream`).
         errors: Id -> message for each file that could not be parsed.
         warnings: Id -> message for each job that parsed but could not be
             exploded; it is kept unexploded.
@@ -333,12 +403,45 @@ def _first_line(message: str, limit: int = 200) -> str:
     return line if len(line) <= limit else line[: limit - 3] + "..."
 
 
-def _explode(job: Job, job_id: str, stream: JobStream) -> Job:
+def _explode(job: Job, job_id: str, stream: JobStream, members: ProcedureLoader) -> Job:
+    # In-stream PROCs first, then the directory's PROC members, then the
+    # usual chain (--proc-path libraries, built-in PROCs).
+    loader = CompositeProcedureLoader(
+        [InlineProcedureLoader(job.procedures), members, _job_proc_loader(job)]
+    )
     try:
-        return job.explode(audit=False)
+        return job.explode(audit=False, loader=loader)
     except JCLParseError as exc:
         stream.warnings[job_id] = f"not exploded: {exc}"
         return job
+
+
+class _MemberLoader(ProcedureLoader):
+    """The PROC members of a directory, by member name."""
+
+    def __init__(self, procedures: dict[str, Procedure]) -> None:
+        self._procedures = procedures
+
+    def load_procedure(
+        self, name: str, libraries: Sequence[str] | None = None
+    ) -> Procedure | None:
+        return self._procedures.get(name.upper())
+
+
+def _member_procedures(path: Path, member: Job) -> dict[str, Procedure]:
+    """The procedures of PROC member *member* read from *path*, by name.
+
+    A member is called by its member name -- the file name without its
+    suffix (``.prc``, ``.proc``, ``.jcl`` or none) -- whatever its PROC
+    statement's label says; each PROC in it is also known by that label.
+    """
+    procs: dict[str, Procedure] = {}
+    for proc in member.procedures:
+        if proc.name:
+            procs.setdefault(proc.name.upper(), proc)
+    if member.procedures:
+        procs[path.stem.upper()] = member.procedures[0]
+    return procs
 
 
 def load_job_stream(
@@ -354,14 +457,19 @@ def load_job_stream(
     Hidden files are skipped.  A file that fails to parse is recorded in
     :attr:`JobStream.errors` rather than raised; a JOB-less PROC member is
     listed in :attr:`JobStream.procedures`.  With *explode* (the default)
-    each job's PROC calls are expanded, looking PROCs up in *proc_base_path*
-    as :func:`parse_jcl` does; a job whose explosion fails is kept as parsed,
-    with a :attr:`JobStream.warnings` entry.
+    each job's PROC calls are expanded: a PROC is looked up in the job
+    itself, then among the PROC members of the directory (by member name,
+    see :func:`_member_procedures`; issue #144), then in *proc_base_path* as
+    :func:`parse_jcl` does, then among the built-in PROCs.  A job whose
+    explosion fails is kept as parsed, with a :attr:`JobStream.warnings`
+    entry.
     """
     root = Path(directory)
     if not root.is_dir():
         raise NotADirectoryError(f"not a directory: {root}")
     stream = JobStream(root)
+    parsed: dict[str, Job] = {}
+    members: dict[str, Procedure] = {}
     for path in sorted(root.glob(pattern)):
         rel = path.relative_to(root)
         if not path.is_file() or any(p.startswith(".") for p in rel.parts):
@@ -378,6 +486,13 @@ def load_job_stream(
             continue
         if job.is_procedure_member:
             stream.procedures.append(job_id)
+            for name, proc in _member_procedures(path, job).items():
+                members.setdefault(name, proc)
             continue
-        stream.jobs[job_id] = _explode(job, job_id, stream) if explode else job
+        parsed[job_id] = job
+    member_loader = _MemberLoader(members)
+    for job_id, job in parsed.items():
+        stream.jobs[job_id] = (
+            _explode(job, job_id, stream, member_loader) if explode else job
+        )
     return stream
