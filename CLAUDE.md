@@ -66,11 +66,11 @@ The package is `jclparser/` — pure Python, no runtime dependencies. Supports P
 ```
 Input (string / file / IO)
   → read_source()                          utils.py
-  → ContinuationLineHandler.process()      continuation_handler.py  [merges column-71 continuations]
-  → resolve_includes()                     include_loader.py         [optional: expand // INCLUDE]
+  → resolve_includes_with_origins()        include_loader.py         [optional: expand // INCLUDE]
+  → merge_continuation_lines()             continuation_handler.py  [merges column-71 continuations]
   → parse_jcl() core loop                  parser.py                 [JOB/EXEC/DD/SET/IF/PROC/OUTPUT]
-  → ParameterParser                        parameter_ast.py          [typed param AST per statement]
-  → validate_jcl() checks                  validators.py             [optional: structural rules]
+  → ParameterParser                        parameter_ast.py          [operand split; DCB/SPACE AST on access]
+  → validate_jcl() checks                  parser.py → validators.py [optional: structural rules]
   → explode_job()                          explosion.py              [optional: expand PROCs + &SYMBOLS]
   → Job object
 ```
@@ -98,7 +98,9 @@ See [`.okf/core/parsing-pipeline.md`](.okf/core/parsing-pipeline.md) for the ful
 | `lint/` | Lint rules + SARIF output |
 | `plugins/` | `StatementPlugin`, `ValidationPlugin`, `PluginRegistry` |
 | `program_profiles/` | Known z/OS program analysis (SORT, IEBGENER, IDCAMS, …) |
-| `cli.py` | `jcl-parser` CLI — `steps`, `procs`, `detect`, `metrics`, `lint`, `datasets`, `sql`, `analyze`, `paths` |
+| `serialization.py` | JSON export — `job_to_dict()`, `JOB_JSON_SCHEMA`, `SCHEMA_VERSION` (also `Job.to_dict()`) |
+| `lineage.py` | Cross-job dataset lineage — `load_job_stream()`, `build_lineage()` (run order, dependencies, DOT/Mermaid) |
+| `cli.py` | `jcl-parser` CLI — `steps`, `procs`, `detect`, `metrics`, `lint`, `datasets`, `sql`, `analyze`, `paths`; `DIR lineage` |
 | `builtin_procs.py` | Last-resort IBM utility PROC templates (IMS, DB2, COBOL) |
 
 Full inventory with line counts: [`.okf/development/workflow.md`](.okf/development/workflow.md).
@@ -106,7 +108,7 @@ Full inventory with line counts: [`.okf/development/workflow.md`](.okf/developme
 ### Public API tiers
 
 - **Tier 1 (stable):** `parse_jcl`, `validate_jcl`, `parse_statement`, `parse`, core model classes, core error types.
-- **Tier 2 (advanced):** `explode_job`, loader classes, `detect_file_type`, `parse_condition`, SQL detection, lint/metrics/RC-analysis APIs, plugin system.
+- **Tier 2 (advanced):** `explode_job`, loader classes, `detect_file_type`, `parse_condition`, SQL detection, lint/metrics/RC-analysis APIs, plugin system, JSON export (`job_to_dict`, `JOB_JSON_SCHEMA`).
 - **Tier 3 (internal):** `MockSystemSymbolProvider`, individual loader types, `FunctionProfile`/`ProfilingResult`.
 
 Full tables: [`.okf/api/public-api.md`](.okf/api/public-api.md).
@@ -121,7 +123,7 @@ Set `JCL_PROCLIB_PATH` env var or pass `proc_base_path` to `parse_jcl()`. Layout
 2. **Column 71 is the continuation boundary** — column 72 is the continuation indicator, 73-80 the sequence field; `normalize_jcl_line()` strips both from fixed-format records and `ContinuationLineHandler` merges what is left. Never pass pre-stripped lines.
 3. **`ConditionalBlock.condition` (raw string) is authoritative** — `condition_ast` may be `None` if the expression was unparseable; always use `condition` for display.
 4. **`&&` is an escaped ampersand in JCL** — symbol substitution replaces `&NAME` → value and `&&` → `&`, except in a dataset name, where `&&TEMP` is a temporary dataset and is kept. Handled in `explosion.py`.
-5. **mypy strict is not yet clean** — 82 known violations across ~25 modules (most in `explosion.py` and `model.py`), listed in `mypy-baseline.txt`. Add annotations when touching a file; never widen the config. CI's `typecheck` job runs `scripts/mypy_ratchet.py`, which fails only on errors missing from `mypy-baseline.txt`; after fixing errors, shrink it with `python scripts/mypy_ratchet.py --update` (mypy 2.4.0, as pinned in CI).
+5. **mypy strict is not yet clean** — 82 known violations across 24 modules (most in `explosion.py` and `model.py`), listed in `mypy-baseline.txt`. Add annotations when touching a file; never widen the config. CI's `typecheck` job runs `scripts/mypy_ratchet.py`, which fails only on errors missing from `mypy-baseline.txt`; after fixing errors, shrink it with `python scripts/mypy_ratchet.py --update` (mypy 2.4.0, as pinned in CI).
 6. **Coverage floor is 90%** — every `pytest` run enforces it. Add tests alongside any new module.
 7. **A statement's operand field ends at the first blank** outside quotes/parens — the rest is a comment field, stripped before continuation merging (`split_comment_field()`). `IF`/`THEN`/`ELSE`/`ENDIF` are exempt.
 
@@ -131,7 +133,7 @@ Full list (19 invariants): [`.okf/development/invariants.md`](.okf/development/i
 
 ```
 tests/
-  unit/        # ~95 files — individual component tests
+  unit/        # ~120 files — individual component tests
   integration/ # ~15 files — end-to-end JCL parsing with realistic job streams
   benchmarks/  # pytest-benchmark perf tests (excluded from default runs via norecursedirs)
 ```

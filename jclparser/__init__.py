@@ -20,7 +20,7 @@ application, for example::
 import logging as _logging
 
 # Package metadata
-__version__ = "2.0.3"  # x-release-please-version
+__version__ = "2.1.0"  # x-release-please-version
 __author__ = "JCL Parser Team"
 __description__ = "Parse IBM JCL scripts into Python objects"
 
@@ -90,6 +90,15 @@ from .jes_statements import (
     XmitStatement,
     parse_jes_control,
 )
+from .lineage import (
+    DatasetLineage,
+    DatasetUse,
+    JobDependency,
+    JobStream,
+    LineageReport,
+    build_lineage,
+    load_job_stream,
+)
 from .lint import (
     LintConfig,
     LintRule,
@@ -142,6 +151,12 @@ from .rc_analysis import (
     DEFAULT_RC_DOMAIN,
     FeasibilityReport,
     compute_feasible_paths,
+)
+from .serialization import (
+    JOB_JSON_SCHEMA,
+    SCHEMA_VERSION,
+    job_to_dict,
+    job_to_json,
 )
 from .sql_detector import (
     DB2_PROGRAMS,
@@ -246,6 +261,19 @@ __all__ = [  # noqa: RUF022 — grouped by API tier, not alphabetically
     "LineOrigin",
     "resolve_includes",
     "resolve_includes_with_origins",
+    # ── Tier 2: JSON export ───────────────────────────────────────────────────
+    "job_to_dict",
+    "job_to_json",
+    "JOB_JSON_SCHEMA",
+    "SCHEMA_VERSION",
+    # ── Tier 2: Cross-job dataset lineage ─────────────────────────────────────
+    "load_job_stream",
+    "build_lineage",
+    "JobStream",
+    "LineageReport",
+    "DatasetLineage",
+    "DatasetUse",
+    "JobDependency",
     # ── Tier 2: Dataset lifecycle analysis ───────────────────────────────────
     "DatasetEvent",
     "analyze_dataset_lifecycle",

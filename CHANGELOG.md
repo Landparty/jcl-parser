@@ -7,6 +7,56 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.1.0](https://github.com/Landparty/jcl-parser/compare/v2.0.3...v2.1.0) (2026-10-15)
+
+
+### Features
+
+* **model:** keep plugin statements of custom types in Job.custom_statements ([13540e4](https://github.com/Landparty/jcl-parser/commit/13540e487dc8a600f64395e356e5eb16e199b2cc)), closes [#130](https://github.com/Landparty/jcl-parser/issues/130)
+
+
+### Bug Fixes
+
+* address all severity:medium issues ([41aea41](https://github.com/Landparty/jcl-parser/commit/41aea41c4e012e654e5dd733b7180a03c017aac7))
+* address review of the severity:high fixes ([9ce5359](https://github.com/Landparty/jcl-parser/commit/9ce5359d765cd67efe312c92581964f804688d3a)), closes [#94](https://github.com/Landparty/jcl-parser/issues/94)
+* **cli:** honour --proc-path in --validate via validate_jcl keywords ([021e992](https://github.com/Landparty/jcl-parser/commit/021e9927dfffcc81cfcd7328de24cf070b8baec2)), closes [#129](https://github.com/Landparty/jcl-parser/issues/129)
+* **condition:** evaluate AND and OR at the same precedence, left to right ([0cf1874](https://github.com/Landparty/jcl-parser/commit/0cf1874486e8f2add618604976be70c5923c66f5)), closes [#101](https://github.com/Landparty/jcl-parser/issues/101)
+* **continuation:** only continue a statement after a trailing comma ([96f17be](https://github.com/Landparty/jcl-parser/commit/96f17be846a783cf17f8aad2c53afd51efc11c48)), closes [#123](https://github.com/Landparty/jcl-parser/issues/123)
+* **continuation:** stop treating a backslash before a quote as an escape ([fae9920](https://github.com/Landparty/jcl-parser/commit/fae992087977b45453f58b0c4e94e022bc200e3e)), closes [#122](https://github.com/Landparty/jcl-parser/issues/122)
+* **explosion:** collapse && from symbol values in PROC steps ([9ef6633](https://github.com/Landparty/jcl-parser/commit/9ef66335e1089132775d35bdecd8dfcfc44b0efd)), closes [#127](https://github.com/Landparty/jcl-parser/issues/127)
+* **explosion:** resolve PROC-call overrides in the called PROC's scope ([d9601dc](https://github.com/Landparty/jcl-parser/commit/d9601dcd919faa87c6fbfb342cc9d3b842f8d44c)), closes [#126](https://github.com/Landparty/jcl-parser/issues/126)
+* **include:** report line numbers after an INCLUDE against the main source ([72b5698](https://github.com/Landparty/jcl-parser/commit/72b5698ba229cf051d248ff8ca45700fca941c3d)), closes [#118](https://github.com/Landparty/jcl-parser/issues/118)
+* **lifecycle:** treat a step that COND= can bypass as a conditional branch ([6fbcfec](https://github.com/Landparty/jcl-parser/commit/6fbcfec93811478ab83f204a5423365d5f3b19a1)), closes [#108](https://github.com/Landparty/jcl-parser/issues/108)
+* **parser:** close IF blocks left open in an in-stream PROC at PEND ([1695a62](https://github.com/Landparty/jcl-parser/commit/1695a62eaf0d60482ff5a6115af629183cd16c17)), closes [#102](https://github.com/Landparty/jcl-parser/issues/102)
+* **parser:** honour XMIT DLM= and skip JES2 /*XMIT transmitted data ([d3ee2bb](https://github.com/Landparty/jcl-parser/commit/d3ee2bb5e99e47b0a3f1c31396b0c27f27bdddf8)), closes [#117](https://github.com/Landparty/jcl-parser/issues/117)
+* **parser:** keep a parenthesised DSN as text instead of crashing ([26b0d6a](https://github.com/Landparty/jcl-parser/commit/26b0d6ae7478a618892b3513b1b90fe08fd6d6d0)), closes [#121](https://github.com/Landparty/jcl-parser/issues/121)
+* **parser:** keep columns 72-80 and tabs of in-stream data records ([8b4a08b](https://github.com/Landparty/jcl-parser/commit/8b4a08b9b3e2228c48b50df777f2b8bd925a3692)), closes [#115](https://github.com/Landparty/jcl-parser/issues/115)
+* **parser:** keep job-level DDs out of in-stream PROC definitions ([fc04d7e](https://github.com/Landparty/jcl-parser/commit/fc04d7e91ce375f9b8cf38a4c9235d427308b069)), closes [#103](https://github.com/Landparty/jcl-parser/issues/103)
+* **parser:** resolve SET symbols in JCLLIB ORDER library names ([c4deeb2](https://github.com/Landparty/jcl-parser/commit/c4deeb24f31d705cca56f6e26f607c48587fd3d3)), closes [#128](https://github.com/Landparty/jcl-parser/issues/128)
+* **parser:** treat a quoted or parenthesised comment after a comma as a comment ([360769a](https://github.com/Landparty/jcl-parser/commit/360769a4cc2b754bb20383b53a07993c290dc147)), closes [#120](https://github.com/Landparty/jcl-parser/issues/120)
+* **proc:** search builtins and SYS1.PROCLIB without a JCLLIB ([bba44b2](https://github.com/Landparty/jcl-parser/commit/bba44b2e5bbc60ee06ffe6ab811a9c2ec8e4e438)), closes [#116](https://github.com/Landparty/jcl-parser/issues/116)
+* **profiles:** read batch FTP commands from the INPUT DD ([4c2e54d](https://github.com/Landparty/jcl-parser/commit/4c2e54d4c587280b262eb24dba69e673d5779850)), closes [#111](https://github.com/Landparty/jcl-parser/issues/111)
+* **profiles:** report SORT OUTFIL and JOINKEYS datasets ([6de1aee](https://github.com/Landparty/jcl-parser/commit/6de1aeeb6abcd5653d4c41dd2c617814799616d6)), closes [#110](https://github.com/Landparty/jcl-parser/issues/110)
+* **rc-analysis:** report a repeated nested IF only when nothing can change it ([254631b](https://github.com/Landparty/jcl-parser/commit/254631ba42795aef3135285013db6d2bfea9c682)), closes [#109](https://github.com/Landparty/jcl-parser/issues/109)
+* resolve all severity:high issues ([#98](https://github.com/Landparty/jcl-parser/issues/98) [#99](https://github.com/Landparty/jcl-parser/issues/99) [#106](https://github.com/Landparty/jcl-parser/issues/106) [#107](https://github.com/Landparty/jcl-parser/issues/107) [#115](https://github.com/Landparty/jcl-parser/issues/115) [#116](https://github.com/Landparty/jcl-parser/issues/116) [#126](https://github.com/Landparty/jcl-parser/issues/126)) ([9d026fe](https://github.com/Landparty/jcl-parser/commit/9d026fed168e005088db32ee383b4d76fdc34de5))
+* **sql,lint,metrics:** see DSNUPROC as DSNUTILB and PROC-call override DDs on unexploded jobs ([75e14fd](https://github.com/Landparty/jcl-parser/commit/75e14fd16208d1de165f0a37478865cfa6d16d82)), closes [#106](https://github.com/Landparty/jcl-parser/issues/106) [#107](https://github.com/Landparty/jcl-parser/issues/107)
+* **validation:** accept JOB-less cataloged PROC members ([f1e9068](https://github.com/Landparty/jcl-parser/commit/f1e9068175183c16f544309fe8dd0bcbda219236)), closes [#98](https://github.com/Landparty/jcl-parser/issues/98)
+* **validators:** let a JOB wrapping only in-stream PROCs validate clean ([d54726a](https://github.com/Landparty/jcl-parser/commit/d54726a04bbb15c003bc6857ddb24b457017f50c)), closes [#100](https://github.com/Landparty/jcl-parser/issues/100)
+* **validators:** report step, DD and job findings at their source line ([6fe2c3b](https://github.com/Landparty/jcl-parser/commit/6fe2c3bcd258f60569d9cdeb913fab33303ade55)), closes [#119](https://github.com/Landparty/jcl-parser/issues/119)
+
+
+### Documentation
+
+* **contract:** job.steps is list[Step | ConditionalBlock]; export iter_execution_steps ([849cdeb](https://github.com/Landparty/jcl-parser/commit/849cdebdc5ca47f01e6cd3e1ef888b2d0061eace)), closes [#99](https://github.com/Landparty/jcl-parser/issues/99)
+* **okf:** correct pipeline stage order and model/contract field types ([8ab2d05](https://github.com/Landparty/jcl-parser/commit/8ab2d05863fec4528588e43760db3cab9b623a10))
+* **okf:** fix stale validate_jcl/parse_statement signatures and CLI details ([62ecb49](https://github.com/Landparty/jcl-parser/commit/62ecb4929bf96589f8685332b984927ff06bb7fb))
+* **okf:** fix validation/PROC-expansion pages and log the audit ([165997f](https://github.com/Landparty/jcl-parser/commit/165997f85aebf967a4667e88a52b91f5632ed570))
+* **okf:** full freshness audit of the .okf bundle ([2d16ceb](https://github.com/Landparty/jcl-parser/commit/2d16cebeaecc47458bcb6a4a088f322df4b6a197))
+* **okf:** keep the audit-data field lists ruff-format clean ([6acbf51](https://github.com/Landparty/jcl-parser/commit/6acbf5172cc719afb01efbf9810e6c7a0e0db59f))
+* **okf:** log the severity:medium issue fixes ([70aa532](https://github.com/Landparty/jcl-parser/commit/70aa532c7d23d3870e6e988065031f2b9b70755b))
+* **okf:** refresh development pages (line counts, test/mypy counts, JES3 cards) ([d4834b3](https://github.com/Landparty/jcl-parser/commit/d4834b36c416f647e8290efe948a14f9f25e6477))
+* point Documentation URL at .okf/, close AUDIT M7, merge duplicate log heading ([870dd29](https://github.com/Landparty/jcl-parser/commit/870dd29fb57a11289d812c678ecea0d79e08b86b))
+
 ## [2.0.3](https://github.com/Landparty/jcl-parser/compare/v2.0.2...v2.0.3) (2026-10-14)
 
 

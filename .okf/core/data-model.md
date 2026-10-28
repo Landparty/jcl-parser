@@ -14,10 +14,11 @@ dataclass fields, with `()` marking callables (methods/properties) rather than
 fields — the distinction matters, `dd.is_temporary` is a bound method, not a
 `bool`.
 
-`Job`, `Step`, `DDStatement`, `Statement`, `OutputStatement` and `Parameter` are
-re-exported from `jclparser`. **`ConditionalBlock` and `Procedure` are not** —
-import them from `jclparser.model` if you need the names (they are reachable
-without importing, via `job.steps` / `job.procedures`).
+`Job`, `Step`, `DDStatement`, `Statement`, `OutputStatement`, `Parameter` and
+`ConditionalBlock` (with `iter_execution_steps`, since 2026-10-15, #99) are
+re-exported from `jclparser`. **`Procedure` is not** — import it from
+`jclparser.model` if you need the name (it is reachable without importing, via
+`job.procedures`).
 
 # Schema
 
@@ -25,7 +26,7 @@ without importing, via `job.steps` / `job.procedures`).
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `name` | `str` | From `//JOBNAME JOB` card; required, not optional |
+| `name` | `str` | From `//JOBNAME JOB` card; required, not optional. `""` on the synthetic job of a JOB-less PROC member |
 | `parameters` | `dict[str, Any]` | JOB card params (CLASS, MSGCLASS, NOTIFY…) |
 | `accounting_info` | `str \| None` | First positional (`_pos_0`) of the JOB card |
 | `steps` | `list[Step \| ConditionalBlock]` | Executable structure only |
@@ -47,6 +48,7 @@ without importing, via `job.steps` / `job.procedures`).
 | `unresolved_output_refs` | `list[tuple[str, str, int]]` | `OUTPUT=*.name` refs with no definition in scope: `(step_name, ref, line_number)`, see [OutputStatement](#outputstatement) |
 | `exported_symbols` | `set[str]` | From `EXPORT SYMLIST=(...)`; `"*"` exports every SET symbol |
 | `warnings` | `list[str]` | **Plain strings, not `ParseError`.** Non-fatal issues; parsing never fails on these |
+| `is_procedure_member` | `bool` | `True` only on the synthetic `Job(name="")` returned for a JOB-less cataloged PROC member; the JOB-statement checks (job name, "at least one execution step", `JCL-LINT-004/005`) skip it. Kept by `explode_job`. Default `False` (since 2026-10-15, #98) |
 
 There is **no** `job.statements` and **no** `job.errors` field. Parse errors are
 raised as exceptions or returned by `validate_jcl()`; non-fatal issues land in
@@ -61,7 +63,7 @@ Useful accessors (not fields): `job.validate()`, `job.explode(...)`,
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `name` | `str \| None` | Max 8 chars; may be `None` for an unnamed EXEC |
+| `name` | `str \| None` | Max 8 chars; an unnamed EXEC gives `""` (the dataclass default is `None`). An exploded step is named `STEP.PROCSTEP` |
 | `program` | `str \| None` | `PGM=` value |
 | `procedure` | `str \| None` | PROC name being invoked (there is no `proc_name`) |
 | `parameters` | `dict[str, Any]` | EXEC params (PARM, COND, TIME, REGION…) |
@@ -84,8 +86,8 @@ the codebase; use `step.procedure` / `step.is_procedure`.
 |-------|------|-------|
 | `name` | `str` | DD name, max 8 chars |
 | `dataset_name` | `str \| None` | `DSN=` value, or `DSNAME=` (its long form) when no `DSN=` is coded. Always text: a parenthesised `DSN=(A.B)` (tokenized to a list in `parameters`) is rendered back as coded, `"(A.B)"`, so `validate_jcl()` reports it as an invalid dataset name (fixed 2026-10-15, #121; with a `// SET` in the job it used to crash `parse_jcl`/`validate_jcl` with a `TypeError`) |
-| `coded_dataset_name` | `str \| None` | The dataset name as coded, before SET / PROC symbol substitution (`&HLQ..DATA` while `dataset_name` reads `PROD.DATA`); `None` when the coded name had no symbols. Not part of `==` or `repr` |
-| `disposition` | `str \| None` | `DISP=` raw string |
+| `coded_dataset_name` | `str \| None` | The dataset name as coded, before SET / PROC symbol substitution (`&HLQ..DATA` while `dataset_name` reads `PROD.DATA`); recorded for any name containing `&` by the pass that substitutes it (the parse-time SET pass, which runs only when the job has a SET, or `explode_job`), else `None`. Not part of `==` or `repr` |
+| `disposition` | `str \| list[str] \| None` | `DISP=` value as tokenized: a string for a bare status (`"SHR"`), a list for a parenthesised one (`["NEW", "CATLG", "DELETE"]`; an omitted status is `""`), despite the `str \| None` annotation |
 | `parameters` | `dict[str, Any]` | DSN, DISP, SPACE, DCB, SYSOUT… |
 | `inline_data` | `str \| None` | Content between `DD *` and `/*`, as **one string** (there is no `instream_data` list). Data records after a step with no `DD *` / `DD DATA` ahead of them get an implicit `SYSIN` DD (`parameters={"*": True}`), as JES does, plus a `job.warnings` entry |
 | `comments` | `list[str]` | Never populated — see invariant 8 |
@@ -166,8 +168,15 @@ The generic pre-model record produced by `parse_statement()`:
 - **Comments are dropped.** `Job.comments` / `Step.comments` / `DDStatement.comments`
   exist but are never populated, and there is no `job.statements` holding raw
   statements. The only statements kept verbatim are `COMMAND` / `SCHEDULE` /
-  `CNTL` / `NOTIFY` (z/OS 2.3, since 2026-10-15), in `job.control_statements`. See [development/invariants](../development/invariants.md) #8.
+  `CNTL` / `NOTIFY` (z/OS 2.3, since 2026-10-15), in `job.control_statements`, and
+  plugin statements of a custom type, in `job.custom_statements`. See [development/invariants](../development/invariants.md) #8.
 - `ConditionalBlock.condition` is always set; `condition_ast` may be `None`.
+- **JSON export** (2026-10-27): `Job`, `Step`, `DDStatement`, `ConditionalBlock` and
+  `Procedure` have `to_dict()` (and `Job.to_json(**json_kwargs)`), delegating to
+  `jclparser/serialization.py`. The job document carries `schema_version` and
+  validates against `JOB_JSON_SCHEMA`; it omits `condition_ast` (invariant 3),
+  `explosion_audit` / `explosion_map` and `sql_detections`. See
+  [api/public-api](../api/public-api.md).
 - `DDStatement.is_temporary()` is a **method**: `dd.is_temporary()`, not `dd.is_temporary`.
   `True` when `DSN=&&TEMP...` — double-`&&` signals a temporary dataset.
 - Before `explode_job()`: PROC-calling steps have `procedure` set and
