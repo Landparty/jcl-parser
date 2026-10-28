@@ -319,6 +319,22 @@ def _read_file_with_fallback(path: Path, max_bytes: int | None = None) -> str:
         return fh.read().decode("utf-8", errors="ignore")
 
 
+def _decode_with_fallback(data: bytes) -> str:
+    """Decode *data* with the same utf-8 / cp1252 / latin-1 chain as files.
+
+    Newlines are normalised as text-mode ``open()`` does, so a binary file
+    object reads exactly like the same file opened as text (issue #125).
+    """
+    for encoding in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            text = data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        return text.replace("\r\n", "\n").replace("\r", "\n")
+    # Defensive only: latin-1 maps every byte, so it does not fail.
+    return data.decode("utf-8", errors="ignore")  # pragma: no cover
+
+
 def _require_file(path: Path) -> str:
     """Raise ``FileNotFoundError`` if *path* does not exist, otherwise return its content."""
     if not path.exists():
@@ -388,6 +404,9 @@ def _read_source_raw(source: str | Path | Any) -> str:
             f"Invalid source type: {type(source)}. Expected str, Path, or file-like object."
         )
     content = source.read()
+    if isinstance(content, (bytes, bytearray)):
+        # A binary file object (io.BytesIO, open(..., "rb")).
+        content = _decode_with_fallback(bytes(content))
     if hasattr(source, "seek"):
         try:
             source.seek(0)

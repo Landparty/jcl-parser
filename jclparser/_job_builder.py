@@ -68,6 +68,8 @@ logger = logging.getLogger(__name__)
 
 #: A record that looks like a JCL ``EXEC`` statement (``//name EXEC ...``).
 _RE_EXEC_RECORD = re.compile(r"^//\S+\s+EXEC(\s|$)")
+#: A JOB statement record (named; ``//*`` comments never reach the check).
+_RE_JOB_RECORD = re.compile(r"^//\S+\s+JOB(\s|$)")
 
 #: ``/*`` statements JES3 itself processes (RJP workstation sign-on/off); every
 #: other ``/*`` control statement is JES2-only.
@@ -203,6 +205,10 @@ class JobBuilder:
         #: The open ``CNTL`` block, whose program control records are collected
         #: verbatim until its ``ENDCNTL``.
         self.current_cntl: Statement | None = None
+        #: Line of the null statement (``//``) that ended the job, or None.
+        self.null_line: int | None = None
+        #: Line numbers of the records after it, which are not part of the job.
+        self.after_null_lines: list[int] = []
 
     # ------------------------------------------------------------------ #
     # Line-level handling (before statement parsing)
@@ -725,8 +731,23 @@ class JobBuilder:
         sink.append(output)
 
     def _on_null(self, stmt: Statement, line_num: int) -> None:
-        # NULL statement (//) - just ignore, used as delimiter
-        pass
+        # The null statement (//) marks the end of the job on z/OS: what
+        # follows, up to the next JOB statement, is not part of it (#124).
+        # Before the JOB statement it delimits nothing and is ignored.
+        if self.job is not None and self.null_line is None:
+            self.null_line = line_num
+
+    def skip_after_null(self, line: str, line_num: int) -> bool:
+        """True if *line* follows the null statement that ended the job.
+
+        Such a record is not part of the job, so the caller skips it; it is
+        counted for the warning :meth:`finish` adds.  A JOB statement is not
+        skipped: a second job is still the "Multiple JOB statements" error.
+        """
+        if self.null_line is None or _RE_JOB_RECORD.match(line):
+            return False
+        self.after_null_lines.append(line_num)
+        return True
 
     def _on_control(self, stmt: Statement, line_num: int) -> None:
         """Record a COMMAND / SCHEDULE / CNTL / NOTIFY statement verbatim."""
@@ -878,8 +899,19 @@ class JobBuilder:
         self._flush_pending_statements(job)
         self._warn_orphaned_dds(job)
         self._warn_unclosed_ifs(job)
+        self._warn_after_null(job)
 
         return job
+
+    def _warn_after_null(self, job: Job) -> None:
+        if self.null_line is not None and self.after_null_lines:
+            job.warnings.append(
+                f"Line {self.null_line}: null statement (//) ends job "
+                f"{job.name or '(unnamed)'}; {len(self.after_null_lines)} "
+                f"record(s) after it (lines {self.after_null_lines[0]}-"
+                f"{self.after_null_lines[-1]}) are not part of the job and "
+                "were ignored"
+            )
 
     def _job_or_procedure_member(self) -> Job:
         """The parsed Job, or a synthetic one for a JOB-less PROC member."""
