@@ -27,7 +27,6 @@ jclparser/explosion.py: error: Function is missing a type annotation  [no-untype
 jclparser/explosion.py: error: Function is missing a type annotation  [no-untyped-def]
 jclparser/explosion.py: error: Function is missing a type annotation for one or more parameters  [no-untyped-def]
 jclparser/explosion.py: error: Incompatible types in assignment (expression has type "Step | None", variable has type "Step")  [assignment]
-jclparser/explosion.py: error: Incompatible types in assignment (expression has type "list[Any]", variable has type "str | None")  [assignment]
 jclparser/explosion.py: error: Missing type arguments for generic type "frozenset"  [type-arg]
 jclparser/explosion.py: error: Missing type arguments for generic type "frozenset"  [type-arg]
 jclparser/explosion.py: error: Returning Any from function declared to return "list[Step]"  [no-any-return]

@@ -269,6 +269,10 @@ def _build_job(
             builder.handle_comment_line(line, line_num)
             continue
 
+        # Records after a null statement (//) are not part of the job (#124).
+        if builder.skip_after_null(line, line_num):
+            continue
+
         # Skip lines marked as inline data (line_num is 1-indexed, markers use 0-indexed)
         if (line_num - 1) in scanned.inline_data_indices:
             if not line.startswith(("//", "/*")):
@@ -495,9 +499,10 @@ def validate_jcl(
     effective_level = normalize_validation_level(level)
 
     errors: list[ParseError] = []
-    if not isinstance(source, (str, Path)):
-        # A file-like object can be read only once; the fallback below needs
-        # the content again.
+    if not isinstance(source, str):
+        # Read a Path or file-like object exactly once: the fallback below
+        # needs the content again, and a pipe (/dev/stdin) or other stream
+        # returns nothing on a second read (issue #132).
         source = read_source(source)
 
     # First try normal parsing to catch basic structure issues

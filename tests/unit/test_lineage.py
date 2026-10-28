@@ -9,7 +9,7 @@ import pytest
 
 from jclparser import build_lineage, load_job_stream, parse_jcl
 from jclparser.cli import main
-from jclparser.lineage import _first_line, dataset_key
+from jclparser.lineage import _first_line, dataset_key, library_of
 
 EXTRACT = """\
 //EXTRACT  JOB (ACCT),'PGMR'
@@ -73,7 +73,9 @@ class TestDatasetKey:
         ("coded", "key"),
         [
             ("prod.raw", "PROD.RAW"),
-            ("PROD.LIB(MEM)", "PROD.LIB"),
+            ("PROD.LIB(MEM)", "PROD.LIB(MEM)"),
+            ("prod.lib(mem)", "PROD.LIB(MEM)"),
+            ("G.H(-1)", "G.H"),
             ("G.H(+1)", "G.H"),
             ("G.H(0)", "G.H"),
             (" A.B ", "A.B"),
@@ -147,7 +149,7 @@ class TestBuildLineage:
         assert report.cycles == []
 
     def test_external_inputs_and_final_outputs(self, report):
-        assert report.external_inputs == ["EXT.MASTER", "PROD.PARMLIB"]
+        assert report.external_inputs == ["EXT.MASTER", "PROD.PARMLIB(RPT)"]
         assert report.final_outputs == []
 
     def test_uses_record_where_and_how(self, report):
@@ -234,7 +236,7 @@ class TestCLI:
         out = capsys.readouterr().out
         assert "Run order: extract.jcl -> summary.jcl -> report.jcl" in out
         assert "  summary.jcl -> report.jcl: PROD.SUMMARY" in out
-        assert "PROC members skipped: libproc.jcl" in out
+        assert "PROC members (used to explode the jobs): libproc.jcl" in out
         assert "Not parsed: readme.txt:" in out
         assert "External inputs" in out
 
@@ -287,3 +289,144 @@ class TestCLI:
         err = capsys.readouterr().err
         assert err.startswith("Error: no JCL jobs found")
         assert "junk.txt" in err
+
+
+# --- PDS members (issue #145) ----------------------------------------------
+
+COMPILE = """\
+//{name}  JOB (ACCT),'PGMR'
+//PRECOMP  EXEC PGM=DSNHPC
+//DBRMLIB  DD DSN=BANK.DBRMLIB({prog}),DISP=(NEW,CATLG)
+//BIND     EXEC PGM=IKJEFT01
+//DBRMLIB  DD DSN=BANK.DBRMLIB,DISP=SHR
+"""
+
+
+def _job(text: str):
+    return parse_jcl(text)
+
+
+@pytest.mark.unit
+class TestPdsMembers:
+    def test_library_of(self):
+        assert library_of("P.L(M)") == "P.L"
+        assert library_of("P.L") == "P.L"
+
+    def test_compile_jobs_sharing_a_library_do_not_form_a_cycle(self):
+        jobs = {
+            f"{n}.jcl": _job(COMPILE.format(name=n.ljust(8), prog=p))
+            for n, p in (("JOBA", "PROGA"), ("JOBB", "PROGB"))
+        }
+        report = build_lineage(jobs)
+        assert report.dependencies == []
+        assert report.cycles == []
+        assert report.run_order == ["JOBA.jcl", "JOBB.jcl"]
+
+    def test_library_reader_that_writes_no_member_still_depends(self):
+        compile_job = _job(COMPILE.format(name="JOBA    ", prog="PROGA"))
+        runner = _job(
+            "//RUN JOB\n//S EXEC PGM=X\n//STEPLIB DD DSN=BANK.DBRMLIB,DISP=SHR\n"
+        )
+        report = build_lineage({"a": compile_job, "run": runner})
+        assert [(d.producer, d.consumer, d.datasets) for d in report.dependencies] == [
+            ("a", "run", ("BANK.DBRMLIB(PROGA)",))
+        ]
+
+    def test_member_write_feeds_only_that_member(self):
+        writer = _job("//W JOB\n//S EXEC PGM=X\n//O DD DSN=P.L(M1),DISP=(NEW,CATLG)\n")
+        reader1 = _job("//R1 JOB\n//S EXEC PGM=X\n//I DD DSN=P.L(M1),DISP=SHR\n")
+        reader2 = _job("//R2 JOB\n//S EXEC PGM=X\n//I DD DSN=P.L(M2),DISP=SHR\n")
+        report = build_lineage({"w": writer, "r1": reader1, "r2": reader2})
+        assert [(d.producer, d.consumer, d.datasets) for d in report.dependencies] == [
+            ("w", "r1", ("P.L(M1)",))
+        ]
+        assert report.external_inputs == ["P.L(M2)"]
+        assert report.final_outputs == []
+        assert report.cycles == []
+
+    def test_whole_library_write_feeds_member_reads(self):
+        writer = _job("//W JOB\n//S EXEC PGM=X\n//O DD DSN=P.L,DISP=(NEW,CATLG)\n")
+        reader = _job("//R JOB\n//S EXEC PGM=X\n//I DD DSN=P.L(M2),DISP=SHR\n")
+        report = build_lineage({"w": writer, "r": reader})
+        assert [(d.producer, d.consumer, d.datasets) for d in report.dependencies] == [
+            ("w", "r", ("P.L(M2)",))
+        ]
+        assert report.external_inputs == []
+        assert report.final_outputs == []
+
+    def test_member_write_feeds_whole_library_read(self):
+        writer = _job("//W JOB\n//S EXEC PGM=X\n//O DD DSN=P.L(M1),DISP=(NEW,CATLG)\n")
+        reader = _job("//R JOB\n//S EXEC PGM=X\n//STEPLIB DD DSN=P.L,DISP=SHR\n")
+        report = build_lineage({"w": writer, "r": reader})
+        assert [(d.producer, d.consumer) for d in report.dependencies] == [("w", "r")]
+        assert report.run_order == ["w", "r"]
+
+    def test_independent_member_compiles_are_ordered(self):
+        # Each job writes and then reads back only its own member.
+        text = (
+            "//{n} JOB\n//S1 EXEC PGM=X\n"
+            "//O DD DSN=BANK.LOAD({n}),DISP=(NEW,CATLG)\n"
+            "//S2 EXEC PGM=Y\n//I DD DSN=BANK.LOAD({n}),DISP=SHR\n"
+        )
+        jobs = {n: _job(text.format(n=n)) for n in ("JA", "JB", "JC")}
+        report = build_lineage(jobs)
+        assert report.dependencies == []
+        assert report.cycles == []
+        assert report.run_order == ["JA", "JB", "JC"]
+
+
+# --- PROC members in the directory (issue #144) ------------------------------
+
+CALLER = """\
+//CALLER   JOB (ACCT),'PGMR'
+//S1       EXEC COMPILE,PROG=PAY
+"""
+
+COMPILE_PROC = """\
+//COMPILE  PROC PROG=X
+//C        EXEC PGM=IGYCRCTL
+//SYSLIN   DD DSN=BANK.OBJ(&PROG),DISP=(NEW,CATLG)
+"""
+
+READER = """\
+//READER   JOB (ACCT),'PGMR'
+//S1       EXEC PGM=IEWL
+//OBJ      DD DSN=BANK.OBJ(PAY),DISP=SHR
+"""
+
+
+@pytest.mark.unit
+class TestDirectoryProcMembers:
+    @pytest.mark.parametrize("member", ["compile.prc", "COMPILE.proc", "COMPILE"])
+    def test_jobs_are_exploded_with_directory_members(self, tmp_path, member):
+        (tmp_path / "caller.jcl").write_text(CALLER)
+        (tmp_path / "reader.jcl").write_text(READER)
+        (tmp_path / member).write_text(COMPILE_PROC)
+        stream = load_job_stream(tmp_path)
+        assert stream.procedures == [member]
+        assert stream.warnings == {}
+        assert [s.name for s in stream.jobs["caller.jcl"].steps] == ["S1.C"]
+        report = stream.lineage()
+        assert [(d.producer, d.consumer) for d in report.dependencies] == [
+            ("caller.jcl", "reader.jcl")
+        ]
+
+    def test_member_found_by_member_name_not_proc_label(self, tmp_path):
+        (tmp_path / "caller.jcl").write_text(CALLER)
+        (tmp_path / "compile.prc").write_text(
+            COMPILE_PROC.replace("//COMPILE  PROC", "//OTHER    PROC")
+        )
+        stream = load_job_stream(tmp_path)
+        assert stream.warnings == {}
+        assert [s.name for s in stream.jobs["caller.jcl"].steps] == ["S1.C"]
+
+    def test_in_stream_proc_wins_over_member(self, tmp_path):
+        inline = (
+            "//CALLER   JOB (ACCT),'PGMR'\n"
+            "//COMPILE  PROC\n//INL      EXEC PGM=IEFBR14\n//         PEND\n"
+            "//S1       EXEC COMPILE\n"
+        )
+        (tmp_path / "caller.jcl").write_text(inline)
+        (tmp_path / "compile.prc").write_text(COMPILE_PROC)
+        job = load_job_stream(tmp_path).jobs["caller.jcl"]
+        assert [s.name for s in job.steps] == ["S1.INL"]

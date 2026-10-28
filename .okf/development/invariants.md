@@ -76,6 +76,12 @@ timestamp: 2026-10-15T00:00:00Z
     supported. Fixed 2026-09-02. SETs inside the member's PROC/PEND live on
     `Procedure.set_statements` and are also copied to the synthetic job's `set_statements` (the
     member has no job scope of its own; since 2026-09-28).
+20. **The null statement (`//` alone) ends the job.** Once a JOB statement has been seen, every
+    record after a `//` is not part of the job and is skipped (`JobBuilder.skip_after_null`), with
+    one warning naming the null statement's line and the skipped line range; a trailing `//` with
+    nothing after it warns nothing. A JOB statement after it is still the "Multiple JOB statements"
+    `JCLSyntaxError` (the parser models one job per source). A `//` before the JOB statement is
+    ignored. Issue #124, 2026-10-28; statements after a `//` used to be added to the job silently.
 
 # Citations
 

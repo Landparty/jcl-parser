@@ -82,7 +82,11 @@ class ProfilerContext:
     def __enter__(self) -> ProfilerContext:  # noqa: PYI034 — typing.Self needs 3.11
         # Memory: start tracemalloc only if not already running
         self._was_tracing = tracemalloc.is_tracing()
-        if not self._was_tracing:
+        if self._was_tracing:
+            # Report the peak within the profiled call, not since the outer
+            # tracer started (issue #131).
+            tracemalloc.reset_peak()
+        else:
             tracemalloc.start()
 
         self._wall_start = time.perf_counter()

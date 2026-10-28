@@ -10,88 +10,74 @@ so — like :mod:`jclparser.program_profiles.idcams` — the profile emits
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
 from ..dataset_lifecycle import DatasetEvent
+from ._control import ControlStatement, parse_control_statements, split_operands
 from .base import ProgramAnalysis, ProgramProfile, _sysin_text
 
 if TYPE_CHECKING:
     from ..model import Step
 
-_RE_SCRATCH = re.compile(
-    r"^\s*SCRATCH\b[^\n]*DSNAME=([A-Za-z0-9.$#@]+)", re.IGNORECASE | re.MULTILINE
-)
-_RE_RENAME = re.compile(
-    r"^\s*RENAME\b[^\n]*DSNAME=([A-Za-z0-9.$#@]+)", re.IGNORECASE | re.MULTILINE
-)
-_RE_CATLG = re.compile(
-    r"^\s*CATLG\b[^\n]*DSNAME=([A-Za-z0-9.$#@]+)", re.IGNORECASE | re.MULTILINE
-)
-_RE_UNCATLG = re.compile(
-    r"^\s*UNCATLG\b[^\n]*DSNAME=([A-Za-z0-9.$#@]+)", re.IGNORECASE | re.MULTILINE
-)
-_RE_BLDG = re.compile(r"^\s*BLDG\b", re.IGNORECASE | re.MULTILINE)
-_RE_CONNECT = re.compile(r"^\s*CONNECT\b", re.IGNORECASE | re.MULTILINE)
+_OPERATIONS = frozenset({"SCRATCH", "RENAME", "CATLG", "UNCATLG", "BLDG", "CONNECT"})
+
+#: The DatasetEvent each mutating command records:
+#: (action, disp_status, disp_normal).
+_EVENTS: dict[str, tuple[str, str, str]] = {
+    "SCRATCH": ("DELETE", "OLD", "DELETE"),
+    "CATLG": ("ALLOCATE", "NEW", "CATLG"),
+    "UNCATLG": ("UNCATALOG", "OLD", "UNCATLG"),
+}
+
+_NOTES = {
+    "BLDG": "BLDG (build generation data group index)",
+    "CONNECT": "CONNECT (add user catalog connection)",
+}
+
+
+def _dsname(statement: ControlStatement) -> str | None:
+    """The ``DSNAME=`` operand of *statement*, continuations joined."""
+    for operand in split_operands(statement.operands):
+        key, _, value = operand.partition("=")
+        if key.strip().upper() in ("DSNAME", "DSN") and value:
+            return value.strip()
+    return None
 
 
 class IEHPROGMProfile(ProgramProfile):
     program_names = frozenset({"IEHPROGM"})
 
     def analyze(self, step: Step) -> ProgramAnalysis:
-        text = _sysin_text(step) or ""
+        # Card images whole: a DSNAME= on a column-72 continuation card
+        # belongs to the statement above it (issue #113).
+        text = _sysin_text(step, card_images=True) or ""
         events: list[DatasetEvent] = []
         notes: list[str] = []
+        seen_notes: set[str] = set()
 
-        for m in _RE_SCRATCH.finditer(text):
-            dsn = m.group(1)
-            events.append(
-                DatasetEvent(
-                    step_name=step.name or "",
-                    dd_name="SYSIN",
-                    action="DELETE",
-                    disp_status="OLD",
-                    disp_normal="DELETE",
-                    line_number=step.line_number,
+        for statement in parse_control_statements(text, _OPERATIONS):
+            operation = statement.operation
+            if operation in _NOTES:
+                if operation not in seen_notes:
+                    seen_notes.add(operation)
+                    notes.append(_NOTES[operation])
+                continue
+            dsn = _dsname(statement)
+            if operation not in _OPERATIONS or dsn is None:
+                continue
+            if operation in _EVENTS:
+                action, status, normal = _EVENTS[operation]
+                events.append(
+                    DatasetEvent(
+                        step_name=step.name or "",
+                        dd_name="SYSIN",
+                        action=action,
+                        disp_status=status,
+                        disp_normal=normal,
+                        line_number=step.line_number,
+                    )
                 )
-            )
-            notes.append(f"SCRATCH {dsn}")
-
-        for m in _RE_RENAME.finditer(text):
-            notes.append(f"RENAME {m.group(1)}")
-
-        for m in _RE_CATLG.finditer(text):
-            dsn = m.group(1)
-            events.append(
-                DatasetEvent(
-                    step_name=step.name or "",
-                    dd_name="SYSIN",
-                    action="ALLOCATE",
-                    disp_status="NEW",
-                    disp_normal="CATLG",
-                    line_number=step.line_number,
-                )
-            )
-            notes.append(f"CATLG {dsn}")
-
-        for m in _RE_UNCATLG.finditer(text):
-            dsn = m.group(1)
-            events.append(
-                DatasetEvent(
-                    step_name=step.name or "",
-                    dd_name="SYSIN",
-                    action="UNCATALOG",
-                    disp_status="OLD",
-                    disp_normal="UNCATLG",
-                    line_number=step.line_number,
-                )
-            )
-            notes.append(f"UNCATLG {dsn}")
-
-        if _RE_BLDG.search(text):
-            notes.append("BLDG (build generation data group index)")
-        if _RE_CONNECT.search(text):
-            notes.append("CONNECT (add user catalog connection)")
+            notes.append(f"{operation} {dsn}")
 
         summary = (
             f"IEHPROGM: {len(events)} dataset mutations, {len(notes)} commands"
@@ -104,5 +90,5 @@ class IEHPROGMProfile(ProgramProfile):
             summary=summary,
             dataset_events=events,
             notes=notes,
-            raw_control=text or None,
+            raw_control=_sysin_text(step),
         )

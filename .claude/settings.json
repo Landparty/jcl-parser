@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ruff format \"$CLAUDE_TOOL_INPUT_FILE_PATH\" 2>/dev/null; ruff check --fix --silent \"$CLAUDE_TOOL_INPUT_FILE_PATH\" 2>/dev/null; exit 0"
+            "command": "f=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\", {}).get(\"file_path\", \"\"))'); [ -n \"$f\" ] && { ruff format \"$f\" 2>/dev/null; ruff check --fix --silent \"$f\" 2>/dev/null; }; exit 0"
           },
           {
             "type": "command",
@@ -23,7 +23,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo \"$CLAUDE_TOOL_INPUT_FILE_PATH\" | grep -qE '(\\.coverage$|coverage\\.xml$|htmlcov/)' && echo '{\"decision\": \"block\", \"reason\": \"Blocked: generated file — do not edit directly\"}' && exit 0 || exit 0"
+            "command": "f=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\", {}).get(\"file_path\", \"\"))'); if echo \"$f\" | grep -qE '(\\.coverage$|coverage\\.xml$|htmlcov/)'; then echo 'Blocked: generated file - do not edit directly' >&2; exit 2; fi; exit 0"
           }
         ]
       }

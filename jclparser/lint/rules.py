@@ -62,8 +62,10 @@ class LiteralSysdaUnitRule(LintRule):
                 unit = dd.parameters.get("UNIT")
                 if not unit:
                     continue
-                unit_val = unit if isinstance(unit, str) else ",".join(map(str, unit))
-                if unit_val.upper() == "SYSDA":
+                # UNIT=(SYSDA,2) / UNIT=(SYSDA,,DEFER): the device is the
+                # first subparameter (issue #114).
+                unit_val = unit if isinstance(unit, str) else str(unit[0])
+                if unit_val.strip("()").split(",")[0].strip().upper() == "SYSDA":
                     yield self._err(
                         f"DD '{dd.name}' in step '{step.name}' uses UNIT=SYSDA",
                         line_number=dd.line_number,

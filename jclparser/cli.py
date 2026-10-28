@@ -2,7 +2,7 @@
 Command-line interface for jclparser.
 
 Usage:
-    jcl-parser FILE                              Show job summary
+    jcl-parser FILE                              Show job summary (FILE "-" is stdin)
     jcl-parser FILE steps                        List all steps
     jcl-parser FILE procs [PROCNAME]             List/detail procedures
     jcl-parser FILE procs --explode              Show procedure expansion audit
@@ -27,6 +27,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import sys
 from collections.abc import Callable
@@ -69,7 +71,7 @@ from .serialization import (
     step_to_dict,
 )
 from .sql_detector import detect_sql_in_job
-from .utils import is_positional_key, split_source_lines
+from .utils import is_positional_key, read_source, split_source_lines
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -98,30 +100,79 @@ def _main(argv: list[str] | None = None) -> int:
     # Intermixed: flags may sit between FILE and the query tokens
     # ("FILE --explode steps"); plain parse_args() hands the whole positional
     # run to FILE/query before the flag and then rejects "steps".
-    args = _build_arg_parser().parse_intermixed_args(argv)
-    path = Path(args.file)
+    arg_parser = _build_arg_parser()
+    args = arg_parser.parse_intermixed_args(argv)
+    if args.profile_output and not args.profile:
+        arg_parser.error("--profile-output requires --profile")  # exits 2
 
-    if not path.exists():
-        print(f"Error: file not found: {path}", file=sys.stderr)
-        return 1
-
-    if path.is_dir():
-        return _cmd_directory(path, args)
+    source: Path | str
+    if args.file == "-":
+        # "-" reads the JCL from stdin (issue #132).
+        source = _read_stdin()
+    else:
+        source = Path(args.file)
+        if not source.exists():
+            print(f"Error: file not found: {source}", file=sys.stderr)
+            return 1
+        if source.is_dir():
+            return _cmd_directory(source, args)
 
     if args.validate:
         return _cmd_validate(
-            path, json_output=args.json_output, proc_path=args.proc_path
+            source, json_output=args.json_output, proc_path=args.proc_path
         )
 
     # --- detect mode (no parse needed) ---
-    if args.query and args.query[0].lower() == "detect":
-        return _cmd_detect(path, args.json_output)
+    if (
+        args.query
+        and args.query[0].lower() == "detect"
+        and not _names_job_item(source, args, args.query[0])
+    ):
+        return _cmd_detect(source, args.json_output)
 
-    loaded = _load_job(path, args)
+    loaded = _load_job(source, args)
     if loaded is None:
         return 1
     job, prof = loaded
-    return _run_query(job, args, prof)
+    if prof is None:
+        return _run_query(job, args)
+    return _run_query_with_profile(job, args, prof)
+
+
+def _read_stdin() -> str:
+    """The JCL piped on stdin, decoded like a file (``FILE`` is ``-``)."""
+    return read_source(getattr(sys.stdin, "buffer", sys.stdin))
+
+
+def _names_job_item(source: Path | str, args: argparse.Namespace, token: str) -> bool:
+    """True if *token* (a pre-parse query word such as ``DETECT``) names a step
+    or DD of the job, so it is looked up rather than run (issue #133).
+
+    Only an all-uppercase token can name one; the file is parsed quietly to
+    find out, and a file that does not parse names nothing.
+    """
+    if token != token.upper():
+        return False
+    try:
+        job = _parse_file(source, args.proc_path)
+    except (JCLSyntaxError, JCLValidationError, JCLStructureError):
+        return False
+    return _is_step_or_dd_name(job, token)
+
+
+def _is_step_or_dd_name(job: Job, token: str) -> bool:
+    """True if *token*, exactly as typed, is the name of a step or DD in *job*.
+
+    JCL names are uppercase, so ``SQL`` can name a step while ``sql`` is
+    always the query word; an exact-case name wins over the word (#133).
+    """
+    if job.get_step(token) is not None:
+        return True
+    return any(
+        dd.name == token
+        for step in iter_execution_steps(job.steps)
+        for dd in step.dd_statements
+    )
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -206,7 +257,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def _load_job(
-    path: Path, args: argparse.Namespace
+    path: Path | str, args: argparse.Namespace
 ) -> tuple[Job, ProfilingResult | None] | None:
     """Parse (and with ``--explode`` explode) *path*; ``None`` after printing
     the error when that fails."""
@@ -243,7 +294,7 @@ def _load_job(
     return job, prof
 
 
-def _parse_file(path: Path, proc_path: str | None) -> Job:
+def _parse_file(path: Path | str, proc_path: str | None) -> Job:
     return parse_jcl(
         path,
         proc_base_path=proc_path,
@@ -251,21 +302,62 @@ def _parse_file(path: Path, proc_path: str | None) -> Job:
     )
 
 
-def _run_query(job: Job, args: argparse.Namespace, prof: ProfilingResult | None) -> int:
+def _run_query_with_profile(
+    job: Job, args: argparse.Namespace, prof: ProfilingResult
+) -> int:
+    """:func:`_run_query`, plus the ``--profile`` metrics (issue #131).
+
+    JSON output gains a ``profiling`` key (a JSON list is wrapped as
+    ``{"result": [...], "profiling": {...}}``); text output is followed by
+    a profiling block.
+    """
+    if not args.json_output:
+        code = _run_query(job, args)
+        _print_profiling(prof)
+        return code
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        code = _run_query(job, args)
+    data: Any = json.loads(buffer.getvalue()) if buffer.getvalue().strip() else {}
+    if not isinstance(data, dict):
+        data = {"result": data}
+    data["profiling"] = prof.to_dict()
+    print(json.dumps(data, indent=2))
+    return code
+
+
+def _print_profiling(prof: ProfilingResult) -> None:
+    print()
+    print("Profiling:")
+    print(f"  Wall clock:  {prof.wall_clock_s:.4f} s")
+    if prof.cpu_user_s is not None and prof.cpu_system_s is not None:
+        print(
+            f"  CPU:         {prof.cpu_user_s:.4f} s user, {prof.cpu_system_s:.4f} s system"
+        )
+    print(f"  Peak memory: {prof.peak_memory_mb:.2f} MB")
+    if prof.prof_file:
+        print(f"  cProfile:    {prof.prof_file}")
+    if prof.top_functions:
+        print("  Top functions (cumulative time):")
+        for func in prof.top_functions:
+            print(f"    {func.cumul_time_s:9.4f} s  {func.calls:7d}  {func.function}")
+
+
+def _run_query(job: Job, args: argparse.Namespace) -> int:
     """Answer the query tokens of *args* about *job*."""
     tokens = args.query  # list[str]
     json_out = args.json_output
     if not tokens:
         if json_out:
-            data = _job_to_dict(job)
-            if prof is not None:
-                data["profiling"] = prof.to_dict()
-            print(json.dumps(data, indent=2))
+            print(json.dumps(_job_to_dict(job), indent=2))
         else:
             _print_summary(job)
         return 0
 
     query = tokens[0]
+    if _is_step_or_dd_name(job, query):
+        # An exact-case step or DD name wins over a query word (#133).
+        return _cmd_step_or_dd(job, query, json_out)
     command = _JOB_QUERIES.get(query.lower())
     if command is not None:
         return command(job, json_out)
@@ -374,7 +466,9 @@ def _print_lineage(stream: JobStream, report: LineageReport) -> None:
     for job_id, job in stream.jobs.items():
         print(f"  {job_id}: {job.name}")
     if stream.procedures:
-        print(f"PROC members skipped: {', '.join(stream.procedures)}")
+        print(
+            f"PROC members (used to explode the jobs): {', '.join(stream.procedures)}"
+        )
     for label, entries in (("Not parsed", stream.errors), ("Note", stream.warnings)):
         for job_id, message in entries.items():
             print(f"{label}: {job_id}: {message}")
@@ -406,7 +500,7 @@ def _print_lineage(stream: JobStream, report: LineageReport) -> None:
 
 
 def _cmd_validate(
-    path: Path, json_output: bool = False, proc_path: str | None = None
+    path: Path | str, json_output: bool = False, proc_path: str | None = None
 ) -> int:
     # --proc-path is the base for external PROCs and INCLUDE members, as for
     # every other command; without it JCL_PROCLIB_PATH still applies (#129).
@@ -469,11 +563,12 @@ def _cmd_list_available(
     return 0
 
 
-def _cmd_detect(path: Path, json_output: bool = False) -> int:
+def _cmd_detect(path: Path | str, json_output: bool = False) -> int:
     file_type = detect_file_type(path)
     name = file_type.name  # "JCL", "PROC", or "UNKNOWN"
     if json_output:
-        print(json.dumps({"file_type": name, "path": str(path)}, indent=2))
+        label = str(path) if isinstance(path, Path) else "-"
+        print(json.dumps({"file_type": name, "path": label}, indent=2))
     else:
         print(name)
     return 0

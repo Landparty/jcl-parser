@@ -18,20 +18,37 @@ import re
 from typing import TYPE_CHECKING
 
 from ..utils import control_card_text
+from ._control import split_operands
 from .base import ProgramAnalysis, ProgramProfile
 
 if TYPE_CHECKING:
     from ..model import Step
 
-_RE_INCLUDE = re.compile(
-    r"^\s*INCLUDE\s+([A-Za-z0-9$#@]+)", re.IGNORECASE | re.MULTILINE
-)
+# The whole operand field: ``ddname``, ``ddname(mem1,mem2,...)`` or several
+# of those separated by commas.
+_RE_INCLUDE = re.compile(r"^\s*INCLUDE\s+(\S+)", re.IGNORECASE | re.MULTILINE)
 _RE_ENTRY = re.compile(r"^\s*ENTRY\s+([A-Za-z0-9$#@]+)", re.IGNORECASE | re.MULTILINE)
 _RE_NAME = re.compile(r"^\s*NAME\s+([A-Za-z0-9$#@]+)", re.IGNORECASE | re.MULTILINE)
 _RE_LIBRARY = re.compile(
     r"^\s*LIBRARY\s+([A-Za-z0-9$#@,()]+)", re.IGNORECASE | re.MULTILINE
 )
 _RE_ALIAS = re.compile(r"^\s*ALIAS\s+([A-Za-z0-9$#@]+)", re.IGNORECASE | re.MULTILINE)
+
+
+def _module_count(include_operands: str) -> int:
+    """How many modules one INCLUDE statement names (issue #112).
+
+    ``ddname(m1,m2,m3)`` names one module per member; a bare ``ddname``
+    (a sequential object dataset or a whole member) counts as one.
+    """
+    count = 0
+    for operand in split_operands(include_operands):
+        _, paren, members = operand.partition("(")
+        if paren:
+            count += max(len(split_operands(members.rstrip(")"))), 1)
+        else:
+            count += 1
+    return count
 
 
 def _control_text(step: Step) -> str:
@@ -52,6 +69,7 @@ class BinderProfile(ProgramProfile):
         notes: list[str] = []
 
         includes = [m.group(1) for m in _RE_INCLUDE.finditer(text)]
+        modules = sum(_module_count(operands) for operands in includes)
         if includes:
             notes.append(f"INCLUDE {', '.join(includes)}")
         for m in _RE_ENTRY.finditer(text):
@@ -68,7 +86,7 @@ class BinderProfile(ProgramProfile):
             notes.append(f"output module: {syslmod.dataset_name}")
 
         summary = (
-            f"{step.program}: link-edits {len(includes)} object module(s)"
+            f"{step.program}: link-edits {modules} object module(s)"
             if notes
             else f"{step.program} with no recognised control statements"
         )

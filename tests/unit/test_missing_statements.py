@@ -5,11 +5,17 @@ Tests NULL, COMMAND, CNTL/ENDCNTL statements and unknown statement handling
 to ensure parser doesn't crash when encountering them.
 """
 
+import pytest
+
 from jclparser import parse_jcl
+from jclparser.errors import JCLSyntaxError
 
 
 class TestNULLStatement:
     """Test NULL statement (//) handling."""
+
+    # The null statement ends the job on z/OS: records after it, up to the
+    # next JOB statement, are not part of the job and are reported (#124).
 
     def test_null_statement_basic(self):
         """Test basic NULL statement (//)."""
@@ -19,13 +25,13 @@ class TestNULLStatement:
 //DD1 DD DUMMY"""
 
         job = parse_jcl(jcl)
-        # Should parse without crashing
         assert job.name == "TEST"
         assert len(job.steps) == 1
-        assert job.steps[0].get_dd("DD1") is not None
+        assert job.steps[0].get_dd("DD1") is None
+        assert any("null statement (//) ends job TEST" in w for w in job.warnings)
 
-    def test_multiple_null_statements(self):
-        """Test multiple NULL statements."""
+    def test_null_statement_right_after_job(self):
+        """A null statement straight after the JOB statement ends it there."""
         jcl = """//TEST JOB (ACCT),'TEST'
 //
 //STEP1 EXEC PGM=IEFBR14
@@ -35,7 +41,9 @@ class TestNULLStatement:
 
         job = parse_jcl(jcl)
         assert job.name == "TEST"
-        assert len(job.steps) == 1
+        assert job.steps == []
+        assert any("Line 2: null statement" in w for w in job.warnings)
+        assert any("(lines 3-6)" in w for w in job.warnings)
 
     def test_null_statement_between_steps(self):
         """Test NULL statement between job steps."""
@@ -48,7 +56,51 @@ class TestNULLStatement:
 
         job = parse_jcl(jcl)
         assert job.name == "TEST"
-        assert len(job.steps) == 2
+        assert [s.name for s in job.steps] == ["STEP1"]
+
+    def test_trailing_null_statement_is_silent(self):
+        """A null statement as the last record ends the job with no warning."""
+        jcl = """//TEST JOB (ACCT),'TEST'
+//STEP1 EXEC PGM=IEFBR14
+//
+//* trailing comment
+"""
+
+        job = parse_jcl(jcl)
+        assert [s.name for s in job.steps] == ["STEP1"]
+        assert job.warnings == []
+
+    def test_null_before_job_statement_is_ignored(self):
+        jcl = """//
+//TEST JOB (ACCT),'TEST'
+//STEP1 EXEC PGM=IEFBR14"""
+
+        job = parse_jcl(jcl)
+        assert [s.name for s in job.steps] == ["STEP1"]
+        assert job.warnings == []
+
+    def test_data_after_null_is_ignored(self):
+        """In-stream data after the null statement is not attached to a step."""
+        jcl = """//TEST JOB (ACCT),'TEST'
+//STEP1 EXEC PGM=IEFBR14
+//
+//IN DD *
+DATA
+/*"""
+
+        job = parse_jcl(jcl)
+        assert job.steps[0].dd_statements == []
+        assert any("3 record(s)" in w for w in job.warnings)
+
+    def test_second_job_after_null_is_still_an_error(self):
+        jcl = """//J1 JOB (ACCT),'TEST'
+//STEP1 EXEC PGM=IEFBR14
+//
+//J2 JOB (ACCT),'TEST'
+//STEP2 EXEC PGM=IEFBR14"""
+
+        with pytest.raises(JCLSyntaxError, match="Multiple JOB"):
+            parse_jcl(jcl)
 
 
 class TestCOMMANDStatement:
@@ -186,17 +238,16 @@ class TestRealWorldScenarios:
         """Test job with NULL, COMMAND, CNTL, and unknown statements."""
         jcl = """//TESTJOB JOB (ACCT),'TEST'
 //CMD1 COMMAND 'START PROC1'
-//
 //STEP1 EXEC PGM=IEBCOPY
 //SYSIN DD *
   CNTL
   COPY INDD=IN,OUTDD=OUT
   ENDCNTL
 /*
-//
 //UNKNOWN CUSTOM PARAM=VALUE
 //STEP2 EXEC PGM=IEFBR14
-//DD1 DD DUMMY"""
+//DD1 DD DUMMY
+//"""
 
         job = parse_jcl(jcl)
         assert job.name == "TESTJOB"

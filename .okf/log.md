@@ -1,5 +1,19 @@
 # Update Log
 
+## 2026-10-28 (open-issue sweep)
+* **Fix (#144)**: `load_job_stream` explodes jobs with the PROC members it finds in the directory (by member name: the file name without `.prc` / `.proc` / `.jcl`), after in-stream PROCs and before `proc_base_path` and the built-ins. The CLI line is now `PROC members (used to explode the jobs): ...`. See [api/public-api](api/public-api.md).
+* **Fix (#145)**: lineage keys keep a PDS member (`P.L(M)`; GDG generations still collapse to the base). A member write feeds reads of that member and whole-library reads; a whole-library write feeds every member read; a job that writes members of a library is taken to read its own members when it reads the whole library, so compile jobs sharing a DBRMLIB no longer form false cycles. New `lineage.library_of()`.
+* **Fix (#124)**: the null statement (`//`) ends the job: later records are skipped with a warning; a JOB after it is still "Multiple JOB statements". [development/invariants](development/invariants.md) #20.
+* **Fix (#105)**: an omitted DISP on a DD that names a dataset is `NEW` (`is_output()` true); see [core/data-model](core/data-model.md).
+* **Fix (#97)**: `DDStatement.disposition` annotated `str | list[str] | None` (the docs already said so); one mypy baseline entry gone (81 left).
+* **Fix (#104)**: `JCLParseError` and its subclasses pickle and deep-copy losslessly (`__reduce__`).
+* **Fix (#125)**: `read_source` decodes a binary file object (`io.BytesIO`, `open(..., "rb")`) with the file fallback chain.
+* **Fix (#132)**: `validate_jcl` reads a `Path` once (a pipe lost errors on the second read); the CLI reads stdin when `FILE` is `-`.
+* **Fix (#131)**: `--profile` output in every CLI view (text block, `profiling` key in JSON); `--profile-output` requires `--profile`; tracemalloc peak reset on entry. See [api/cli-reference](api/cli-reference.md).
+* **Fix (#133)**: a query token that is exactly the name of a step or DD wins over the query word (`SQL`, `LINT`, `STEPS`, `DETECT`, …). See [api/cli-reference](api/cli-reference.md).
+* **Fix (#112, #113, #114)**: Binder `INCLUDE ddname(m1,m2,...)` counts each member; IEHPROGM joins continued statements (shared `_control` tokenizer) before reading `DSNAME=`; JCL-LINT-002 checks the first UNIT subparameter.
+* **Chore (#134, #135, #136)**: `.claude/settings.json` hooks read `tool_input.file_path` from stdin; ruff pinned to 0.17.3 in CI and `[dev]` (0.17.3 does not enable DTZ, so the two local-time `datetime.now()` calls need no `noqa`; an older ruff, such as 0.16.x, flags them); PEP 639 `license` / `license-files` with setuptools >= 77; `Documentation` URL points at `.okf/index.md`; [development/workflow](development/workflow.md) line counts refreshed.
+
 ## 2026-10-15 (nightly bug hunt)
 * **Fix**: the `ADRDSSU` profile matched each SYSIN *line* that began with a command name, so a DUMP keyword continued onto its own line (`DUMP ... -` then `COMPRESS`) was reported as a second command, a hyphen continuation inside an include list became a name (`INCLUDE(A.B, -` / `C.D)` noted as `A.B, - C.D`), `DATASET( -` / `INCLUDE(...)` lost its list, and the abbreviated `DS(INCL(...))` was not read. It now joins continuations first (`-`, or `+` which also drops the next line's leading blanks, so a split name is rejoined), ignores `/* ... */` comments, takes the command from a statement's first word only, and finds `INCLUDE`/`INCL` inside the statement's `DATASET`/`DS` parentheses. Include names are listed blank-separated (a comma-separated list was echoed with its commas). See [api/public-api](api/public-api.md#tier-2--advanced). Regression tests: `tests/unit/test_program_profiles_catalogue.py::TestADRDSSU`.
 ## 2026-10-27 (cross-job lineage)
