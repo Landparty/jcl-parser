@@ -7,6 +7,7 @@ for syntax errors, validation errors, and parsing failures.
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 
 class ErrorType(Enum):
@@ -79,6 +80,23 @@ class JCLParseError(Exception):
         if self.column_number > 0:
             location += f", column {self.column_number}"
         return f"{location}: {self.message}"
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Subclasses take different constructor arguments than ``self.args``
+        # (the formatted message), so rebuild from the instance state rather
+        # than re-running ``__init__`` -- keeps pickle/deepcopy lossless
+        # (issue #104).
+        return (_restore_error, (type(self), self.args, self.__dict__.copy()))
+
+
+def _restore_error(
+    cls: type[JCLParseError], args: tuple[Any, ...], state: dict[str, Any]
+) -> JCLParseError:
+    """Unpickle helper for :meth:`JCLParseError.__reduce__`."""
+    error = cls.__new__(cls)
+    Exception.__init__(error, *args)
+    error.__dict__.update(state)
+    return error
 
 
 class JCLSyntaxError(JCLParseError):
