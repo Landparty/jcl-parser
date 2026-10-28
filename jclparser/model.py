@@ -265,7 +265,8 @@ class DDStatement:
     Attributes:
         name: DD name (e.g., "SYSOUT", "INPUT")
         dataset_name: Dataset name from DSN parameter
-        disposition: DISP parameter value
+        disposition: DISP parameter value -- a string for a bare status
+            (``"SHR"``), a list for a parenthesised one (``["NEW", "CATLG"]``)
         parameters: All DD parameters
         inline_data: In-stream data content for DD *
         comments: DD-level comments
@@ -274,7 +275,7 @@ class DDStatement:
 
     name: str
     dataset_name: str | None = None
-    disposition: str | None = None
+    disposition: str | list[str] | None = None
     parameters: dict[str, Any] = field(default_factory=dict)
     inline_data: str | None = None
     comments: list[str] = field(default_factory=list)
@@ -490,11 +491,29 @@ class DDStatement:
         return self._disp_tokens_cache
 
     def _disp_status(self) -> str | None:
-        """Return the DISP status (first token), or None with no DISP."""
+        """Return the DISP status (first token).
+
+        With no DISP, a DD that names a dataset defaults to ``NEW`` -- z/OS
+        treats an omitted DISP as ``(NEW,DELETE)`` (issue #105).  A backward
+        reference (``DSN=*.S.DD``), ``NULLFILE`` and a ``DUMMY`` DD define no
+        new data, so they still report None.
+        """
         if self.disposition:
             tokens = self._disp_tokens()
             return tokens[0] if tokens else None
+        if self._defaults_to_new():
+            return "NEW"
         return None
+
+    def _defaults_to_new(self) -> bool:
+        """True if this DD, coded without DISP, defines a new dataset."""
+        dsn = self.dataset_name
+        if not dsn or dsn.startswith("*") or dsn.upper() == "NULLFILE":
+            return False
+        return not any(
+            key.startswith("_pos_") and str(value).upper() == "DUMMY"
+            for key, value in self.parameters.items()
+        )
 
     def is_input(self) -> bool:
         """True if this DD defines input data (DISP status is OLD or SHR).
@@ -507,7 +526,8 @@ class DDStatement:
     def is_output(self) -> bool:
         """True if this DD defines output data (DISP status is NEW or MOD).
 
-        An omitted status (``DISP=(,CATLG)``) defaults to NEW.  CATLG/UNCATLG
+        An omitted status (``DISP=(,CATLG)``) and an omitted DISP on a DD
+        that names a dataset both default to NEW.  CATLG/UNCATLG
         in the disposition positions do not make ``DISP=(SHR,PASS,CATLG)`` an
         output.
         """
