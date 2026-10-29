@@ -46,6 +46,7 @@ re-exported from `jclparser`. **`Procedure` is not** — import it from
 | `custom_statements` | `list[Statement]` | Statements whose `type` the parser has no handler for — a custom type returned by an enabled `StatementPlugin` — kept verbatim in source order (since 2026-10-15, #130; they used to be dropped silently). Copied onto the job `explode_job` returns |
 | `sql_detections` | `dict[str, Any]` | Keyed by step name; only with `ParserConfig(detect_sql=True)` |
 | `unresolved_output_refs` | `list[tuple[str, str, int]]` | `OUTPUT=*.name` refs with no definition in scope: `(step_name, ref, line_number)`, see [OutputStatement](#outputstatement) |
+| `conditional_errors` | `list[tuple[int, str]]` | `IF`/`THEN`/`ELSE`/`ENDIF` statements that do not pair up, as `(line_number, message)`; `job.validate()` reports each as an ERROR (since 2026-10-29). Copied onto the job `explode_job` returns; not in the JSON export (`warnings` carries the same findings) |
 | `exported_symbols` | `set[str]` | From `EXPORT SYMLIST=(...)`; `"*"` exports every SET symbol |
 | `warnings` | `list[str]` | **Plain strings, not `ParseError`.** Non-fatal issues; parsing never fails on these |
 | `is_procedure_member` | `bool` | `True` only on the synthetic `Job(name="")` returned for a JOB-less cataloged PROC member; the JOB-statement checks (job name, "at least one execution step", `JCL-LINT-004/005`) skip it. Kept by `explode_job`. Default `False` (since 2026-10-15, #98) |

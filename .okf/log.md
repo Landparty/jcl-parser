@@ -1,5 +1,10 @@
 # Update Log
 
+## 2026-10-29 (bug hunt)
+* **Fix**: `validate_jcl` (and strict `parse_jcl`) passed JCL whose `IF`/`THEN`/`ELSE`/`ENDIF` statements do not pair up, which z/OS fails; only `job.warnings` mentioned it. The parser records them on the new `Job.conditional_errors` and `job.validate()` reports each as an ERROR (`validators.validate_conditional_structure`); a second ELSE for one IF is now caught too. See [advanced/validation](advanced/validation.md), [core/data-model](core/data-model.md).
+* **Fix**: a `*.` backward reference (`DSN=`, `VOL=REF=`, `DCB=`, `REFDD=`, `PGM=`) to a DD that does not exist or is coded later was never reported; `validators.validate_backward_references` now warns on it.
+* **Fix**: `SPACE=(CYL,(1,1,5),,CONTIG)` read the omitted RLSE slot as a `''` subparameter. Tests: `tests/unit/test_bughunt_conditionals_and_refs.py`.
+
 ## 2026-10-29 (lint in CI)
 * **Feature**: `jcl-lint PATH...` (new module `jclparser/checks.py`) lints files and directories in one run with `--format text|json|sarif`, `--output`, `--fail-on`, `--select`, `--ignore`; `jcl-parser DIR lint` and `jcl-parser DIR --validate` (a directory used to accept only `lineage`); `--sarif`, `--config` and `--fail-on` on `jcl-parser`. `to_sarif_files()` renders several files as one SARIF run. A pre-commit hook (`.pre-commit-hooks.yaml`) and a composite GitHub Action (`action.yml`). See [api/cli-reference](api/cli-reference.md).
 * **Feature**: lint configuration from `[tool.jcl-parser.lint]` in the nearest `pyproject.toml` (`lint/config.py`), and `//* jcl-lint: disable=` / `disable-file=` comments (`lint/suppress.py`, `lint_job(..., source=)`).

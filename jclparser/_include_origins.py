@@ -90,6 +90,9 @@ class IncludeLineMap:
             (step_name, ref, self.translate(line))
             for step_name, ref, line in job.unresolved_output_refs
         ]
+        job.conditional_errors[:] = [
+            (self.translate(line), message) for line, message in job.conditional_errors
+        ]
 
     def _relabel_object(self, obj: Any, seen: set[int]) -> None:
         """Translate ``line_number`` on *obj* and every model object under it."""

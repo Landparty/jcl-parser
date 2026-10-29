@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 # Precompiled regex patterns for performance
 _RE_JCL_ID_VALID = re.compile(r"^[A-Za-z@#$][A-Za-z0-9@#$]*$")
 
+# A ``*.`` backward reference inside a VOL=REF= / REFDD= / DCB= value.
+_RE_VOL_REF = re.compile(r"\bREF\s*=\s*\(?\s*(\*\.[^,()\s]+)", re.IGNORECASE)
+
 # Shared description used in all JCL name validation error messages
 _JCL_NAME_FORMAT = "must be 1-8 characters, alphanumeric + @#$"
 
@@ -160,6 +163,10 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
 
     errors.extend(validate_procedure_references(job))
 
+    errors.extend(validate_conditional_structure(job))
+
+    errors.extend(validate_backward_references(job))
+
     logger.debug(
         "validation of job %s produced %d finding(s)",
         job.name or "(unnamed)",
@@ -188,6 +195,127 @@ def validate_output_references(job: Job) -> list[ValidationError]:
                 severity=ErrorSeverity.WARNING,
             )
         )
+    return errors
+
+
+def validate_conditional_structure(job: Job) -> list[ValidationError]:
+    """Report ``IF``/``THEN``/``ELSE``/``ENDIF`` statements that do not pair up.
+
+    The parser recovers from them (``Job.conditional_errors``, filled during
+    parsing), but z/OS fails such a job with a JCL error, so each is an ERROR.
+    """
+    return [
+        ValidationError(
+            message,
+            ErrorType.STRUCTURE_ERROR,
+            line_number=line_number,
+        )
+        for line_number, message in job.conditional_errors
+    ]
+
+
+def _dd_backward_refs(dd: DDStatement) -> list[tuple[str, str]]:
+    """``(keyword, reference)`` for each ``*.`` backward reference on *dd*."""
+    refs: list[tuple[str, str]] = []
+    if dd.dataset_name and dd.dataset_name.startswith("*."):
+        refs.append(("DSN", dd.dataset_name))
+    for key in ("VOL", "VOLUME"):
+        value = dd.parameters.get(key)
+        if isinstance(value, list):
+            value = ",".join(str(v) for v in value)
+        if isinstance(value, str):
+            refs.extend((f"{key}=REF", m.group(1)) for m in _RE_VOL_REF.finditer(value))
+    for key in ("DCB", "REFDD"):
+        value = dd.parameters.get(key)
+        first = value[0] if isinstance(value, list) and value else value
+        if isinstance(first, str) and first.strip("()").startswith("*."):
+            refs.append((key, first.strip("()")))
+    return refs
+
+
+class _BackwardRefChecker:
+    """Checks ``*.`` backward references against the DDs coded before them."""
+
+    def __init__(self) -> None:
+        #: ``STEP.DD`` (``STEP.PROCSTEP.DD`` for an exploded step) of every
+        #: DD of the steps walked so far.
+        self.known: set[str] = set()
+        #: Job steps that call a PROC the job was not exploded for: the DDs
+        #: of their procedure steps are unknown.
+        self.proc_calls: set[str] = set()
+
+    def resolves(self, ref: str, step: Step, own: set[str]) -> bool:
+        """Whether *ref* (``*.DD``, ``*.STEP.DD``, ``*.STEP.PROCSTEP.DD``)
+        names a DD coded before it, or cannot be checked."""
+        segments = ref[2:].upper().split(".")
+        if "&" in ref or not all(segments) or len(segments) > 3:
+            return True  # symbolic, or not a form this check knows
+        if len(segments) == 1:
+            return segments[0] in own
+        if segments[0] in self.proc_calls:
+            return True
+        key = ".".join(segments)
+        if key in self.known:
+            return True
+        # A PROC's own *.PROCSTEP.DD references are left as coded in an
+        # exploded job, where its steps are named CALLER.PROCSTEP.
+        name = (step.name or "").upper()
+        if len(segments) == 2 and step.is_exploded and "." in name:
+            return f"{name.rsplit('.', 1)[0]}.{key}" in self.known
+        return False
+
+    def check_step(self, step: Step) -> list[ValidationError]:
+        errors: list[ValidationError] = []
+        name = (step.name or "").upper()
+        if step.is_procedure:
+            self.proc_calls.add(name)
+            return errors
+        own: set[str] = set()
+        program = step.program or ""
+        if program.startswith("*.") and not self.resolves(program, step, own):
+            errors.append(self._finding("PGM", program, step, step))
+        for dd in step.dd_statements:
+            for keyword, ref in _dd_backward_refs(dd):
+                if not self.resolves(ref, step, own):
+                    errors.append(self._finding(keyword, ref, step, dd))
+            if dd.name:
+                own.add(dd.name.upper())
+                self.known.add(f"{name}.{dd.name.upper()}")
+        return errors
+
+    @staticmethod
+    def _finding(
+        keyword: str, ref: str, step: Step, where: Step | DDStatement
+    ) -> ValidationError:
+        place = (
+            f"DD {where.name} in step {step.name}"
+            if where is not step
+            else (f"step {step.name}")
+        )
+        return ValidationError(
+            f"{keyword}={ref} on {place} does not refer to a DD statement "
+            "coded before it",
+            ErrorType.SEMANTIC_ERROR,
+            line_number=where.line_number,
+            severity=ErrorSeverity.WARNING,
+        )
+
+
+def validate_backward_references(job: Job) -> list[ValidationError]:
+    """Warn on ``*.`` backward references that name no earlier DD statement.
+
+    ``DSN=``, ``VOL=REF=``, ``DCB=`` and ``REFDD=`` on a DD, and ``PGM=`` on
+    an EXEC, may name a DD coded before them (``*.DD`` in the same step,
+    ``*.STEP.DD``, ``*.STEP.PROCSTEP.DD``); z/OS fails a reference to a DD
+    that does not exist or comes later.  A reference into a PROC the job was
+    not exploded for cannot be checked and is skipped.  It is a WARNING, like
+    an unresolved ``OUTPUT=*.name``: an INCLUDE member that could not be read
+    may hold the DD it names.
+    """
+    checker = _BackwardRefChecker()
+    errors: list[ValidationError] = []
+    for step in iter_execution_steps(job.steps):
+        errors.extend(checker.check_step(step))
     return errors
 
 

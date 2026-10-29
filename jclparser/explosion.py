@@ -1724,6 +1724,7 @@ def _exploded_job(job: Job, exploded_steps: list[Step | ConditionalBlock]) -> Jo
     # other.
     for _attr in (
         "unresolved_output_refs",
+        "conditional_errors",
         "sql_detections",
         "jes_typed_statements",
         "jes_statements",

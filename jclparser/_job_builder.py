@@ -209,6 +209,10 @@ class JobBuilder:
         self.null_line: int | None = None
         #: Line numbers of the records after it, which are not part of the job.
         self.after_null_lines: list[int] = []
+        #: Misplaced ``IF``/``THEN``/``ELSE``/``ENDIF`` statements as
+        #: ``(line, message)``; finish() copies them to
+        #: :attr:`Job.conditional_errors`.
+        self.conditional_errors: list[tuple[int, str]] = []
 
     # ------------------------------------------------------------------ #
     # Line-level handling (before statement parsing)
@@ -471,6 +475,15 @@ class JobBuilder:
                     f"Line {cond.line_number}: IF block in PROC {procedure.name} "
                     f"has no matching ENDIF; closed at PEND (line {line_num})"
                 )
+                self.conditional_errors.append(
+                    (
+                        cond.line_number,
+                        (
+                            f"IF statement in PROC {procedure.name} has no "
+                            "matching ENDIF before PEND"
+                        ),
+                    )
+                )
             self._warn_proc_orphaned_dds(procedure, line_num)
         self.proc_orphaned_dds = []
         self.proc_cond_depth = 0
@@ -666,12 +679,31 @@ class JobBuilder:
     def _switch_branch(self, branch: str, line_num: int) -> None:
         """Handle ``THEN`` / ``ELSE``: make *branch* the open IF's active one."""
         open_if = self._innermost_if()
-        if open_if is not None:
-            self.conditional_stack[-1] = (open_if[0], branch)
-        else:
+        if open_if is None:
             self._warnings_sink().append(
                 f"Line {line_num}: {branch} with no matching IF; ignored"
             )
+            self.conditional_errors.append(
+                (line_num, f"{branch} statement with no matching IF")
+            )
+            return
+        if branch == "ELSE" and open_if[1] == "ELSE":
+            # An IF has at most one ELSE clause; the second one's steps are
+            # still read into the ELSE branch.
+            self._warnings_sink().append(
+                f"Line {line_num}: second ELSE for the IF on line "
+                f"{open_if[0].line_number}"
+            )
+            self.conditional_errors.append(
+                (
+                    line_num,
+                    (
+                        "ELSE statement repeats the ELSE of the IF on line "
+                        f"{open_if[0].line_number}"
+                    ),
+                )
+            )
+        self.conditional_stack[-1] = (open_if[0], branch)
 
     def _close_if(self, line_num: int) -> None:
         """Handle ``ENDIF``: leave the innermost open IF block."""
@@ -680,6 +712,9 @@ class JobBuilder:
         else:
             self._warnings_sink().append(
                 f"Line {line_num}: ENDIF with no matching IF; ignored"
+            )
+            self.conditional_errors.append(
+                (line_num, "ENDIF statement with no matching IF")
             )
 
     def _on_jes(self, stmt: Statement, line_num: int) -> None:
@@ -1001,3 +1036,7 @@ class JobBuilder:
             job.warnings.append(
                 f"Line {_cond.line_number}: IF block has no matching ENDIF"
             )
+            self.conditional_errors.append(
+                (_cond.line_number, "IF statement has no matching ENDIF")
+            )
+        job.conditional_errors.extend(sorted(self.conditional_errors))

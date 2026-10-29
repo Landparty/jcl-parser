@@ -309,10 +309,12 @@ class ParameterParser:
             if len(alloc_values) >= 3:
                 subparams["_directory"] = alloc_values[2].strip()
 
-        # Remaining parts are options (RLSE, CONTIG, ROUND)
+        # Remaining parts are options (RLSE, CONTIG, ROUND); an omitted one
+        # (``SPACE=(CYL,(1,1),,CONTIG)``) is just its comma.
         for i in range(2, len(parts)):
             option = parts[i].strip().upper()
-            subparams[option] = True
+            if option:
+                subparams[option] = True
 
         logger.debug(
             "parsed SPACE at line %d into %d subparameter(s)",
