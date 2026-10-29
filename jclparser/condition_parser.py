@@ -286,82 +286,73 @@ _RE_DIGITS = re.compile(r"\d+$")
 # ---------------------------------------------------------------------------
 
 
-def _tokenize(text: str) -> list[str]:  # noqa: C901 -- complexity baseline, split when touched
+def _tokenize(text: str) -> list[str]:
     """Split a condition string into tokens."""
     tokens: list[str] = []
     i = 0
-    n = len(text)
-
-    while i < n:
-        ch = text[i]
-
-        # Whitespace
-        if ch.isspace():
+    while i < len(text):
+        if text[i].isspace():
             i += 1
             continue
-
-        # Parentheses
-        if ch in "()":
-            tokens.append(ch)
-            i += 1
-            continue
-
-        # Two-character symbolic operators (¬=  ^=  ~=  !=  <=  >=  <>  ¬<  etc.)
-        if ch in _TWO_CHAR_OP_STARTS and i + 1 < n:
-            two = text[i : i + 2]
-            if two in _OP_MAP:
-                tokens.append(two)
-                i += 2
-                continue
-
-        # Standalone Boolean symbols (after the two-character check, so that
-        # "¬=" stays a comparison operator)
-        if ch in _SYMBOL_KEYWORDS:
-            tokens.append(_SYMBOL_KEYWORDS[ch])
-            i += 1
-            continue
-
-        # Single-character symbolic operators
-        if ch in "=<>":
-            # Check for <= / >=
-            if i + 1 < n and text[i : i + 2] in _OP_MAP:
-                tokens.append(text[i : i + 2])
-                i += 2
-            else:
-                tokens.append(ch)
-                i += 1
-            continue
-
-        # Quoted string literal (e.g. values like 'PRODUCTION')
-        if ch == "'":
-            j = i + 1
-            while j < n:
-                if text[j] == "'" and j + 1 < n and text[j + 1] == "'":
-                    j += 2  # escaped apostrophe
-                elif text[j] == "'":
-                    j += 1
-                    break
-                else:
-                    j += 1
-            tokens.append(text[i:j])
-            i = j
-            continue
-
-        # Word: identifier, keyword, number, or step.attr reference
-        if ch.isalnum() or ch in "@#$_":
-            j = i
-            while j < n and (text[j].isalnum() or text[j] in "@#$_.-"):
-                j += 1
-            tokens.append(text[i:j])
-            i = j
-            continue
-
-        # Anything else (``-``, ``*``, ``;`` ...) is outside the grammar.
-        # Skipping it silently changed the condition -- ``RC = -1`` read as
-        # ``RC = 1`` -- so the whole condition is unparseable instead.
-        raise ValueError(f"Unexpected character in condition: {ch!r}")
-
+        token, i = _next_token(text, i)
+        tokens.append(token)
     return tokens
+
+
+def _next_token(text: str, i: int) -> tuple[str, int]:
+    """Read the token starting at *text[i]* (not a blank); return it and the next index."""
+    ch = text[i]
+
+    # Parentheses
+    if ch in "()":
+        return ch, i + 1
+
+    # Two-character symbolic operators (¬=  ^=  ~=  !=  <=  >=  <>  ¬<  etc.)
+    two = text[i : i + 2]
+    if ch in _TWO_CHAR_OP_STARTS and len(two) == 2 and two in _OP_MAP:
+        return two, i + 2
+
+    # Standalone Boolean symbols (after the two-character check, so that
+    # "¬=" stays a comparison operator)
+    if ch in _SYMBOL_KEYWORDS:
+        return _SYMBOL_KEYWORDS[ch], i + 1
+
+    # Single-character symbolic operators, or <= / >=
+    if ch in "=<>":
+        if two in _OP_MAP:
+            return two, i + 2
+        return ch, i + 1
+
+    # Quoted string literal (e.g. values like 'PRODUCTION')
+    if ch == "'":
+        j = _end_of_quoted(text, i)
+        return text[i:j], j
+
+    # Word: identifier, keyword, number, or step.attr reference
+    if ch.isalnum() or ch in "@#$_":
+        j = i
+        while j < len(text) and (text[j].isalnum() or text[j] in "@#$_.-"):
+            j += 1
+        return text[i:j], j
+
+    # Anything else (``-``, ``*``, ``;`` ...) is outside the grammar.
+    # Skipping it silently changed the condition -- ``RC = -1`` read as
+    # ``RC = 1`` -- so the whole condition is unparseable instead.
+    raise ValueError(f"Unexpected character in condition: {ch!r}")
+
+
+def _end_of_quoted(text: str, start: int) -> int:
+    """Index just past the quoted string opening at *text[start]* (``''`` escapes)."""
+    j = start + 1
+    n = len(text)
+    while j < n:
+        if text[j] == "'" and j + 1 < n and text[j + 1] == "'":
+            j += 2  # escaped apostrophe
+        elif text[j] == "'":
+            return j + 1
+        else:
+            j += 1
+    return j
 
 
 # ---------------------------------------------------------------------------

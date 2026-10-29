@@ -1,8 +1,6 @@
-"""
-Final parser tests to push total coverage above 90%
-"""
+"""Parser tests for statement types and parameter forms not covered elsewhere."""
 
-from jclparser import parse_jcl
+from jclparser import ConditionalBlock, parse_jcl
 
 
 class TestParserUncoveredLines:
@@ -16,11 +14,11 @@ class TestParserUncoveredLines:
 //STEP1 EXEC PGM=PROG
 //      ENDIF
 //"""
-        try:
-            parse_jcl(jcl, strict_mode=False)
-            # May work or not depending on IF implementation
-        except Exception:
-            pass  # IF may not be fully implemented
+        job = parse_jcl(jcl, strict_mode=False)
+        block = job.steps[0]
+        assert isinstance(block, ConditionalBlock)
+        assert block.condition == "(RC=0)"
+        assert [s.name for s in block.then_steps] == ["STEP1"]
 
     def test_parse_with_else_statement(self):
         """Test ELSE statement"""
@@ -32,10 +30,11 @@ class TestParserUncoveredLines:
 //STEP2 EXEC PGM=PROG2
 //      ENDIF
 //"""
-        try:
-            parse_jcl(jcl, strict_mode=False)
-        except Exception:
-            pass
+        job = parse_jcl(jcl, strict_mode=False)
+        block = job.steps[0]
+        assert isinstance(block, ConditionalBlock)
+        assert [s.name for s in block.then_steps] == ["STEP1"]
+        assert [s.name for s in block.else_steps] == ["STEP2"]
 
     def test_parse_with_output_statement(self):
         """Test OUTPUT statement"""
@@ -44,10 +43,10 @@ class TestParserUncoveredLines:
 //      OUTPUT COPIES=2,CLASS=A
 //STEP1 EXEC PGM=PROG
 //"""
-        try:
-            parse_jcl(jcl, strict_mode=False)
-        except Exception:
-            pass
+        job = parse_jcl(jcl, strict_mode=False)
+        assert [s.name for s in job.steps] == ["STEP1"]
+        (output,) = job.output_statements
+        assert output.parameters == {"COPIES": "2", "CLASS": "A"}
 
     def test_parse_with_xmit_statement(self):
         """Test XMIT statement"""
@@ -56,10 +55,11 @@ class TestParserUncoveredLines:
 //      XMIT NODE=REMOTE
 //STEP1 EXEC PGM=PROG
 //"""
-        try:
-            parse_jcl(jcl, strict_mode=False)
-        except Exception:
-            pass
+        # A job-level XMIT has no step for its data: everything after it is
+        # transmitted data, discarded with a warning.
+        job = parse_jcl(jcl, strict_mode=False)
+        assert job.steps == []
+        assert any("job-level XMIT" in w for w in job.warnings)
 
     def test_parse_with_command_statement(self):
         """Test COMMAND statement"""
@@ -68,10 +68,11 @@ class TestParserUncoveredLines:
 //      COMMAND 'SOME COMMAND'
 //STEP1 EXEC PGM=PROG
 //"""
-        try:
-            parse_jcl(jcl, strict_mode=False)
-        except Exception:
-            pass
+        job = parse_jcl(jcl, strict_mode=False)
+        assert [s.name for s in job.steps] == ["STEP1"]
+        (command,) = job.control_statements
+        assert command.type == "COMMAND"
+        assert command.parameters["_pos_0"] == "SOME COMMAND"
 
     def test_parse_with_cntl_endcntl(self):
         """Test CNTL/ENDCNTL"""
@@ -82,10 +83,11 @@ class TestParserUncoveredLines:
 //      ENDCNTL
 //STEP1 EXEC PGM=PROG
 //"""
-        try:
-            parse_jcl(jcl, strict_mode=False)
-        except Exception:
-            pass
+        job = parse_jcl(jcl, strict_mode=False)
+        assert [s.name for s in job.steps] == ["STEP1"]
+        (cntl,) = job.control_statements
+        assert cntl.type == "CNTL"
+        assert cntl.parameters["_records"] == ["//CNTL DATA"]
 
     def test_parse_multiline_job_params(self):
         """Test job with many parameters"""

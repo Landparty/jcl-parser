@@ -7,7 +7,7 @@ disable-model-invocation: true
 Run the following command and report the results:
 
 ```bash
-python -m pytest --no-cov -q 2>/dev/null; python -m coverage report --sort=cover
+python -m pytest -q 2>/dev/null; python -m coverage report --sort=cover
 ```
 
 Then:

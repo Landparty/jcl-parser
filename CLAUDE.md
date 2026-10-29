@@ -8,7 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 >
 > **One doc tree only.** `.okf/` is the only documentation tree. A stale pre-OKF copy
 > (`index.md`, `log.md`, `core/`, `api/`, … at the repo root) was deleted on 2026-10-03 after doc
-> updates twice landed there instead of the bundle; do not recreate it.
+> updates twice landed there instead of the bundle; do not recreate it. Reference pages describe
+> current behaviour; change history goes in `.okf/log.md` (see "Documentation Conventions" in
+> [`.okf/development/workflow.md`](.okf/development/workflow.md)).
 
 ## Project Overview
 
@@ -156,5 +158,5 @@ jcl-parser is free software under the **GNU AGPL v3.0 or later** (`LICENSE`), th
 
 - Python 3.10+ type hints on all new/changed signatures.
 - `ruff` for linting + formatting (line-length 88). `black` is not used — `ruff format` handles formatting.
-- **Complexity gate:** `ruff` enforces McCabe complexity <= 12 (`C901`). Functions that predate the gate carry `# noqa: C901 -- complexity baseline` (none left in the parsing pipeline); split one when you touch it and drop its marker. Never add a new marker — extract helpers instead.
+- **Complexity gate:** `ruff` enforces McCabe complexity <= 12 (`C901`), with no exceptions left in `jclparser/` (the last `# noqa: C901` baseline markers were removed on 2026-10-29). Never add a marker — extract helpers instead.
 - No runtime dependencies; dev tools live in the `[dev]` extra.

@@ -4,9 +4,44 @@
 **Status:** Every finding below was reproduced with a script or command, except where marked
 **requires validation**. The audit itself changed no production code.
 
-> **Update (same PR, second commit):** the patch-release batch in §8 is now fixed: **C1–C6, H1, H2, H5, M3**.
-> Each fix has a regression test in `tests/unit/test_audit_patch_fixes.py`, and `.okf/log.md` has
-> the details. Everything else below is still open.
+> **This is a point-in-time audit of commit `55f4339` (2026-09-27).** The findings below are kept
+> as written; file and line references point at that commit and many have since moved. The
+> table that follows is the current status of every finding.
+
+## Status (2026-10-29)
+
+| ID | Status | Where it was resolved / what is left |
+|---|---|---|
+| C1–C6, H1, H2, H5, M3 | Resolved | Same PR as the audit; regression tests in `tests/unit/test_audit_patch_fixes.py` |
+| H3 | Resolved | `scripts/okf_staleness_check.py` maps sources to `.okf/` pages |
+| H4 | Resolved | CI `typecheck` job runs `scripts/mypy_ratchet.py` against `mypy-baseline.txt`; the closed-source build was dropped (pure-Python wheel, CI `build` job) |
+| H6 | Resolved | `max_steps` is counted per produced step; `DEFAULT_MAX_STEPS = 10_000` |
+| H7 | **Open** (partly done) | In-stream detection is shared (`utils.instream_delimiter`, `_source_scanner._RecordClassifier`); the five quote/paren scanners are still separate. Roadmap item "shared tokenizer" |
+| H8 | Resolved | `ruff` enforces McCabe ≤ 12 (`C901`); no `noqa: C901` baseline marker is left in `jclparser/` |
+| M1 | Resolved | #122 |
+| M2 | Resolved for card images | #65: a quoted string continued from an 80-column card keeps its column-71 blank; short editor lines keep the blank-dropping join by design |
+| M4 | Resolved | `validate_jcl` keeps each finding's severity and line |
+| M5 | Resolved | `strict_mode`, `dialect`, `enabled_plugins`, `validation_level` and `detect_sql` are all read |
+| M6 | Resolved | A `str` source is always content (2026-10-03) |
+| M7 | Resolved | Root doc tree deleted; `.okf/` is the only tree |
+| M8 | **Open** (partly done) | Assertion-less `try/except Exception: pass` tests now assert (2026-10-29); the `*_coverage` / `*_comprehensive` files are not consolidated and there are no Hypothesis tests (roadmap item 6) |
+| M9 | **Open** | Only about 530 of about 2,970 tests carry a marker; benchmarks do not run in CI |
+| M10 | **Open** (partly done) | ruff and mypy are pinned; actions are still pinned by tag, not by commit hash |
+| M11 | Resolved | Directory argument (lineage / lint / validate), stdin, step names that equal a query word (#133), intermixed flags |
+| L1 | **Open** | `JOB (ACCT),'X=Y'` still gives `{"'X": "Y'"}` |
+| L2 | Not re-checked | |
+| L3 | Open (by design) | Columns 72-80 are the sequence field and are dropped without a warning |
+| L4 | Resolved | `Step.dynamnbr` / `Step.perform` return `None` for symbolic or list values |
+| L5 | Resolved | Plugins can be unregistered per instance; registries are still process-global |
+| L6 | **Open** (partly done) | The cp1252 fallback now runs before latin-1; the INCLUDE loader still tries only the uppercase member name |
+| L7 | **Open** | A nested `EXEC &INNER` inside a PROC is not substituted (`ProcedureNotFoundError: &INNER`) |
+| L8 | Partly done | The current directory is never searched; the `JCL_PROCLIB_PATH` lookup is still duplicated in `proc_loader.py` and `include_loader.py` |
+| L9 | Not re-checked | |
+| L10 | Partly done | Author email is real; the classifier still says `Production/Stable`; the closed-source checks are gone |
+| L11 | Resolved | `_registry` removed (2026-10-29) |
+| L12 | Resolved | #134 |
+| L13 | **Open** | No `DeprecationWarning` mechanism yet |
+| L14 | Resolved | CLAUDE.md invariant 5 lists the real baseline (77 errors in 23 modules) |
 
 ## How this was measured
 

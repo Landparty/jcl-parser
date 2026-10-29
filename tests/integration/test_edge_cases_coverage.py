@@ -37,11 +37,10 @@ class TestParserEdgeCases:
 //STEP1   EXEC PGM=PROG
 //        ENDIF
 //"""
-        # Should parse without errors even if not fully implemented
-        try:
-            parse_jcl(jcl, strict_mode=False)
-        except Exception:
-            pass  # Not all conditional logic may be implemented
+        job = parse_jcl(jcl, strict_mode=False)
+        (block,) = job.steps
+        assert block.condition == "(RC=0)"
+        assert [s.name for s in block.then_steps] == ["STEP1"]
 
     def test_very_long_line(self):
         """Test handling of very long lines"""
@@ -50,10 +49,12 @@ class TestParserEdgeCases:
 //TESTJOB JOB {long_params}
 //STEP1 EXEC PGM=PROG
 //"""
-        try:
-            parse_jcl(jcl, strict_mode=False)
-        except Exception:
-            pass  # May fail on overly long lines
+        # Columns 72-80 are the sequence field: the operands past column 71
+        # are cut, the statement still parses.
+        job = parse_jcl(jcl, strict_mode=False)
+        assert job.parameters["P0"] == "V0"
+        assert "P49" not in job.parameters
+        assert [s.name for s in job.steps] == ["STEP1"]
 
     def test_special_characters_in_strings(self):
         """Test special characters in quoted strings"""

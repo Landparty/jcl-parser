@@ -388,7 +388,7 @@ def _run_query(job: Job, args: argparse.Namespace, source: Path | str) -> int:
     json_out = args.json_output
     if not tokens:
         if json_out:
-            print(json.dumps(_job_to_dict(job), indent=2))
+            print(json.dumps(job_to_dict(job), indent=2))
         else:
             _print_summary(job)
         return 0
@@ -410,7 +410,7 @@ def _run_query(job: Job, args: argparse.Namespace, source: Path | str) -> int:
 
     if query.lower() == "steps":
         if json_out:
-            steps = [_step_or_cond_to_dict(s) for s in job.steps]
+            steps = [step_or_conditional_to_dict(s) for s in job.steps]
             print(json.dumps(steps, indent=2))
         else:
             _print_steps(job)
@@ -432,7 +432,7 @@ def _cmd_procs(job: Job, args: argparse.Namespace, subquery: str | None) -> int:
             print(f"Procedure not found: {subquery}", file=sys.stderr)
             return 1
         if json_out:
-            print(json.dumps(_proc_to_dict(proc), indent=2))
+            print(json.dumps(procedure_to_dict(proc), indent=2))
         else:
             _print_proc_detail(proc)
         return 0
@@ -463,7 +463,7 @@ def _cmd_step_or_dd(job: Job, query: str, json_out: bool) -> int:
         return _print_step_dd(job, step_name, dd_name, json_out)
     if step is not None:
         if json_out:
-            print(json.dumps(_step_to_dict(step), indent=2))
+            print(json.dumps(step_to_dict(step), indent=2))
         else:
             _print_step_detail(step)
         return 0
@@ -1120,7 +1120,7 @@ def _print_step_dd(
         )
         return 1
     if json_output:
-        print(json.dumps(_dd_to_dict(dd), indent=2))
+        print(json.dumps(dd_to_dict(dd), indent=2))
     else:
         _print_dd_detail(dd)
     return 0
@@ -1139,9 +1139,7 @@ def _print_dd_across_steps(job: Job, dd_name: str, json_output: bool = False) ->
         )
         return 1
     if json_output:
-        items = [
-            {**_dd_to_dict(dd), "step": step_label} for step_label, dd in found_dds
-        ]
+        items = [{**dd_to_dict(dd), "step": step_label} for step_label, dd in found_dds]
         print(json.dumps(items, indent=2))
     else:
         for step_label, dd in found_dds:
@@ -1190,7 +1188,7 @@ def _print_dd_brief(dd: DDStatement, indent: int = 0) -> None:
     print(f"{pad}{dd.name:<12} {detail}{inline}")
 
 
-def _print_dd_detail(dd: DDStatement) -> None:  # noqa: C901 -- complexity baseline, split when touched
+def _print_dd_detail(dd: DDStatement) -> None:
     print(f"  DD: {dd.name}  (line {dd.line_number})")
     if dd.dataset_name:
         print(f"    DSN={dd.dataset_name}")
@@ -1204,28 +1202,12 @@ def _print_dd_detail(dd: DDStatement) -> None:  # noqa: C901 -- complexity basel
     for k, v in dd.parameters.items():
         if k not in skip_keys:
             print(f"    {_fmt_param(k, v)}")
-    if dd.dcb:
-        dcb = dd.dcb
-        parts = []
-        if dcb.recfm:
-            parts.append(f"RECFM={dcb.recfm}")
-        if dcb.lrecl is not None:
-            parts.append(f"LRECL={dcb.lrecl}")
-        if dcb.blksize is not None:
-            parts.append(f"BLKSIZE={dcb.blksize}")
-        if parts:
-            print(f"    DCB=({','.join(parts)})")
-    if dd.space:
-        sp = dd.space
-        parts = []
-        if sp.unit:
-            parts.append(sp.unit)
-        if sp.primary is not None:
-            parts.append(str(sp.primary))
-        if sp.secondary is not None:
-            parts.append(str(sp.secondary))
-        if parts:
-            print(f"    SPACE=({','.join(parts)})")
+    dcb = _dcb_summary(dd)
+    if dcb:
+        print(f"    DCB=({dcb})")
+    space = _space_summary(dd)
+    if space:
+        print(f"    SPACE=({space})")
     if dd.has_inline_data:
         print("    --- inline data ---")
         for line in split_source_lines(dd.inline_data or ""):
@@ -1233,21 +1215,39 @@ def _print_dd_detail(dd: DDStatement) -> None:  # noqa: C901 -- complexity basel
         print("    ---")
 
 
+def _dcb_summary(dd: DDStatement) -> str:
+    """``RECFM=..,LRECL=..,BLKSIZE=..`` from the typed DCB (``""`` when none)."""
+    dcb = dd.dcb
+    if not dcb:
+        return ""
+    parts = []
+    if dcb.recfm:
+        parts.append(f"RECFM={dcb.recfm}")
+    if dcb.lrecl is not None:
+        parts.append(f"LRECL={dcb.lrecl}")
+    if dcb.blksize is not None:
+        parts.append(f"BLKSIZE={dcb.blksize}")
+    return ",".join(parts)
+
+
+def _space_summary(dd: DDStatement) -> str:
+    """``unit,primary,secondary`` from the typed SPACE (``""`` when none)."""
+    sp = dd.space
+    if not sp:
+        return ""
+    parts = [sp.unit] if sp.unit else []
+    parts += [str(n) for n in (sp.primary, sp.secondary) if n is not None]
+    return ",".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # JSON serialisation
 # ---------------------------------------------------------------------------
 
 
-_job_to_dict = job_to_dict
-_step_or_cond_to_dict = step_or_conditional_to_dict
-_step_to_dict = step_to_dict
-_proc_to_dict = procedure_to_dict
-_dd_to_dict = dd_to_dict
-
-
 def _procs_to_dict(job: Job) -> list[dict[str, Any]]:
     """Serialize PROC definitions to a list of dicts."""
-    return [_proc_to_dict(proc) for proc in job.procedures]
+    return [procedure_to_dict(proc) for proc in job.procedures]
 
 
 def _explosion_audit_to_dict(job: Job) -> list[dict[str, Any]]:
