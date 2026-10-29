@@ -776,6 +776,12 @@ class Job:
     #: ``OUTPUT=*.name`` DD parameters but *not* defined anywhere in the job.
     #: Populated after OUTPUT back-reference resolution during parsing.
     unresolved_output_refs: list[tuple[str, str, int]] = field(default_factory=list)
+    #: ``IF``/``THEN``/``ELSE``/``ENDIF`` statements that do not pair up --
+    #: an IF with no ENDIF, an ELSE or ENDIF with no IF, a second ELSE -- as
+    #: ``(line_number, message)``.  The parser recovers from them (and says
+    #: so on :attr:`warnings`), but z/OS rejects such a job, so
+    #: :meth:`validate` reports each as an error.
+    conditional_errors: list[tuple[int, str]] = field(default_factory=list)
     #: Symbols listed in ``EXPORT SYMLIST=(...)`` statements at job scope.
     #: Propagated into invoked PROC scopes during explosion.  A literal ``"*"``
     #: exports every SET symbol.
