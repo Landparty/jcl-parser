@@ -4,6 +4,9 @@
   up, which z/OS rejects; the parser only warned.
 * A ``*.`` backward reference (DSN=, VOL=REF=, DCB=, REFDD=, PGM=) to a DD that
   does not exist, or is coded later, was never reported.
+* ``explode_job`` qualified the procedure step names in an IF condition's AST
+  but left its ``condition`` text (the display / JSON form) naming the bare
+  procedure steps.
 * ``SPACE=(CYL,(1,1),,CONTIG)`` read the omitted positional as a ``''``
   subparameter.
 """
@@ -12,6 +15,8 @@ import pytest
 
 from jclparser import explode_job, parse_jcl, validate_jcl
 from jclparser.errors import ErrorSeverity, JCLParseError
+from jclparser.model import ConditionalBlock
+from jclparser.serialization import job_to_dict
 
 pytestmark = pytest.mark.unit
 
@@ -198,6 +203,75 @@ class TestBackwardReferences:
     def test_strict_parse_is_not_broken_by_a_warning(self):
         jcl = _JOB + "//S1 EXEC PGM=Y\n//D DD DSN=*.S0.NOPE,DISP=SHR\n"
         parse_jcl(jcl, strict_mode=True)
+
+
+class TestExplodedConditionText:
+    _JCL = (
+        "//J JOB 1\n"
+        "//P PROC\n"
+        "//PA EXEC PGM=A\n"
+        "// IF (PA.RC = 0 & ¬PA.ABEND) | S0.RUN THEN\n"
+        "//PB EXEC PGM=B\n"
+        "// ENDIF\n"
+        "// PEND\n"
+        "//S0 EXEC PGM=Z\n"
+        "//S1 EXEC P\n"
+        "//S2 EXEC P\n"
+    )
+
+    def _blocks(self):
+        job = explode_job(parse_jcl(self._JCL))
+        return [item for item in job.steps if isinstance(item, ConditionalBlock)]
+
+    def test_condition_text_names_the_exploded_steps(self):
+        assert [b.condition for b in self._blocks()] == [
+            "(S1.PA.RC = 0 & ¬S1.PA.ABEND) | S0.RUN",
+            "(S2.PA.RC = 0 & ¬S2.PA.ABEND) | S0.RUN",
+        ]
+
+    def test_condition_text_agrees_with_the_ast(self):
+        ast = self._blocks()[0].condition_ast
+        assert ast.left.left.step_name == "S1.PA"
+
+    def test_json_export_carries_the_qualified_condition(self):
+        job = explode_job(parse_jcl(self._JCL))
+        conditions = [
+            item["condition"]
+            for item in job_to_dict(job)["steps"]
+            if item["type"] == "conditional"
+        ]
+        assert conditions[0].startswith("(S1.PA.RC")
+
+    def test_procedure_keeps_its_own_condition(self):
+        job = parse_jcl(self._JCL)
+        explode_job(job)
+        block = job.get_procedure("P").steps[1]
+        assert block.condition == "(PA.RC = 0 & ¬PA.ABEND) | S0.RUN"
+
+    def test_nested_procedure_condition(self):
+        jcl = (
+            "//J JOB 1\n"
+            "//IN PROC\n"
+            "//IS EXEC PGM=I\n"
+            "// IF IS.RC = 0 THEN\n"
+            "//IT EXEC PGM=T\n"
+            "// ENDIF\n"
+            "// PEND\n"
+            "//OUT PROC\n"
+            "//OS EXEC IN\n"
+            "// PEND\n"
+            "//S1 EXEC OUT\n"
+        )
+        block = explode_job(parse_jcl(jcl)).steps[1]
+        assert block.condition == "S1.OS.IS.RC=0"
+        assert block.condition_ast.step_name == "S1.OS.IS"
+
+    def test_unrelated_names_are_left_alone(self):
+        from jclparser.explosion import _qualify_condition_text
+
+        steps = frozenset({"PA"})
+        for text in ("XPA.RC=0", "PA.RCX=0", "S1.PA.RC=0", "RC=0"):
+            assert _qualify_condition_text(text, steps, "S") == text
 
 
 class TestSpaceOmittedPositional:

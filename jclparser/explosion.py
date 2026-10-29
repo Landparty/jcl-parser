@@ -127,6 +127,23 @@ def _qualify_condition_ast(node: Any, proc_steps: frozenset[str], prefix: str) -
     return dataclass_replace(node, **changes) if changes else node
 
 
+#: A step reference in IF condition text: ``NAME`` of ``NAME.RC``,
+#: ``NAME.PROCSTEP.ABEND``, ... (not a later segment of a qualified name).
+_RE_CONDITION_STEP_REF = re.compile(
+    r"(?<![A-Z0-9@#$.&])([A-Z@#$][A-Z0-9@#$]*)"
+    r"(?=\.(?:[A-Z@#$][A-Z0-9@#$]*\.)?(?:RC|ABENDCC|ABEND|RUN)(?![A-Z0-9@#$.]))",
+    re.IGNORECASE,
+)
+
+
+def _qualify_condition_text(text: str, proc_steps: frozenset[str], prefix: str) -> str:
+    """IF condition *text* with procedure step refs qualified, as in its AST."""
+    return _RE_CONDITION_STEP_REF.sub(
+        lambda m: _qualify_step_ref(m.group(1), proc_steps, prefix) or m.group(1),
+        text,
+    )
+
+
 def _qualify_cond_parameter(value: Any, proc_steps: frozenset[str], prefix: str) -> Any:
     """Qualify the step of each ``(code,operator,stepname)`` test in COND=."""
     if isinstance(value, list):
@@ -575,6 +592,9 @@ def expand_proc_invocation(
         for proc_step in steps_list:
             if isinstance(proc_step, ConditionalBlock):
                 new_block = _clone_conditional(proc_step, _process_proc_steps)
+                new_block.condition = _qualify_condition_text(
+                    new_block.condition, proc_steps, prefix
+                )
                 new_block.condition_ast = _qualify_condition_ast(
                     new_block.condition_ast, proc_steps, prefix
                 )
