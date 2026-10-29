@@ -34,6 +34,48 @@ jcl-parser FILE --json         # full parse result as JSON (job.to_dict())
 jcl-parser --json-schema       # JSON Schema of that document
 jcl-parser DIR                 # cross-job dataset lineage of a directory of jobs
 jcl-parser DIR lineage mermaid # ... as a Mermaid graph (or `dot`)
+jcl-parser DIR lint --sarif    # lint every job of a directory, as SARIF
+jcl-lint jobs/ --fail-on warning --format sarif -o jcl.sarif   # CI / pre-commit
+```
+
+### Lint in CI
+
+Configure the rules in `pyproject.toml`, and switch one off for one statement
+with a comment:
+
+```toml
+[tool.jcl-parser.lint]
+ignore = ["JCL-LINT-002"]
+fail-on = "warning"
+[tool.jcl-parser.lint.severity]
+"JCL-LINT-004" = "warning"
+```
+
+```jcl
+//* jcl-lint: disable=JCL-LINT-001
+//MASTER   DD DSN=PROD.MASTER.FILE,DISP=SHR
+```
+
+pre-commit (`.pre-commit-config.yaml`):
+
+```yaml
+- repo: https://github.com/landparty/jcl-parser
+  rev: v2.2.0   # first release with the hook
+  hooks:
+    - id: jcl-lint
+```
+
+GitHub Actions (findings appear in code scanning):
+
+```yaml
+permissions:
+  security-events: write
+steps:
+  - uses: actions/checkout@v4
+  - uses: landparty/jcl-parser@v2.2.0   # first release with the action
+    with:
+      paths: jcl
+      glob: "**/*.jcl"
 ```
 
 ## Commands

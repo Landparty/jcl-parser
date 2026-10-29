@@ -1,5 +1,11 @@
 # Update Log
 
+## 2026-10-29 (lint in CI)
+* **Feature**: `jcl-lint PATH...` (new module `jclparser/checks.py`) lints files and directories in one run with `--format text|json|sarif`, `--output`, `--fail-on`, `--select`, `--ignore`; `jcl-parser DIR lint` and `jcl-parser DIR --validate` (a directory used to accept only `lineage`); `--sarif`, `--config` and `--fail-on` on `jcl-parser`. `to_sarif_files()` renders several files as one SARIF run. A pre-commit hook (`.pre-commit-hooks.yaml`) and a composite GitHub Action (`action.yml`). See [api/cli-reference](api/cli-reference.md).
+* **Feature**: lint configuration from `[tool.jcl-parser.lint]` in the nearest `pyproject.toml` (`lint/config.py`), and `//* jcl-lint: disable=` / `disable-file=` comments (`lint/suppress.py`, `lint_job(..., source=)`).
+* **Feature**: lint rules JCL-LINT-006 (new dataset SPACE without RLSE), 009 (COND= mixed with IF/THEN) and 010 (literal HLQ that a SET symbol holds; 001 defers to it). See [advanced/validation](advanced/validation.md). Tests: `tests/unit/test_lint_ci.py`.
+* **Chore**: SARIF `informationUri` is the GitHub URL; four mypy baseline errors fixed in `lint/runner.py` (77 left in 23 modules).
+
 ## 2026-10-28 (open-issue sweep)
 * **Fix (#144)**: `load_job_stream` explodes jobs with the PROC members it finds in the directory (by member name: the file name without `.prc` / `.proc` / `.jcl`), after in-stream PROCs and before `proc_base_path` and the built-ins. The CLI line is now `PROC members (used to explode the jobs): ...`. See [api/public-api](api/public-api.md).
 * **Fix (#145)**: lineage keys keep a PDS member (`P.L(M)`; GDG generations still collapse to the base). A member write feeds reads of that member and whole-library reads; a whole-library write feeds every member read; a job that writes members of a library is taken to read its own members when it reads the whole library, so compile jobs sharing a DBRMLIB no longer form false cycles. New `lineage.library_of()`.

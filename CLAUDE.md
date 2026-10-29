@@ -95,12 +95,13 @@ See [`.okf/core/parsing-pipeline.md`](.okf/core/parsing-pipeline.md) for the ful
 | `validators.py` / `parameter_validators.py` | Structural + parameter validation rules |
 | `condition_parser.py` | `// IF` condition → typed AST |
 | `errors.py` | Exception hierarchy |
-| `lint/` | Lint rules + SARIF output |
+| `lint/` | Lint rules + SARIF output, `[tool.jcl-parser.lint]` TOML config, `//* jcl-lint: disable=` suppressions |
 | `plugins/` | `StatementPlugin`, `ValidationPlugin`, `PluginRegistry` |
 | `program_profiles/` | Known z/OS program analysis (SORT, IEBGENER, IDCAMS, …) |
 | `serialization.py` | JSON export — `job_to_dict()`, `JOB_JSON_SCHEMA`, `SCHEMA_VERSION` (also `Job.to_dict()`) |
 | `lineage.py` | Cross-job dataset lineage — `load_job_stream()`, `build_lineage()` (run order, dependencies, DOT/Mermaid) |
-| `cli.py` | `jcl-parser` CLI — `steps`, `procs`, `detect`, `metrics`, `lint`, `datasets`, `sql`, `analyze`, `paths`; `DIR lineage` |
+| `cli.py` | `jcl-parser` CLI — `steps`, `procs`, `detect`, `metrics`, `lint`, `datasets`, `sql`, `analyze`, `paths`; `DIR lineage`, `DIR lint`, `DIR --validate` |
+| `checks.py` | Multi-file lint/validate for CI — `lint_paths()`, `validate_paths()`, SARIF/JSON/text renderers, the `jcl-lint` script |
 | `builtin_procs.py` | Last-resort IBM utility PROC templates (IMS, DB2, COBOL) |
 
 Full inventory with line counts: [`.okf/development/workflow.md`](.okf/development/workflow.md).
@@ -123,7 +124,7 @@ Set `JCL_PROCLIB_PATH` env var or pass `proc_base_path` to `parse_jcl()`. Layout
 2. **Column 71 is the continuation boundary** — column 72 is the continuation indicator, 73-80 the sequence field; `normalize_jcl_line()` strips both from fixed-format records and `ContinuationLineHandler` merges what is left. Never pass pre-stripped lines.
 3. **`ConditionalBlock.condition` (raw string) is authoritative** — `condition_ast` may be `None` if the expression was unparseable; always use `condition` for display.
 4. **`&&` is an escaped ampersand in JCL** — symbol substitution replaces `&NAME` → value and `&&` → `&`, except in a dataset name, where `&&TEMP` is a temporary dataset and is kept. Handled in `explosion.py`.
-5. **mypy strict is not yet clean** — 81 known violations across 24 modules (most in `explosion.py` and `model.py`), listed in `mypy-baseline.txt`. Add annotations when touching a file; never widen the config. CI's `typecheck` job runs `scripts/mypy_ratchet.py`, which fails only on errors missing from `mypy-baseline.txt`; after fixing errors, shrink it with `python scripts/mypy_ratchet.py --update` (mypy 2.4.0, as pinned in CI).
+5. **mypy strict is not yet clean** — 77 known violations across 23 modules (most in `explosion.py` and `model.py`), listed in `mypy-baseline.txt`. Add annotations when touching a file; never widen the config. CI's `typecheck` job runs `scripts/mypy_ratchet.py`, which fails only on errors missing from `mypy-baseline.txt`; after fixing errors, shrink it with `python scripts/mypy_ratchet.py --update` (mypy 2.4.0, as pinned in CI).
 6. **Coverage floor is 90%** — every `pytest` run enforces it. Add tests alongside any new module.
 7. **A statement's operand field ends at the first blank** outside quotes/parens — the rest is a comment field, stripped before continuation merging (`split_comment_field()`). `IF`/`THEN`/`ELSE`/`ENDIF` are exempt.
 

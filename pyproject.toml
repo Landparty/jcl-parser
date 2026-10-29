@@ -49,6 +49,7 @@ profiling = ["psutil>=5.9"]
 
 [project.scripts]
 jcl-parser = "jclparser.cli:main"
+jcl-lint = "jclparser.checks:lint_main"
 
 [project.urls]
 Homepage = "https://github.com/landparty/jcl-parser"

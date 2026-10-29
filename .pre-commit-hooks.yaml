@@ -1,0 +1,17 @@
+# pre-commit hook: lint the staged JCL files with jcl-lint.
+# Use it from another repository's .pre-commit-config.yaml:
+#
+#   - repo: https://github.com/landparty/jcl-parser
+#     rev: v2.2.0            # a jcl-parser release tag (v2.2.0 is the first with the hook)
+#     hooks:
+#       - id: jcl-lint
+#         args: [--fail-on, warning]
+#
+# Point `files:` at your own suffixes if your JCL is named differently.
+- id: jcl-lint
+  name: jcl-lint
+  description: Lint z/OS JCL with jcl-parser's lint rules.
+  entry: jcl-lint
+  language: python
+  files: \.(jcl|JCL|prc|PRC|proc|PROC|jcllib)$
+  require_serial: false

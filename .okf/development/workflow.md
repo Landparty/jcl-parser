@@ -48,7 +48,7 @@ Layout: `tests/unit/` (122 `test_*.py` files), `tests/integration/` (15), `tests
 ```bash
 ruff check .      # lint (line-length=88, target=py310, McCabe complexity <= 12 via C901)
 ruff format .     # format (do not use black)
-mypy jclparser/   # strict mode — not yet clean (81 known errors across 24 modules, recorded in mypy-baseline.txt)
+mypy jclparser/   # strict mode — not yet clean (77 known errors across 23 modules, recorded in mypy-baseline.txt)
 python scripts/mypy_ratchet.py           # what CI runs: fails only on errors missing from mypy-baseline.txt
 python scripts/mypy_ratchet.py --update  # after fixing errors, shrink the baseline (use mypy 2.4.0, as pinned in CI)
 ```
@@ -124,8 +124,9 @@ Line counts as of 2026-10-28 (`wc -l`).
 | `utils.py` | 415 | `read_source()`, `split_source_lines()`, `normalize_jcl_line()` / `normalize_jcl_lines()`, `is_card_image()` / `control_card_text()`, `instream_delimiter()`, `MAX_LIBRARY_MEMBER_BYTES`, `MAX_SYMBOL_VALUE_LENGTH` |
 | `errors.py` | 197 | Exception hierarchy |
 | `profiling.py` | 151 | `FunctionProfile`, `ProfilingResult` |
-| `cli.py` | 1161 | `jcl-parser` CLI |
-| `lint/` (5 files) | 512 | `LintRule`, built-in rules, runner, SARIF |
+| `cli.py` | 1277 | `jcl-parser` CLI |
+| `checks.py` | 382 | Multi-file lint / validate (`lint_paths`, `validate_paths`, renderers) and the `jcl-lint` console script |
+| `lint/` (6 files) | 896 | `LintRule`, built-in rules, runner, SARIF, TOML config, `//* jcl-lint:` suppressions |
 | `plugins/` (2 files) | 320 | `ParserConfig`, `ValidationLevel`, plugin registry |
 | `program_profiles/` (27 files) | 2654 | Known-program profiles (SORT, ICETOOL, IDCAMS, IEBGENER, DFSRRC00, …) and registry |
 
@@ -141,6 +142,8 @@ Line counts as of 2026-10-28 (`wc -l`).
 | New DD parameter | `parameter_ast.py`, `parameter_validators.py` |
 | New validation rule | `validators.py` or `parameter_validators.py` |
 | New lint rule | `lint/rules.py`, `lint/runner.py` |
+| Lint config key / suppression syntax | `lint/config.py`, `lint/suppress.py` |
+| `jcl-lint`, directory lint/validate, pre-commit hook, GitHub Action | `checks.py`, `.pre-commit-hooks.yaml`, `action.yml` |
 | New builtin PROC template | `builtin_procs.py:BUILTIN_UTILITY_PROCS` |
 | New program profile | new file in `program_profiles/`, register in `program_profiles/registry.py:_register_builtins()` |
 | New CLI subcommand | `cli.py` |

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING, Any
 
 from ..errors import ErrorSeverity, ErrorType, ValidationError
 from .base import LintRule
 from .config import LintConfig
 from .rules import BUILTIN_RULES
+from .suppress import parse_suppressions
 
 if TYPE_CHECKING:
     from ..model import Job
@@ -17,6 +19,9 @@ if TYPE_CHECKING:
 #: raises.  Severity is overridable via :attr:`LintConfig.severities` so
 #: consumers can downgrade rule crashes to INFO or suppress them outright.
 _RULE_CRASH_CODE = "JCL-LINT-000"
+
+#: Pseudo-code of the finding the CLI reports for a file that does not parse.
+PARSE_ERROR_CODE = "JCL-PARSE-000"
 
 _RULES: list[LintRule] = list(BUILTIN_RULES)
 
@@ -47,8 +52,15 @@ def all_rules() -> list[LintRule]:
     return list(_RULES)
 
 
-def lint_job(job: Job, config: LintConfig | None = None) -> list[ValidationError]:
-    """Run every enabled :class:`LintRule` against *job* and collect findings."""
+def lint_job(
+    job: Job, config: LintConfig | None = None, *, source: str | None = None
+) -> list[ValidationError]:
+    """Run every enabled :class:`LintRule` against *job* and collect findings.
+
+    With *source* (the JCL text *job* was parsed from), findings switched off
+    by its ``//* jcl-lint: disable=...`` comments are left out (see
+    :mod:`jclparser.lint.suppress`).
+    """
     cfg = config or LintConfig()
     findings: list[ValidationError] = []
     for rule in _RULES:
@@ -71,12 +83,15 @@ def lint_job(job: Job, config: LintConfig | None = None) -> list[ValidationError
                     error_code=_RULE_CRASH_CODE,
                 )
             )
+    if source is not None:
+        findings = parse_suppressions(source).filter(findings)
     return findings
 
 
 #: Descriptions of the pseudo-codes that no registered rule carries.
 _PSEUDO_RULE_DESCRIPTIONS = {
     _RULE_CRASH_CODE: "A lint rule raised an exception while checking the job.",
+    PARSE_ERROR_CODE: "The file could not be parsed as JCL.",
     "JCL-GEN-000": "Finding reported without a rule code.",
 }
 
@@ -113,7 +128,7 @@ def to_sarif(
     errors: list[ValidationError],
     tool_name: str = "jclparser",
     artifact_uri: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Render a minimal SARIF 2.1.0 report for *errors*.
 
     Produces a single-run document with every distinct ``error_code`` as a
@@ -124,40 +139,49 @@ def to_sarif(
     ``artifactLocation`` (or an ``address``), so one is always emitted;
     pass *artifact_uri* (the linted file's path or URI) to fill in its
     ``uri``, which consumers such as GitHub code scanning need to place a
-    result in a file.
+    result in a file.  :func:`to_sarif_files` reports several files.
     """
-    artifact_location: dict = {} if artifact_uri is None else {"uri": artifact_uri}
-    severity_map = {
-        "error": "error",
-        "warning": "warning",
-        "info": "note",
+    return to_sarif_files([(artifact_uri, errors)], tool_name=tool_name)
+
+
+_SARIF_LEVELS = {"error": "error", "warning": "warning", "info": "note"}
+
+
+def _sarif_result(err: ValidationError, artifact_uri: str | None) -> dict[str, Any]:
+    location: dict[str, Any] = {
+        "artifactLocation": {} if artifact_uri is None else {"uri": artifact_uri}
     }
+    if err.line_number:
+        location["region"] = {"startLine": err.line_number}
+    # A finding with neither a line nor a file has nowhere to point.
+    has_location = bool(err.line_number) or artifact_uri is not None
+    return {
+        "ruleId": err.error_code or "JCL-GEN-000",
+        "level": _SARIF_LEVELS.get(err.severity.value, "warning"),
+        "message": {"text": err.message},
+        "locations": [{"physicalLocation": location}] if has_location else [],
+    }
+
+
+def to_sarif_files(
+    files: Iterable[tuple[str | None, Sequence[ValidationError]]],
+    tool_name: str = "jclparser",
+) -> dict[str, Any]:
+    """Render one SARIF 2.1.0 run for the findings of several files.
+
+    *files* pairs each file's URI (``None`` if unknown) with its findings;
+    see :func:`to_sarif` for how a finding is rendered.  A finding without a
+    line number but with a URI points at the file as a whole.
+    """
     descriptions = _rule_descriptions()
-    rules: dict[str, dict] = {}
-    results: list[dict] = []
-    for err in errors:
-        code = err.error_code or "JCL-GEN-000"
-        if code not in rules:
-            rules[code] = _sarif_rule(code, descriptions.get(code))
-        results.append(
-            {
-                "ruleId": code,
-                "level": severity_map.get(err.severity.value, "warning"),
-                "message": {"text": err.message},
-                "locations": (
-                    [
-                        {
-                            "physicalLocation": {
-                                "artifactLocation": dict(artifact_location),
-                                "region": {"startLine": err.line_number},
-                            }
-                        }
-                    ]
-                    if err.line_number
-                    else []
-                ),
-            }
-        )
+    rules: dict[str, dict[str, Any]] = {}
+    results: list[dict[str, Any]] = []
+    for artifact_uri, errors in files:
+        for err in errors:
+            code = err.error_code or "JCL-GEN-000"
+            if code not in rules:
+                rules[code] = _sarif_rule(code, descriptions.get(code))
+            results.append(_sarif_result(err, artifact_uri))
     return {
         "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
         "version": "2.1.0",
@@ -166,7 +190,7 @@ def to_sarif(
                 "tool": {
                     "driver": {
                         "name": tool_name,
-                        "informationUri": "https://example.invalid/jclparser",
+                        "informationUri": "https://github.com/landparty/jcl-parser",
                         "rules": list(rules.values()),
                     }
                 },
@@ -177,9 +201,11 @@ def to_sarif(
 
 
 __all__ = [
+    "PARSE_ERROR_CODE",
     "all_rules",
     "lint_job",
     "register_rule",
     "to_sarif",
+    "to_sarif_files",
     "unregister_rule",
 ]
