@@ -182,9 +182,6 @@ from .validators import (
 # default unless the consuming application configures handlers.
 _logging.getLogger(__name__).addHandler(_logging.NullHandler())
 
-# Initialize global plugin registry
-_registry = get_plugin_registry()
-
 # Public API - what gets imported with "from jclparser import *"
 __all__ = [  # noqa: RUF022 — grouped by API tier, not alphabetically
     # ── Tier 1: Stable public API ─────────────────────────────────────────────

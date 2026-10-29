@@ -358,15 +358,6 @@ def split_comment_field(
     return (line[:start] + operands[:cut]).rstrip(), operands[cut:].strip()
 
 
-def strip_comment_field(line: str, group_operation: str = "") -> str:
-    """Return *line* without its trailing comment field.
-
-    Thin wrapper over :func:`split_comment_field` for callers that do not need
-    the comment text.
-    """
-    return split_comment_field(line, group_operation)[0]
-
-
 def _find_statement_plugin(line: str, config: ParserConfig) -> StatementPlugin | None:
     """Return the first plugin *config* enables that can parse *line*, if any."""
     for plugin in get_plugin_registry().get_statement_plugins():

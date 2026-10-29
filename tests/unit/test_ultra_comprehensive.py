@@ -5,7 +5,9 @@ Targeting very specific uncovered paths
 
 from io import StringIO
 
-from jclparser import parse_jcl
+import pytest
+
+from jclparser import JCLSyntaxError, parse_jcl
 from jclparser.model import DDStatement, Job, Step
 
 
@@ -37,10 +39,8 @@ class TestUltraComprehensive:
 
     def test_parse_jcl_empty_input(self):
         """Test parsing empty input"""
-        try:
+        with pytest.raises(JCLSyntaxError, match="No JOB statement found"):
             parse_jcl("", strict_mode=False)
-        except Exception:
-            pass  # May raise error
 
     def test_parse_jcl_only_comments(self):
         """Test parsing only comments"""
@@ -49,10 +49,8 @@ class TestUltraComprehensive:
 //* ANOTHER COMMENT
 //****************************
 //"""
-        try:
+        with pytest.raises(JCLSyntaxError, match="No JOB statement found"):
             parse_jcl(jcl, strict_mode=False)
-        except Exception:
-            pass  # May raise error or return empty job
 
     def test_parser_inline_data_variations(self):
         """Test all inline data variations"""

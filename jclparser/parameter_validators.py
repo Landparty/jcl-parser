@@ -161,7 +161,7 @@ class DatasetNameValidator:
     )
 
     @classmethod
-    def validate(  # noqa: C901 -- complexity baseline, split when touched
+    def validate(
         cls, dsn: str, allow_temporary: bool = True, allow_gdg: bool = True
     ) -> ValidationResult:
         """
@@ -175,44 +175,31 @@ class DatasetNameValidator:
         Returns:
             ValidationResult with errors and warnings
         """
-        errors = []
-        warnings: list[str] = []
-
         if not dsn:
-            errors.append("Dataset name is empty")
-            return ValidationResult.invalid(errors)
+            return ValidationResult.invalid(["Dataset name is empty"])
 
         original_dsn = dsn
         dsn = dsn.strip().upper()
 
         if cls.REFERBACK_PATTERN.match(dsn):
-            return ValidationResult.valid(warnings)
+            return ValidationResult.valid([])
 
         # Check for temporary dataset
         is_temporary = dsn.startswith("&&")
         if is_temporary:
             if not allow_temporary:
-                errors.append(f"Temporary datasets (&&) not allowed: {original_dsn}")
-                return ValidationResult.invalid(errors)
+                return ValidationResult.invalid(
+                    [f"Temporary datasets (&&) not allowed: {original_dsn}"]
+                )
             dsn = dsn[2:]  # Remove &&
 
-        # Check for GDG
-        gdg_suffix = None
-        if "(" in dsn:
-            base_name, gdg_part = dsn.rsplit("(", 1)
-            gdg_suffix = "(" + gdg_part
+        dsn, suffix_error = cls._strip_member_or_generation(
+            dsn, original_dsn, allow_gdg
+        )
+        if suffix_error:
+            return ValidationResult.invalid([suffix_error])
 
-            if cls.GDG_PATTERN.match(gdg_suffix):
-                if not allow_gdg:
-                    errors.append(f"GDG datasets not allowed: {original_dsn}")
-                    return ValidationResult.invalid(errors)
-                dsn = base_name
-            elif cls.MEMBER_PATTERN.match(gdg_suffix):
-                dsn = base_name
-            else:
-                errors.append(f"Invalid member name or GDG generation: {gdg_suffix}")
-                return ValidationResult.invalid(errors)
-
+        errors: list[str] = []
         # Check total length (excluding && and GDG)
         if len(dsn) > 44:
             errors.append(f"Dataset name too long: {len(dsn)} characters (max 44)")
@@ -221,34 +208,11 @@ class DatasetNameValidator:
             errors.append("Dataset name has no qualifiers")
             return ValidationResult.invalid(errors)
 
-        # Split into qualifiers
         qualifiers = dsn.split(".")
-
-        # Validate each qualifier
         for i, qualifier in enumerate(qualifiers):
-            if not qualifier:
-                errors.append(f"Empty qualifier at position {i + 1}")
-                continue
+            errors.extend(cls._qualifier_errors(qualifier, i))
 
-            if len(qualifier) > 8:
-                errors.append(
-                    f"Qualifier '{qualifier}' too long: {len(qualifier)} characters (max 8)"
-                )
-
-            if not cls.QUALIFIER_PATTERN.match(qualifier):
-                # Check specific issues
-                if not qualifier[0].isalpha() and qualifier[0] not in "$#@":
-                    errors.append(
-                        f"Qualifier '{qualifier}' must start with A-Z, $, #, or @"
-                    )
-                else:
-                    invalid_chars = set(qualifier) - _VALID_QUALIFIER_CHARS
-                    if invalid_chars:
-                        errors.append(
-                            f"Qualifier '{qualifier}' contains invalid characters: {', '.join(sorted(invalid_chars))}"
-                        )
-
-        # Warnings
+        warnings: list[str] = []
         if len(qualifiers) == 1 and not is_temporary:
             warnings.append(
                 f"Single-level dataset name: {original_dsn}. Consider using multi-level names."
@@ -260,3 +224,47 @@ class DatasetNameValidator:
             )
 
         return ValidationResult.from_errors(errors, warnings)
+
+    @classmethod
+    def _strip_member_or_generation(
+        cls, dsn: str, original_dsn: str, allow_gdg: bool
+    ) -> tuple[str, str | None]:
+        """Drop a ``(member)`` or ``(generation)`` suffix from *dsn*.
+
+        Returns the bare name and an error message, or ``None`` when the
+        suffix (if any) is acceptable.
+        """
+        if "(" not in dsn:
+            return dsn, None
+        base_name, suffix = dsn.rsplit("(", 1)
+        suffix = "(" + suffix
+        if cls.GDG_PATTERN.match(suffix):
+            if not allow_gdg:
+                return dsn, f"GDG datasets not allowed: {original_dsn}"
+            return base_name, None
+        if cls.MEMBER_PATTERN.match(suffix):
+            return base_name, None
+        return dsn, f"Invalid member name or GDG generation: {suffix}"
+
+    @classmethod
+    def _qualifier_errors(cls, qualifier: str, index: int) -> list[str]:
+        """Errors for the qualifier at 0-based *index* of a dataset name."""
+        if not qualifier:
+            return [f"Empty qualifier at position {index + 1}"]
+        errors = []
+        if len(qualifier) > 8:
+            errors.append(
+                f"Qualifier '{qualifier}' too long: {len(qualifier)} characters (max 8)"
+            )
+        if not cls.QUALIFIER_PATTERN.match(qualifier):
+            if not qualifier[0].isalpha() and qualifier[0] not in "$#@":
+                errors.append(
+                    f"Qualifier '{qualifier}' must start with A-Z, $, #, or @"
+                )
+            else:
+                invalid_chars = set(qualifier) - _VALID_QUALIFIER_CHARS
+                if invalid_chars:
+                    errors.append(
+                        f"Qualifier '{qualifier}' contains invalid characters: {', '.join(sorted(invalid_chars))}"
+                    )
+        return errors

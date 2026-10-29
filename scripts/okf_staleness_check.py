@@ -3,8 +3,7 @@
 
 Each source path maps to the ``.okf/`` pages that describe it; a change is
 covered when ANY of those pages, or the bundle's change log ``.okf/log.md``,
-changes with it. (This used to point every path at ``docs/OKF.md``, which
-does not exist, so every commit touching the package failed the hook.)
+changes with it.
 
 Modes
 -----
@@ -36,6 +35,9 @@ OKF_MAP: list[tuple[str, list[str]]] = [
     ("jclparser/parameter_validators.py", [_VALIDATION]),
     ("jclparser/lint/", [_VALIDATION]),
     ("jclparser/cli.py", [".okf/api/cli-reference.md"]),
+    ("jclparser/checks.py", [".okf/api/cli-reference.md"]),
+    ("jclparser/lineage.py", [".okf/api/public-api.md"]),
+    ("jclparser/serialization.py", [".okf/api/public-api.md"]),
     ("jclparser/__init__.py", [".okf/api/public-api.md"]),
     ("jclparser/errors.py", [".okf/api/public-api.md"]),
     ("jclparser/", [_PIPELINE, ".okf/development/workflow.md"]),

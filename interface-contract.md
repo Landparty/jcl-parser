@@ -16,7 +16,7 @@ from jclparser import parse_jcl
 job = parse_jcl(content: str)   # returns Job; a str is always JCL text, never a path
 ```
 - Always returns a `Job` object (never `None`); unrecoverable failures raise.
-- A `str` argument is always treated as JCL content, never as a file path (since `a0c30c9`); pass a `pathlib.Path` to read a file.
+- A `str` argument is always treated as JCL content, never as a file path; pass a `pathlib.Path` to read a file.
 - Must raise `JCLSyntaxError | JCLValidationError | JCLStructureError | JCLParseError` on parse failures.
 - Does not receive a filename (JCL parser does not use one).
 
@@ -78,7 +78,7 @@ Attributes the adapter accesses on a `Job`:
 | `job.explosion_audit` | `list` | Populated on the job `explode(audit=True)` returns (empty on the original); see below |
 | `job.explosion_map` | `dict` | Populated on the job `explode(audit=True)` returns |
 
-Other `Job` fields (e.g. `job.custom_statements`, the statements of a custom type returned by a `StatementPlugin`, added 2026-10-15) are not read by the adapter; see `.okf/core/data-model.md`.
+Other `Job` fields (e.g. `job.custom_statements`, the statements of a custom type returned by a `StatementPlugin`) are not read by the adapter; see `.okf/core/data-model.md`.
 
 **`explosion_audit` entries** — each item must have:
 
@@ -90,11 +90,6 @@ Other `Job` fields (e.g. `job.custom_statements`, the statements of a custom typ
 | `.depth` | `int` |
 | `.expanded_steps` | `list` |
 
-> **Adapter change required (issue #99):** iterate `iter_execution_steps(job.steps)` (or
-> skip `ConditionalBlock` elements) wherever the adapter reads step attributes off
-> `job.steps` or `exploded_job.steps`; otherwise the first `// IF` raises
-> `AttributeError` and the steps inside IF blocks are missed.
-
 ## Step Object Contract
 
 Attributes the adapter accesses on a `Step`:
@@ -104,7 +99,7 @@ Attributes the adapter accesses on a `Step`:
 | `step.name` | `str` | Step name; `""` for an unnamed EXEC, `STEP.PROCSTEP` for an exploded step |
 | `step.program` | `str \| None` | PGM= value from EXEC statement |
 | `step.is_exploded` | `bool` | True if this step was expanded from a PROC |
-| `step.is_procedure` | `bool` (property) | True if step invokes a PROC (pre-explosion). Was documented as `step.is_proc_invocation`; no such attribute exists on `Step` — reading it raises `AttributeError` |
+| `step.is_procedure` | `bool` (property) | True if step invokes a PROC (pre-explosion). There is no `step.is_proc_invocation` |
 | `step.procedure` | `str \| None` | PROC name if this is a PROC call |
 | `step.original_proc_call` | `str \| None` | Original PROC invocation name |
 | `step.parameters` | `dict` | Step parameters |
@@ -206,12 +201,14 @@ ParserResult(
 
 Standalone PROC files (containing `PROC...PEND` but no `JOB` statement) are detected and wrapped in a synthetic `//LEGACYLN JOB` statement before parsing, then the result is annotated with `is_procedure_definition=True`.
 
-> **Correction (2026-10-15, issue #100):** the wrapper used to be documented as
-> `//LEGACYLENS JOB`. `LEGACYLENS` is 10 characters and a job name is 1-8, so
-> `job.validate()` failed every wrapped PROC with "Invalid job name". The wrapper name is
-> now the 8-character `LEGACYLN`. The wrapped job has no top-level steps (they live in
-> `job.procedures`); `job.validate()` no longer reports "Job must contain at least one
-> execution step" for a job whose only content is in-stream PROCs, so a valid PROC
-> wrapped this way validates clean. **The backend adapter, which vendors this library and
-> lives outside this repo, must be updated to emit `//LEGACYLN JOB`** at the next vendor
-> sync.
+The wrapper's job name must be 1-8 characters. The wrapped job has no top-level steps (they live in `job.procedures`), and `job.validate()` treats in-stream procedures as the job's content, so a valid PROC wrapped this way validates clean.
+
+---
+
+## Pending Adapter Changes
+
+The adapter vendors this library and lives outside this repo. Make these changes at the next vendor sync:
+
+1. **`job.steps` holds `ConditionalBlock`s (#99).** Iterate `iter_execution_steps(job.steps)` (or skip `ConditionalBlock` elements) wherever the adapter reads step attributes off `job.steps` or `exploded_job.steps`; otherwise the first `// IF` raises `AttributeError` and the steps inside IF blocks are missed.
+2. **`step.is_proc_invocation` does not exist.** Read `step.is_procedure`.
+3. **PROC wrapper name (#100).** Emit `//LEGACYLN JOB`; the old `//LEGACYLENS JOB` is 10 characters, so `job.validate()` fails every wrapped PROC with "Invalid job name".

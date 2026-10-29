@@ -682,11 +682,5 @@ class TestFixtureConsistency:
         ]
 
         for fixture_name in error_fixtures:
-            jcl_file = fixtures_dir / fixture_name
-            if jcl_file.exists():
-                try:
-                    parse_jcl(jcl_file)
-                    pytest.fail(f"Expected {fixture_name} to raise error but it didn't")
-                except (JCLSyntaxError, JCLValidationError, Exception):
-                    # Expected - error was raised
-                    pass
+            with pytest.raises(JCLSyntaxError):
+                parse_jcl(fixtures_dir / fixture_name)

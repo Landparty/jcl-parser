@@ -9,7 +9,8 @@ Python library for parsing IBM z/OS JCL (Job Control Language) into structured `
 ## Install
 
 ```bash
-pip install -e ".[dev]"
+pip install jcl-parser        # from PyPI
+pip install -e ".[dev]"       # from a checkout, with the dev tools
 ```
 
 Requires Python 3.10+. No runtime dependencies.
@@ -17,11 +18,20 @@ Requires Python 3.10+. No runtime dependencies.
 ## Quick Start
 
 ```python
+from pathlib import Path
+
 import jclparser
 
-job = jclparser.parse_jcl(source)
+job = jclparser.parse_jcl(Path("PAYROLL.jcl"))  # a str is always JCL text, never a path
 print(job.name)
-print(job.steps[0].program)
+for step in jclparser.iter_execution_steps(job.steps):  # also walks IF/THEN/ELSE blocks
+    print(step.name, step.program or step.procedure)
+
+exploded = jclparser.explode_job(job)  # PROC expansion is a separate call
+errors = jclparser.validate_jcl(
+    Path("PAYROLL.jcl"), level="structure"
+)  # list[ParseError]
+print(job.to_json(indent=2))  # schema: jclparser.JOB_JSON_SCHEMA
 ```
 
 CLI:
@@ -87,7 +97,7 @@ pytest -m unit
 
 # Lint / format / type-check
 ruff check . && ruff format .
-mypy jclparser/
+python scripts/mypy_ratchet.py   # mypy strict against the known-error baseline, as CI runs it
 
 # Vendor sync (after changes to jclparser/) — rm first: plain `cp -r` nests
 # into dest/jclparser/jclparser/ and leaves stale files when dest exists
@@ -96,7 +106,9 @@ rm -rf ../backend/_vendor/jcl-parser/jclparser && cp -r jclparser/ ../backend/_v
 
 ## Documentation
 
-Full reference: [`.okf/index.md`](.okf/index.md)
+Full reference: [`.okf/index.md`](.okf/index.md). Contributors: start with [`CLAUDE.md`](CLAUDE.md)
+(commands, architecture, invariants) and [`.okf/development/invariants.md`](.okf/development/invariants.md).
+Changes are listed in [`CHANGELOG.md`](CHANGELOG.md) (releases) and [`.okf/log.md`](.okf/log.md).
 
 ## License
 

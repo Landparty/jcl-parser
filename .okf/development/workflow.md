@@ -3,7 +3,7 @@ type: Development Workflow
 title: Development Workflow
 description: Install, test, lint, mypy ratchet, CI, vendor sync, version bump, release, module inventory and task-to-file map for jcl-parser contributors.
 tags: [development, workflow, testing, tooling]
-timestamp: 2026-10-15T00:00:00Z
+timestamp: 2026-10-29T00:00:00Z
 ---
 
 # Overview
@@ -41,7 +41,7 @@ pytest tests/unit/test_parser_api.py::Class::method # single test
 
 Coverage: minimum 90% (`--cov-fail-under=90`), branch coverage enabled, HTML to `htmlcov/`, XML to `coverage.xml`. Benchmarks excluded via `norecursedirs`.
 
-Layout: `tests/unit/` (122 `test_*.py` files), `tests/integration/` (15), `tests/benchmarks/` (pytest-benchmark, not collected by default), `tests/fixtures/`. Markers (strict): `unit`, `integration`, `contract`, `performance`, `slow`, `benchmark`.
+Layout: `tests/unit/` (124 `test_*.py` files), `tests/integration/` (15), `tests/benchmarks/` (pytest-benchmark, not collected by default), `tests/fixtures/`. Markers (strict): `unit`, `integration`, `contract`, `performance`, `slow`, `benchmark`.
 
 # Lint / Format / Type-check
 
@@ -66,6 +66,10 @@ When touching a file, add type annotations where missing. Do not widen the mypy 
 
 The pre-commit hook (`.githooks/pre-commit` → `scripts/okf_staleness_check.py`) maps source paths to their `.okf/` pages; a change is covered when any mapped page, or `.okf/log.md`, is staged.
 
+# Documentation Conventions
+
+`.okf/` is the only documentation tree. Reference pages (`core/`, `api/`, `advanced/`, `integration/`, `development/invariants.md`) describe **current** behaviour in the present tense, with at most an issue number (`#123`) as a pointer; what changed and when goes in `.okf/log.md` (newest entry first) and, for releases, `CHANGELOG.md` (written by release-please). Keep invariant counts in `CLAUDE.md`, `development/index.md` and `development/invariants.md` in step, and refresh the module inventory's line counts below when a module grows or shrinks noticeably.
+
 # Vendor Sync (required after any jclparser/ change)
 
 ```bash
@@ -89,29 +93,29 @@ CLI `--version` reads from `__init__.py`, not package metadata.
 
 # Module Inventory
 
-Line counts as of 2026-10-28 (`wc -l`).
+Line counts as of 2026-10-29 (`wc -l`).
 
 | Module | Lines | Role |
 |--------|------:|------|
-| `__init__.py` | 322 | Public API re-exports, `parse()` alias, `__version__` |
+| `__init__.py` | 319 | Public API re-exports, `parse()` alias, `__version__` |
 | `__main__.py` | 5 | `python -m jclparser` |
 | `parser.py` | 786 | `parse_jcl()`, `validate_jcl()`, parse loop and its phases (`_expand_includes`, `_build_job`, `_resolve_references`, …), line-by-line validation fallback |
 | `_source_scanner.py` | 441 | `_merge_source_lines()` (`_RecordClassifier` marks in-stream data / CNTL records, then continuation merge), `_instream_delimiter`, `_expects_continuation` |
-| `_statement_parser.py` | 913 | Single-statement parsing, `_STATEMENT_TYPES`, `split_comment_field()`, INCLUDE/JCLLIB pre-scans |
-| `_job_builder.py` | 1003 | `JobBuilder` per-statement-type dispatch (`JobBuilder._HANDLERS` table) |
+| `_statement_parser.py` | 904 | Single-statement parsing, `_STATEMENT_TYPES`, `split_comment_field()`, INCLUDE/JCLLIB pre-scans |
+| `_job_builder.py` | 1042 | `JobBuilder` per-statement-type dispatch (`JobBuilder._HANDLERS` table) |
 | `_model_factories.py` | 253 | `Statement` → `Job`/`Step`/`DDStatement` factories, SET-value helpers |
 | `_post_parse.py` | 567 | External PROC loading, `OUTPUT=*.name` refs, SET substitution, strict DD structure |
-| `model.py` | 1095 | `Job`, `Step`, `DDStatement`, `ConditionalBlock`, `Procedure`, `Statement`, `OutputStatement`, `Parameter` |
-| `explosion.py` | 1951 | `explode_job()`, `SymbolScope`, DD/EXEC overrides, `DEFAULT_MAX_STEPS` |
+| `model.py` | 1101 | `Job`, `Step`, `DDStatement`, `ConditionalBlock`, `Procedure`, `Statement`, `OutputStatement`, `Parameter` |
+| `explosion.py` | 1975 | `explode_job()`, `SymbolScope`, DD/EXEC overrides, `DEFAULT_MAX_STEPS` |
 | `proc_loader.py` | 439 | Loader chain, `create_default_loader()` |
 | `builtin_procs.py` | 246 | `BUILTIN_UTILITY_PROCS` last-resort templates |
 | `include_loader.py` | 518 | `resolve_includes()`, `resolve_includes_with_origins()` / `LineOrigin`, member loaders |
-| `_include_origins.py` | 126 | `IncludeLineMap` — translates INCLUDE-expanded line numbers back to the main source (#118) |
+| `_include_origins.py` | 129 | `IncludeLineMap` — translates INCLUDE-expanded line numbers back to the main source (#118) |
 | `continuation_handler.py` | 503 | `ContinuationLineHandler` |
-| `parameter_ast.py` | 398 | Typed parameter AST (`DCBParameter`, `SPACEParameter`, …) |
-| `parameter_validators.py` | 262 | Parameter value validators |
-| `validators.py` | 525 | Structural validation |
-| `condition_parser.py` | 568 | `// IF` condition AST, `NOT_RUN` |
+| `parameter_ast.py` | 400 | Typed parameter AST (`DCBParameter`, `SPACEParameter`, …) |
+| `parameter_validators.py` | 270 | Parameter value validators |
+| `validators.py` | 653 | Structural validation |
+| `condition_parser.py` | 559 | `// IF` condition AST, `NOT_RUN` |
 | `dataset_lifecycle.py` | 595 | Cross-step dataset lifecycle analysis |
 | `rc_analysis.py` | 555 | RC feasibility (`compute_feasible_paths`) |
 | `metrics.py` | 170 | `compute_metrics` |
