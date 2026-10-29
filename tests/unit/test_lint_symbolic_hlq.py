@@ -9,7 +9,7 @@ name as coded.
 import pytest
 
 from jclparser import parse_jcl
-from jclparser.lint import lint_job
+from jclparser.lint import LintConfig, lint_job
 
 JCL = (
     "//J        JOB (ACCT),'T'\n"
@@ -27,7 +27,9 @@ JCL = (
 
 
 def _hlq_findings(job):
-    return [str(f) for f in lint_job(job) if "JCL-LINT-001" in str(f)]
+    # With JCL-LINT-010 on, it reports PROD.LITERAL instead (SET HLQ=PROD).
+    config = LintConfig(disabled={"JCL-LINT-010"})
+    return [str(f) for f in lint_job(job, config) if "JCL-LINT-001" in str(f)]
 
 
 @pytest.mark.unit
@@ -45,6 +47,11 @@ class TestLintSymbolicHlq:
         findings = _hlq_findings(parse_jcl(JCL))
         assert len(findings) == 1
         assert "PROD.LITERAL" in findings[0]
+
+    def test_set_value_hlq_is_left_to_010(self):
+        codes = [(f.error_code, f.line_number) for f in lint_job(parse_jcl(JCL))]
+        assert ("JCL-LINT-010", 11) in codes
+        assert not any(code == "JCL-LINT-001" for code, _ in codes)
 
     def test_exploded_proc_dd_not_flagged(self):
         job = parse_jcl(JCL).explode()

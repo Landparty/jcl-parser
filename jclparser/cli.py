@@ -14,7 +14,7 @@ Usage:
     jcl-parser FILE --validate                   Validate the JCL
     jcl-parser FILE detect                       Detect file type (JCL/PROC/UNKNOWN)
     jcl-parser FILE metrics                      Structural metrics for the job
-    jcl-parser FILE lint                         Run lint rules against the job
+    jcl-parser FILE lint [--sarif]               Run lint rules against the job
     jcl-parser --lint-list                       List all available lint rule codes
     jcl-parser --json-schema                     JSON Schema of the --json output
     jcl-parser FILE datasets                     Dataset lifecycle analysis
@@ -22,6 +22,12 @@ Usage:
     jcl-parser FILE analyze [STEPNAME]           Program profile analysis
     jcl-parser FILE paths                        RC feasibility path analysis
     jcl-parser DIR [lineage] [dot|mermaid]       Cross-job dataset lineage
+    jcl-parser DIR lint [--sarif]                Lint every job of a directory
+    jcl-parser DIR --validate [--sarif]          Validate every file of a directory
+
+Lint reads the nearest pyproject.toml's [tool.jcl-parser.lint] table (or
+--config) and honours ``//* jcl-lint: disable=CODE`` comments; the separate
+``jcl-lint PATH...`` command lints several files at once.
 """
 
 from __future__ import annotations
@@ -36,6 +42,17 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .checks import (
+    FileReport,
+    as_finding,
+    exit_code,
+    format_reports,
+    lint_paths,
+    reports_to_dict,
+    reports_to_sarif,
+    resolve_lint_config,
+    validate_paths,
+)
 from .dataset_lifecycle import analyze_dataset_lifecycle, validate_dataset_lifecycle
 from .errors import (
     CircularProcedureError,
@@ -48,7 +65,8 @@ from .errors import (
 )
 from .jcl_file_type import detect_file_type
 from .lineage import JobStream, LineageReport, load_job_stream
-from .lint import all_rules, lint_job
+from .lint import LintConfig, LintConfigError, all_rules, lint_job, to_sarif
+from .lint.config import parse_severity
 from .metrics import compute_metrics
 from .model import (
     DDStatement,
@@ -119,7 +137,10 @@ def _main(argv: list[str] | None = None) -> int:
 
     if args.validate:
         return _cmd_validate(
-            source, json_output=args.json_output, proc_path=args.proc_path
+            source,
+            json_output=args.json_output,
+            proc_path=args.proc_path,
+            sarif=args.sarif,
         )
 
     # --- detect mode (no parse needed) ---
@@ -135,8 +156,8 @@ def _main(argv: list[str] | None = None) -> int:
         return 1
     job, prof = loaded
     if prof is None:
-        return _run_query(job, args)
-    return _run_query_with_profile(job, args, prof)
+        return _run_query(job, args, source)
+    return _run_query_with_profile(job, args, prof, source)
 
 
 def _read_stdin() -> str:
@@ -236,6 +257,23 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Files of a directory FILE to read (default '*'; '**/*.jcl' recurses)",
     )
     parser.add_argument(
+        "--sarif",
+        action="store_true",
+        help="Output lint findings or --validate errors as SARIF 2.1.0",
+    )
+    parser.add_argument(
+        "--config",
+        default=None,
+        metavar="TOML",
+        help="Lint configuration (default: nearest pyproject.toml)",
+    )
+    parser.add_argument(
+        "--fail-on",
+        choices=("info", "warning", "error"),
+        default=None,
+        help="Lowest lint severity that exits 1 (default: config, else info)",
+    )
+    parser.add_argument(
         "--profile",
         action="store_true",
         help="Profile the parse and include timing/memory metrics in output",
@@ -303,7 +341,7 @@ def _parse_file(path: Path | str, proc_path: str | None) -> Job:
 
 
 def _run_query_with_profile(
-    job: Job, args: argparse.Namespace, prof: ProfilingResult
+    job: Job, args: argparse.Namespace, prof: ProfilingResult, source: Path | str
 ) -> int:
     """:func:`_run_query`, plus the ``--profile`` metrics (issue #131).
 
@@ -312,12 +350,12 @@ def _run_query_with_profile(
     a profiling block.
     """
     if not args.json_output:
-        code = _run_query(job, args)
+        code = _run_query(job, args, source)
         _print_profiling(prof)
         return code
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
-        code = _run_query(job, args)
+        code = _run_query(job, args, source)
     data: Any = json.loads(buffer.getvalue()) if buffer.getvalue().strip() else {}
     if not isinstance(data, dict):
         data = {"result": data}
@@ -343,8 +381,9 @@ def _print_profiling(prof: ProfilingResult) -> None:
             print(f"    {func.cumul_time_s:9.4f} s  {func.calls:7d}  {func.function}")
 
 
-def _run_query(job: Job, args: argparse.Namespace) -> int:
-    """Answer the query tokens of *args* about *job*."""
+def _run_query(job: Job, args: argparse.Namespace, source: Path | str) -> int:
+    """Answer the query tokens of *args* about *job*, parsed from *source*
+    (a path, or the JCL text read from stdin)."""
     tokens = args.query  # list[str]
     json_out = args.json_output
     if not tokens:
@@ -361,6 +400,9 @@ def _run_query(job: Job, args: argparse.Namespace) -> int:
     command = _JOB_QUERIES.get(query.lower())
     if command is not None:
         return command(job, json_out)
+
+    if query.lower() == "lint":
+        return _cmd_lint(job, args, source)
 
     if query.lower() == "analyze":
         step_filter = tokens[1].upper() if len(tokens) > 1 else None
@@ -431,11 +473,24 @@ def _cmd_step_or_dd(job: Job, query: str, json_out: bool) -> int:
 
 
 def _cmd_directory(path: Path, args: argparse.Namespace) -> int:
-    """``jcl-parser DIR [lineage [dot|mermaid]]``: cross-job dataset lineage."""
+    """``jcl-parser DIR [lineage [dot|mermaid]]``: cross-job dataset lineage;
+    ``DIR lint`` and ``DIR --validate`` check every file."""
     tokens = [t.lower() for t in args.query]
+    if args.validate and not tokens:
+        reports = validate_paths(
+            [path], pattern=args.glob, proc_base_path=args.proc_path
+        )
+        if not reports:
+            print(f"Error: no files matching {args.glob!r} in {path}", file=sys.stderr)
+            return 1
+        _print_reports(reports, args, "OK - no errors found.")
+        return 1 if any(r.findings for r in reports) else 0
+    if tokens == ["lint"] and not args.validate:
+        return _cmd_lint_directory(path, args)
     if args.validate or (tokens and tokens[0] != "lineage"):
         print(
-            f"Error: {path} is a directory; only 'lineage' applies to one",
+            f"Error: {path} is a directory; only 'lineage', 'lint' and "
+            "--validate apply to one",
             file=sys.stderr,
         )
         return 1
@@ -459,6 +514,49 @@ def _cmd_directory(path: Path, args: argparse.Namespace) -> int:
     else:
         _print_lineage(stream, report)
     return 0
+
+
+def _cmd_lint_directory(path: Path, args: argparse.Namespace) -> int:
+    config = _lint_config(args, path)
+    if config is None:
+        return 2
+    reports = lint_paths(
+        [path],
+        pattern=args.glob,
+        config=config,
+        explode=args.explode,
+        proc_base_path=args.proc_path,
+    )
+    if not reports:
+        print(f"Error: no JCL jobs found in {path}", file=sys.stderr)
+        return 1
+    _print_reports(reports, args, "OK - no lint findings.")
+    return exit_code(reports, config.fail_on)
+
+
+def _print_reports(
+    reports: list[FileReport], args: argparse.Namespace, ok_message: str
+) -> None:
+    if args.sarif:
+        print(json.dumps(reports_to_sarif(reports), indent=2))
+    elif args.json_output:
+        print(json.dumps(reports_to_dict(reports), indent=2))
+    else:
+        print(format_reports(reports, ok_message), end="")
+
+
+def _lint_config(args: argparse.Namespace, start: Path | None) -> LintConfig | None:
+    """The lint configuration for *args* (``--config``, else the nearest
+    pyproject.toml from *start*, then ``--fail-on``); ``None`` after
+    printing the error when it cannot be read."""
+    try:
+        config = resolve_lint_config(args.config, start)
+        if args.fail_on:
+            config.fail_on = parse_severity(args.fail_on, "--fail-on")
+    except (LintConfigError, OSError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return None
+    return config
 
 
 def _print_lineage(stream: JobStream, report: LineageReport) -> None:
@@ -500,11 +598,19 @@ def _print_lineage(stream: JobStream, report: LineageReport) -> None:
 
 
 def _cmd_validate(
-    path: Path | str, json_output: bool = False, proc_path: str | None = None
+    path: Path | str,
+    json_output: bool = False,
+    proc_path: str | None = None,
+    sarif: bool = False,
 ) -> int:
     # --proc-path is the base for external PROCs and INCLUDE members, as for
     # every other command; without it JCL_PROCLIB_PATH still applies (#129).
     errors = validate_jcl(path, level="structure", proc_base_path=proc_path)
+    if sarif:
+        uri = path.as_posix() if isinstance(path, Path) else None
+        findings = [as_finding(err) for err in errors]
+        print(json.dumps(to_sarif(findings, artifact_uri=uri), indent=2))
+        return 0 if not errors else 1
     if json_output:
         items = [
             {
@@ -601,9 +707,20 @@ def _cmd_lint_list() -> int:
     return 0
 
 
-def _cmd_lint(job: Job, json_output: bool = False) -> int:
-    findings = lint_job(job)
-    if json_output:
+def _cmd_lint(job: Job, args: argparse.Namespace, source: Path | str) -> int:
+    """``FILE lint``: exit 1 if a finding reaches the configured ``fail-on``
+    severity (by default any finding does); 2 if the config is unusable."""
+    path = source if isinstance(source, Path) else None
+    config = _lint_config(args, path)
+    if config is None:
+        return 2
+    text = source if isinstance(source, str) else read_source(source)
+    findings = lint_job(job, config, source=text)
+    failed = any(config.fails(f.severity) for f in findings)
+    if args.sarif:
+        uri = path.as_posix() if path is not None else None
+        print(json.dumps(to_sarif(findings, artifact_uri=uri), indent=2))
+    elif args.json_output:
         items = [
             {
                 "code": getattr(e, "error_code", None) or "",
@@ -616,7 +733,7 @@ def _cmd_lint(job: Job, json_output: bool = False) -> int:
         print(json.dumps({"findings": items, "count": len(items)}, indent=2))
     else:
         _print_lint_findings(findings)
-    return 1 if findings else 0
+    return 1 if failed else 0
 
 
 def _print_lint_findings(findings: list) -> None:
@@ -1154,7 +1271,6 @@ def _explosion_audit_to_dict(job: Job) -> list[dict[str, Any]]:
 #: Query words that take only the job and ``--json``.
 _JOB_QUERIES: dict[str, Callable[[Job, bool], int]] = {
     "metrics": _cmd_metrics,
-    "lint": _cmd_lint,
     "datasets": _cmd_datasets,
     "sql": _cmd_sql,
     "paths": _cmd_paths,

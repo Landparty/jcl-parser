@@ -181,6 +181,8 @@ findings = lint_job(job, config=LintConfig())
 sarif = lint_to_sarif(findings, artifact_uri="jobs/MYJOB.jcl")
 ```
 
+`jclparser.lint.to_sarif_files([(uri, findings), ...])` renders several files as one run (what `jcl-lint` and `jcl-parser DIR lint --sarif` emit); a finding with no line but a URI points at the whole file. `informationUri` is the project's GitHub URL (it was `https://example.invalid/jclparser` until 2026-10-29). TOML configuration (`load_lint_config`) and `//* jcl-lint: disable=` comments (`lint_job(..., source=text)`) are described in [api/cli-reference](../api/cli-reference.md#lint-configuration-and-suppressions).
+
 Every result location carries `physicalLocation.artifactLocation` (SARIF 2.1.0 requires it); `artifact_uri` fills its `uri` — omit it and the `artifactLocation` is empty, which is schema-valid but gives consumers such as GitHub code scanning no file to place the result in.
 
 Built-in rule IDs follow `JCL-LINT-NNN`. Custom rules extend `LintRule` ABC (register with `register_rule`, remove with `unregister_rule`). `LintConfig` takes `enabled` / `disabled` (sets of codes; empty `enabled` = every rule), `severities` (per-code `ErrorSeverity` override) and `critical_dataset_patterns`. Built-in rules (`jclparser/lint/rules.py`, `BUILTIN_RULES`):
@@ -192,10 +194,13 @@ Built-in rule IDs follow `JCL-LINT-NNN`. Custom rules extend `LintRule` ABC (reg
 | `JCL-LINT-003` | `CriticalDatasetDeleteRule` | WARNING | See below (needs `critical_dataset_patterns`) |
 | `JCL-LINT-004` | `MissingJobTimeRule` | INFO | JOB card without `TIME=` (not a JOB-less PROC member) |
 | `JCL-LINT-005` | `MissingJobRegionRule` | INFO | JOB card without `REGION=` (not a JOB-less PROC member) |
+| `JCL-LINT-006` | `NewDatasetWithoutRlseRule` | INFO | A new (`NEW` or omitted status) non-temporary dataset whose `SPACE` has no `RLSE` |
 | `JCL-LINT-007` | `DuplicateStepNameRule` | ERROR | A step name already used in the job |
 | `JCL-LINT-008` | `UndefinedOutputRefRule` | WARNING | `DD OUTPUT=*.name` matching no `OUTPUT` statement |
+| `JCL-LINT-009` | `CondMixedWithIfRule` | INFO | An EXEC `COND=` in a job that also has `IF`/`THEN` blocks (one finding per such step) |
+| `JCL-LINT-010` | `LiteralSetValueHlqRule` | WARNING | A literal dataset name whose first qualifier equals a `SET` symbol's value (2-8 alphanumerics); names the symbol. While it runs, JCL-LINT-001 leaves those names to it |
 
-There is no `JCL-LINT-006`. A rule that raises yields a `JCL-LINT-000` finding (WARNING by default) instead of stopping the run. Rules 001-003 read a PROC call's `//PROCSTEP.DD` overrides too (`model._dataset_dds`).
+006, 009 and 010 were added 2026-10-29 (006 was an unused code before). A rule that raises yields a `JCL-LINT-000` finding (WARNING by default) instead of stopping the run. Rules 001-003 read a PROC call's `//PROCSTEP.DD` overrides too (`model._dataset_dds`).
 
 Each SARIF `tool.driver.rules[]` entry takes its `shortDescription` and `fullDescription` from the registered rule's `description` (rules have no separate title, so both carry it); the pseudo-codes `JCL-LINT-000` (a rule raised) and `JCL-GEN-000` (finding without a code) have fixed descriptions, and a code no registered rule carries gets only `shortDescription` = its code (fixed 2026-10-13, #88: `shortDescription` was the code and `fullDescription` the first finding's message, truncated to 120 characters).
 

@@ -1,0 +1,69 @@
+name: jcl-parser lint
+description: Lint z/OS JCL with jcl-parser and report the findings to GitHub code scanning (SARIF).
+branding:
+  icon: check-square
+  color: blue
+
+inputs:
+  paths:
+    description: Space-separated files or directories to lint.
+    default: "."
+  glob:
+    description: Files of each directory to lint (a pathlib glob; '**/*.jcl' recurses).
+    default: "**/*.jcl"
+  fail-on:
+    description: Lowest severity that fails the step (info, warning or error).
+    default: warning
+  config:
+    description: Lint configuration TOML (default - the nearest pyproject.toml).
+    default: ""
+  sarif-file:
+    description: Where to write the SARIF report.
+    default: jcl-lint.sarif
+  upload-sarif:
+    description: Upload the report to code scanning ('true' or 'false'). Needs `security-events - write`.
+    default: "true"
+
+outputs:
+  sarif-file:
+    description: Path of the SARIF report.
+    value: ${{ inputs.sarif-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install jcl-parser
+      shell: bash
+      run: |
+        python3 -m venv "$RUNNER_TEMP/jcl-lint-venv"
+        "$RUNNER_TEMP/jcl-lint-venv/bin/pip" install --quiet "$GITHUB_ACTION_PATH"
+    - name: Lint JCL
+      id: lint
+      shell: bash
+      env:
+        JCL_PATHS: ${{ inputs.paths }}
+        JCL_GLOB: ${{ inputs.glob }}
+        JCL_FAIL_ON: ${{ inputs.fail-on }}
+        JCL_CONFIG: ${{ inputs.config }}
+        JCL_SARIF: ${{ inputs.sarif-file }}
+      run: |
+        args=(--glob "$JCL_GLOB" --fail-on "$JCL_FAIL_ON")
+        if [ -n "$JCL_CONFIG" ]; then args+=(--config "$JCL_CONFIG"); fi
+        read -r -a paths <<< "$JCL_PATHS"
+        lint="$RUNNER_TEMP/jcl-lint-venv/bin/jcl-lint"
+        status=0
+        "$lint" "${paths[@]}" "${args[@]}" --format sarif --output "$JCL_SARIF" || status=$?
+        "$lint" "${paths[@]}" "${args[@]}" || true
+        echo "status=$status" >> "$GITHUB_OUTPUT"
+    - name: Upload SARIF
+      if: ${{ always() && inputs.upload-sarif == 'true' && steps.lint.outputs.status != '2' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+        category: jcl-lint
+    - name: Fail on findings
+      if: ${{ steps.lint.outputs.status != '0' }}
+      shell: bash
+      run: |
+        echo "jcl-lint exited ${{ steps.lint.outputs.status }}; see the report above." >&2
+        exit 1
