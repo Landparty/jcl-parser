@@ -7,6 +7,36 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.2.0](https://github.com/Landparty/jcl-parser/compare/v2.1.0...v2.2.0) (2026-10-30)
+
+
+### Features
+
+* **lineage:** cross-job dataset lineage for a directory of jobs ([8963c17](https://github.com/Landparty/jcl-parser/commit/8963c17f55cc8d2475c766ecd75d5f8c25d57edd))
+* **lint:** lint in CI: jcl-lint, directory lint/validate, SARIF, config, suppressions ([83b499f](https://github.com/Landparty/jcl-parser/commit/83b499f23c984b7162b5915c87fdfb75862c4858))
+* public JSON export and cross-job dataset lineage ([91c1fbb](https://github.com/Landparty/jcl-parser/commit/91c1fbb4b4cb8d7bca792bf444d1c457e3dfa3d2))
+* **serialization:** public JSON export with a versioned JSON Schema ([bbad952](https://github.com/Landparty/jcl-parser/commit/bbad952f66a5982b289ad8f6c44c635e9833406c))
+
+
+### Bug Fixes
+
+* **cli:** stdin as '-', --profile in every view, step and DD names win over query words ([88bc37b](https://github.com/Landparty/jcl-parser/commit/88bc37be5d49564458afd2babc302b30c9364453)), closes [#131](https://github.com/Landparty/jcl-parser/issues/131) [#132](https://github.com/Landparty/jcl-parser/issues/132) [#133](https://github.com/Landparty/jcl-parser/issues/133)
+* **continuation:** a column-72 comment continuation is not a missing comma ([8fdfd7e](https://github.com/Landparty/jcl-parser/commit/8fdfd7e929c94cf26233b54be52a59a918d18766))
+* **errors:** make library exceptions picklable and deep-copyable ([a6a414d](https://github.com/Landparty/jcl-parser/commit/a6a414d7238e2f8b722dbc3704294e48e39eeab7)), closes [#104](https://github.com/Landparty/jcl-parser/issues/104)
+* **explosion:** qualify procedure step names in an expanded IF's condition text ([645eb18](https://github.com/Landparty/jcl-parser/commit/645eb184d9a7691a3f813eb17e88a724ed46e3af))
+* land three bug-hunt carry-over fixes (comment continuation, IEFBR14, IEHLIST) ([68c2595](https://github.com/Landparty/jcl-parser/commit/68c2595c2787ef3bd80399a8133dcbecd7631a00))
+* **lineage:** a DELETE disposition is not a write ([99a19b6](https://github.com/Landparty/jcl-parser/commit/99a19b69e815110c22fe394bb2791a25d9cfa9cf))
+* **lineage:** use directory PROC members and match PDS members individually ([ec712bd](https://github.com/Landparty/jcl-parser/commit/ec712bd2ac06dca5a2bfa21d038f594c97275622)), closes [#144](https://github.com/Landparty/jcl-parser/issues/144) [#145](https://github.com/Landparty/jcl-parser/issues/145)
+* **lint:** drop the DTZ005 noqa markers ruff 0.17.3 reports as unused ([f462331](https://github.com/Landparty/jcl-parser/commit/f4623317cd71e43fa92de31d2be706ea96421fc4))
+* **model:** an omitted DISP defines a new dataset; annotate disposition as str | list[str] ([38fc5e3](https://github.com/Landparty/jcl-parser/commit/38fc5e3ae12335018ee9bd6252d53b4a04397802)), closes [#105](https://github.com/Landparty/jcl-parser/issues/105) [#97](https://github.com/Landparty/jcl-parser/issues/97)
+* **parser:** end the job at a null statement, decode binary sources, read a Path once ([3baeac5](https://github.com/Landparty/jcl-parser/commit/3baeac5ccb99065784cec1a21e584416180d34ba)), closes [#124](https://github.com/Landparty/jcl-parser/issues/124) [#125](https://github.com/Landparty/jcl-parser/issues/125)
+* **profiles:** count binder INCLUDE members, join IEHPROGM continuations, LINT-002 UNIT lists ([5624049](https://github.com/Landparty/jcl-parser/commit/5624049b655527c0515031eb5cab411826d9a64d)), closes [#112](https://github.com/Landparty/jcl-parser/issues/112) [#113](https://github.com/Landparty/jcl-parser/issues/113) [#114](https://github.com/Landparty/jcl-parser/issues/114)
+* **profiles:** join ADRDSSU continuations before reading commands ([421ceeb](https://github.com/Landparty/jcl-parser/commit/421ceeb2fb098d22ebe629cb7c777a87c55fb643))
+* **profiles:** note IEFBR14 DISP=(MOD,DELETE) as a delete ([0dcd069](https://github.com/Landparty/jcl-parser/commit/0dcd06966e4717e292305bd11983b18b3266a3ea))
+* **profiles:** read IEHLIST statements with the control-statement tokeniser ([030cabb](https://github.com/Landparty/jcl-parser/commit/030cabb3ab67f85604bb76b6e9657a8d6940df85))
+* **validation:** report unbalanced IF/ELSE/ENDIF and dangling backward references ([84e5c7d](https://github.com/Landparty/jcl-parser/commit/84e5c7d95e4c811879c4d8af0ea194a678a2eceb))
+* **validation:** report unbalanced IF/ELSE/ENDIF and dangling backward references ([fab0007](https://github.com/Landparty/jcl-parser/commit/fab0007f83884b428ef4694efbd2851de6bb34ed))
+
 ## [2.1.0](https://github.com/Landparty/jcl-parser/compare/v2.0.3...v2.1.0) (2026-10-15)
 
 
