@@ -1,5 +1,8 @@
 # Update Log
 
+## 2026-10-31 (open-issue sweep)
+* **Fix (#154)**: the `ICETOOL` profile knew `WHENSAME` / `WHENDIFF` / `DEDUP` / `CORR` as operators but not `DATASORT` and `SUBSET`, and noted only `FROM` / `TO`. It now uses the DFSORT operator set (COPY, COUNT, DATASORT, DEFAULTS, DISPLAY, MERGE, MODE, OCCUR, RANGE, RESIZE, SELECT, SORT, SPLICE, STATS, SUBSET, UNIQUE, VERIFY) and notes `DISCARD(dd)` / `WRITE(dd)` / `LIST(dd)` outputs. See [api/public-api](api/public-api.md#tier-2--advanced). Tests: `tests/unit/test_program_profiles_catalogue.py::TestICETOOL`.
+
 ## 2026-10-30 (bug-hunt carry-over)
 * **Fix**: a complete statement whose card is continued in column 72 continues its comment field on the next record (IBM "Continuing the comment field"); that record was reported as a stray continuation ("missing comma?"). See [development/invariants](development/invariants.md) #16. Tests: `tests/unit/test_medium_continuation_fixes.py::TestMissingCommaDoesNotMerge`.
 * **Fix**: the `IEFBR14` profile noted `deletes <dsn>` only for `DISP=(OLD,DELETE)`, so the usual "delete if it exists" idiom `DISP=(MOD,DELETE)` (and `(SHR,DELETE)`) got no note although the step deletes the dataset. A normal `DELETE` with status `OLD`, `SHR` or `MOD` is now noted; `(NEW,DELETE)` still is not. See [api/public-api](api/public-api.md#tier-2--advanced). Tests: `tests/unit/test_program_profiles_catalogue.py::TestIEFBR14DeleteNotes`.

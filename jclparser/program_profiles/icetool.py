@@ -5,10 +5,12 @@ which reads the same ``TOOLIN`` operator syntax.
 
 ICETOOL reads a sequence of operator statements from ``TOOLIN`` (one
 operator per logical statement), each naming its input/output DDs via
-``FROM(ddname)`` / ``TO(ddname)`` / ``USING(member)``.  Common operators:
-``COPY``, ``SORT``, ``MERGE``, ``COUNT``, ``STATS``, ``SELECT``, ``SPLICE``,
-``UNIQUE``, ``OCCUR``, ``DISPLAY``, ``DEFAULTS``, ``MODE``, ``RESIZE``,
-``VERIFY``, ``WHENSAME``, ``WHENDIFF``, ``DEDUP``, ``RANGE``, ``CORR``.
+``FROM(ddname)`` / ``TO(ddname)`` / ``USING(member)``, plus the other
+output DDs some write: ``SELECT ... DISCARD(dd)``, ``COUNT ... WRITE(dd)``,
+``DISPLAY`` / ``OCCUR ... LIST(dd)``.  The DFSORT operators are ``COPY``,
+``COUNT``, ``DATASORT``, ``DEFAULTS``, ``DISPLAY``, ``MERGE``, ``MODE``,
+``OCCUR``, ``RANGE``, ``RESIZE``, ``SELECT``, ``SORT``, ``SPLICE``,
+``STATS``, ``SUBSET``, ``UNIQUE`` and ``VERIFY``.
 
 Like :mod:`jclparser.program_profiles.sort`, this is a shallow parse: it
 surfaces which operators ran and which DDs they touched without validating
@@ -28,24 +30,22 @@ if TYPE_CHECKING:
 
 _OPERATORS = (
     "COPY",
-    "SORT",
-    "MERGE",
     "COUNT",
-    "STATS",
-    "SELECT",
-    "SPLICE",
-    "UNIQUE",
-    "OCCUR",
-    "DISPLAY",
+    "DATASORT",
     "DEFAULTS",
+    "DISPLAY",
+    "MERGE",
     "MODE",
-    "RESIZE",
-    "VERIFY",
-    "WHENSAME",
-    "WHENDIFF",
-    "DEDUP",
+    "OCCUR",
     "RANGE",
-    "CORR",
+    "RESIZE",
+    "SELECT",
+    "SORT",
+    "SPLICE",
+    "STATS",
+    "SUBSET",
+    "UNIQUE",
+    "VERIFY",
 )
 _RE_OPERATOR_LINE = re.compile(
     r"^\s*(" + "|".join(_OPERATORS) + r")\b(.*)$",
@@ -54,6 +54,12 @@ _RE_OPERATOR_LINE = re.compile(
 # ``FROM(dd)`` / ``TO(dd)`` / ``TO(dd1,dd2,...)``: the group is the DD list.
 _RE_FROM = re.compile(r"\bFROM\s*\(([A-Za-z0-9$#@,\s]+)\)", re.IGNORECASE)
 _RE_TO = re.compile(r"\bTO\s*\(([A-Za-z0-9$#@,\s]+)\)", re.IGNORECASE)
+# The other output DDs: SELECT's DISCARD, COUNT's WRITE, DISPLAY/OCCUR's LIST.
+_OUTPUT_KEYWORDS = ("DISCARD", "WRITE", "LIST")
+_RE_OUTPUTS = {
+    keyword: re.compile(rf"\b{keyword}\s*\(([A-Za-z0-9$#@]+)\)", re.IGNORECASE)
+    for keyword in _OUTPUT_KEYWORDS
+}
 # A ``*`` in column 1 makes a comment statement.
 _RE_COMMENT_LINE = re.compile(r"^\s*\*.*$", re.MULTILINE)
 # A trailing ``-`` continues the statement on the next line.
@@ -98,6 +104,10 @@ class ICETOOLProfile(ProgramProfile):
                 parts.append(f"FROM({','.join(froms)})")
             if tos:
                 parts.append(f"TO({','.join(tos)})")
+            for keyword, pattern in _RE_OUTPUTS.items():
+                outputs = _dd_names(pattern.findall(tail))
+                if outputs:
+                    parts.append(f"{keyword}({','.join(outputs)})")
             detail = f" {' '.join(parts)}" if parts else ""
             notes.append(f"{operator}{detail}")
 

@@ -64,6 +64,35 @@ class TestICETOOL:
         assert len(results) == 1
         assert results[0].notes == ["COPY FROM(IN1) TO(OUT1)", "COUNT FROM(IN1)"]
 
+    def test_datasort_subset_and_other_output_dds(self):
+        # #154: DATASORT and SUBSET are operators; DISCARD / WRITE / LIST
+        # name output DDs; WHENSAME is a SPLICE operand, not an operator.
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=ICETOOL\n"
+            "//TOOLIN   DD *\n"
+            "* comment\n"
+            "DATASORT FROM(IN) TO(OUT) HEADER FIRST USING(CTL1)\n"
+            "SUBSET FROM(IN) TO(OUT2) INPUT REMOVE FIRST(2)\n"
+            "SELECT FROM(IN) TO(OUT3) ON(1,8,CH) FIRSTDUP DISCARD(REST)\n"
+            "COUNT FROM(IN) WRITE(CNT) TEXT('N=')\n"
+            "OCCUR FROM(IN) LIST(RPT) ON(1,5,CH)\n"
+            "SPLICE FROM(IN) TO(OUT4) ON(1,5,CH) -\n"
+            "  WITHALL WITH(6,5)\n"
+            "WHENSAME FROM(IN)\n"
+            "/*\n"
+        )
+        results = analyze_job(jp.parse_jcl(src))
+        assert results[0].notes == [
+            "DATASORT FROM(IN) TO(OUT)",
+            "SUBSET FROM(IN) TO(OUT2)",
+            "SELECT FROM(IN) TO(OUT3) DISCARD(REST)",
+            "COUNT FROM(IN) WRITE(CNT)",
+            "OCCUR FROM(IN) LIST(RPT)",
+            "SPLICE FROM(IN) TO(OUT4)",
+        ]
+        assert results[0].summary == "ICETOOL: 6 operator(s)"
+
     def test_no_toolin_graceful(self):
         src = "//MYJOB    JOB  (ACCT)\n//STEP1    EXEC PGM=ICETOOL\n"
         job = jp.parse_jcl(src)
