@@ -2,7 +2,8 @@
 
 IEFBR14 is a one-instruction program used purely for its side-effects on
 DD dispositions: datasets with ``DISP=(NEW,CATLG,...)`` get allocated, and
-``DISP=(OLD,DELETE)`` get deleted.  The DatasetEvents we emit here are
+``DISP=(OLD,DELETE)`` -- or ``(MOD,DELETE)``, the "delete if it exists" idiom,
+or ``(SHR,DELETE)`` -- get deleted.  The DatasetEvents we emit here are
 effectively the same as ``analyze_dataset_lifecycle`` produces, included
 for consistency with other profiles.
 """
@@ -11,6 +12,12 @@ from __future__ import annotations
 
 from ..dataset_lifecycle import DatasetEvent, _action_from_disp, _parse_disp_tokens
 from .base import ProgramAnalysis, ProgramProfile
+
+#: Statuses with which a normal ``DELETE`` removes a dataset the job did not
+#: just create.  ``MOD`` is the usual one, the "delete if it exists" idiom
+#: ``DISP=(MOD,DELETE)``: a missing dataset is allocated first, so the step
+#: does not fail on it.
+_EXISTING_STATUSES = frozenset({"OLD", "SHR", "MOD"})
 
 
 class IEFBR14Profile(ProgramProfile):
@@ -36,7 +43,7 @@ class IEFBR14Profile(ProgramProfile):
                     line_number=dd.line_number,
                 )
             )
-            if normal == "DELETE" and status == "OLD":
+            if normal == "DELETE" and status in _EXISTING_STATUSES:
                 notes.append(f"deletes {dd.dataset_name}")
             elif normal in ("CATLG", "CATALOG") and status == "NEW":
                 notes.append(f"allocates {dd.dataset_name}")

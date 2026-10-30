@@ -139,6 +139,41 @@ class TestMissingCommaDoesNotMerge:
         assert not handler.is_stray_continuation_record("// DISP=SHR")
         assert not handler.is_stray_continuation_record("//")
 
+    @staticmethod
+    def _card(text: str, column_72: str = " ", seq: str = "00000100") -> str:
+        return text.ljust(71) + column_72 + seq
+
+    def test_column_72_continues_the_comment_field_without_a_warning(self):
+        """A complete statement with a non-blank column 72 continues its
+        comment field on the next record (IBM: "Continuing the comment
+        field"); that record is a comment, not a missing comma (nightly
+        2026-10-15; #123 reported it as a stray continuation)."""
+        card = self._card
+        job = parse_jcl(
+            "\n".join(
+                [
+                    card("//J1       JOB (A),'X'"),
+                    card("//S1       EXEC PGM=A          RUNS THE MONTHLY", "X"),
+                    card("//             UPDATE OF THE LEDGER AND", "X"),
+                    card("//             REPORTS ITS TOTALS"),
+                    card("//IN       DD DSN=PROD.MASTER   SHORT", "X"),
+                    "//             COMMENT ON A TRIMMED CARD".ljust(72),
+                    card("//OUT      DD DSN=PROD.OUT"),
+                    card("//             DISP=SHR"),
+                ]
+            )
+            + "\n"
+        )
+        step = job.steps[0]
+        assert step.program == "A"
+        assert [(dd.name, dd.parameters) for dd in step.dd_statements] == [
+            ("IN", {"DSN": "PROD.MASTER"}),
+            ("OUT", {"DSN": "PROD.OUT"}),
+        ]
+        # Only the real missing comma (no column-72 mark) is reported.
+        assert len(job.warnings) == 1
+        assert job.warnings[0].startswith("Line 8: continuation record ignored")
+
     def test_unnamed_notify_is_its_own_statement(self):
         job = parse_jcl(
             "//J1 JOB (A),'X'\n// NOTIFY EMAIL='a@b.com'\n"
