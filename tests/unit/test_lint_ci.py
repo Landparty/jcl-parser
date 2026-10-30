@@ -195,6 +195,37 @@ class TestSuppressions:
         sup = parse_suppressions("//J JOB\n//* jcl-lint: disable=X\n")
         assert sup.line_codes == {}
 
+    def test_blanks_around_commas_and_a_remark(self) -> None:
+        # #150: a blank after the comma used to drop the codes after it.
+        sup = parse_suppressions(
+            "//J JOB\n"
+            "//* jcl-lint: disable=JCL-LINT-001, JCL-LINT-002 ,X3  why not\n"
+            "//S EXEC PGM=A\n"
+        )
+        assert sup.line_codes == {3: {"JCL-LINT-001", "JCL-LINT-002", "X3"}}
+        sup = parse_suppressions(
+            "//* jcl-lint: disable-file=A B\n"
+            "//* jcl-lint: disable-file=C" + " " * 44 + "SEQ00001\n"
+        )
+        assert sup.file_codes == {"A", "C"}
+
+    def test_in_stream_data_is_not_a_directive(self) -> None:
+        # #150: a //* record inside DD DATA / DLM= data is data.
+        text = (
+            "//JOBB     JOB (ACCT),'X',CLASS=A,TIME=1,REGION=0M\n"
+            "//STEP1    EXEC PGM=IEBGENER\n"
+            "//SYSUT1   DD DATA,DLM=$$\n"
+            "//* jcl-lint: disable-file=all\n"
+            "//* jcl-lint: disable=JCL-LINT-001\n"
+            "//SYSIN    DD DUMMY\n"
+            "$$\n"
+            "//OUT3     DD DSN=BANK.PROD.C,DISP=(NEW,CATLG),UNIT=SYSDA,SPACE=(TRK,1)\n"
+        )
+        sup = parse_suppressions(text)
+        assert sup.file_codes == set()
+        assert sup.line_codes == {}
+        assert {"JCL-LINT-001", "JCL-LINT-006"} <= set(_lint(text, source=text))
+
 
 # ---------------------------------------------------------------------------
 # Rules
