@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -12,7 +13,7 @@ from .rules import BUILTIN_RULES
 from .suppress import parse_suppressions
 
 if TYPE_CHECKING:
-    from ..model import Job
+    from ..model import Job, Procedure
 
 
 #: Pseudo-code used for the synthetic ValidationError emitted when a rule
@@ -52,16 +53,7 @@ def all_rules() -> list[LintRule]:
     return list(_RULES)
 
 
-def lint_job(
-    job: Job, config: LintConfig | None = None, *, source: str | None = None
-) -> list[ValidationError]:
-    """Run every enabled :class:`LintRule` against *job* and collect findings.
-
-    With *source* (the JCL text *job* was parsed from), findings switched off
-    by its ``//* jcl-lint: disable=...`` comments are left out (see
-    :mod:`jclparser.lint.suppress`).
-    """
-    cfg = config or LintConfig()
+def _run_rules(job: Job, cfg: LintConfig) -> list[ValidationError]:
     findings: list[ValidationError] = []
     for rule in _RULES:
         if not cfg.should_run(rule.code):
@@ -83,6 +75,52 @@ def lint_job(
                     error_code=_RULE_CRASH_CODE,
                 )
             )
+    return findings
+
+
+def procedure_body_job(proc: Procedure) -> Job:
+    """A JOB-less job holding *proc*'s steps, each named ``PROC.step``, so
+    the step and DD rules can run over a PROC body (issue #149)."""
+    from ..model import Job, iter_execution_steps
+
+    steps = copy.deepcopy(proc.steps)
+    for step in iter_execution_steps(steps):
+        step.name = f"{proc.name}.{step.name}" if step.name else proc.name
+    return Job(
+        name=proc.name,
+        steps=steps,
+        set_statements=dict(proc.set_statements),
+        line_number=proc.line_number,
+        is_procedure_member=True,
+    )
+
+
+def lint_job(
+    job: Job, config: LintConfig | None = None, *, source: str | None = None
+) -> list[ValidationError]:
+    """Run every enabled :class:`LintRule` against *job* and collect findings.
+
+    The steps of each PROC body coded in the job's own source (an in-stream
+    ``PROC ... PEND``, or the PROCs of a PROC member) are linted too, named
+    ``PROC.step``; a finding the exploded copy of a body already reported
+    (same code and line) is not repeated.
+
+    With *source* (the JCL text *job* was parsed from), findings switched off
+    by its ``//* jcl-lint: disable=...`` comments are left out (see
+    :mod:`jclparser.lint.suppress`).
+    """
+    cfg = config or LintConfig()
+    findings = _run_rules(job, cfg)
+    seen = {(f.error_code, f.line_number) for f in findings}
+    for proc in job.procedures:
+        if proc.is_external:
+            continue  # its lines are another file's
+        for finding in _run_rules(procedure_body_job(proc), cfg):
+            key = (finding.error_code, finding.line_number)
+            if finding.line_number and key in seen:
+                continue
+            seen.add(key)
+            findings.append(finding)
     if source is not None:
         findings = parse_suppressions(source).filter(findings)
     return findings

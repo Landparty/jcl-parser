@@ -480,9 +480,8 @@ def load_job_stream(
     Hidden files are skipped.  A file that fails to parse is recorded in
     :attr:`JobStream.errors` rather than raised; a JOB-less PROC member is
     listed in :attr:`JobStream.procedures`, and so is a member with no
-``PROC`` statement that starts at its first ``EXEC`` (issue #147).  With
-*explode* (the default)
-    each job's PROC calls are expanded: a PROC is looked up in the job
+    ``PROC`` statement that starts at its first ``EXEC`` (issue #147).  With
+    *explode* (the default) each job's PROC calls are expanded: a PROC is looked up in the job
     itself, then among the PROC members of the directory (by member name,
     see :func:`_member_procedures`; issue #144), then in *proc_base_path* as
     :func:`parse_jcl` does, then among the built-in PROCs.  A job whose

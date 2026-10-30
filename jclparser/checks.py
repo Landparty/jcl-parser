@@ -118,7 +118,41 @@ def _lint_file(
         if explode:
             job = job.explode()
     except _UNREADABLE as exc:
-        return FileReport(_uri(path), [_parse_failure(exc)])
+        bare = _bare_member_job(path)
+        if bare is None:
+            return FileReport(_uri(path), [_parse_failure(exc)])
+        job = bare
+    return _lint_one(path, job, config)
+
+
+def _bare_member_job(path: Path) -> Job | None:
+    """A PROC member with no PROC statement, as a job to lint, or None."""
+    from .lineage import _bare_procedure_member
+    from .lint.runner import procedure_body_job
+    from .model import iter_execution_steps
+
+    proc = _bare_procedure_member(path)
+    if proc is None:
+        return None
+    job = procedure_body_job(proc)
+    # The member was read behind a one-line JOB wrapper; give the findings
+    # the member's own line numbers.
+    for step in iter_execution_steps(job.steps):
+        step.line_number = max(step.line_number - 1, 0)
+        for dd in step.dd_statements:
+            dd.line_number = max(dd.line_number - 1, 0)
+    return job
+
+
+def _lint_member(path: Path, config: LintConfig) -> FileReport:
+    """Lint a PROC member found in a directory: its PROC bodies' steps."""
+    try:
+        job = parse_jcl(path, enable_external_procs=False)
+    except _UNREADABLE:
+        bare = _bare_member_job(path)
+        if bare is None:
+            raise
+        job = bare
     return _lint_one(path, job, config)
 
 
@@ -129,14 +163,17 @@ def _lint_directory(
     explode: bool,
     proc_base_path: str | None,
 ) -> list[FileReport]:
-    # load_job_stream explodes with the directory's own PROC members; the
-    # members themselves are not jobs and are not linted.
+    # load_job_stream explodes with the directory's own PROC members; each
+    # member is linted on its own too, for the steps of its PROC body.
     stream = load_job_stream(
         directory, pattern, explode=explode, proc_base_path=proc_base_path
     )
     reports = [
         _lint_one(directory / job_id, job, config)
         for job_id, job in stream.jobs.items()
+    ]
+    reports += [
+        _lint_member(directory / member_id, config) for member_id in stream.procedures
     ]
     for job_id, message in stream.errors.items():
         failure = _parse_failure(ValueError(message))
