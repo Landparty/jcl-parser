@@ -34,6 +34,7 @@ def _build_procedure_from_content(content: str, proc_name: str) -> Procedure | N
     from .jcl_file_type import FileType, detect_file_type_from_content
     from .parser import parse_jcl
 
+    source_text = content
     file_type = detect_file_type_from_content(content)
     # A PROC file must not carry a JOB card; a full JCL job is not a procedure.
     if file_type == FileType.JCL:
@@ -47,6 +48,7 @@ def _build_procedure_from_content(content: str, proc_name: str) -> Procedure | N
     for proc in job.procedures:
         if proc.name.upper() == target:
             proc.is_external = True
+            proc.source_text = source_text
             return proc
 
     # No explicit PROC/PEND: treat the whole file's steps as the procedure body.
@@ -60,6 +62,7 @@ def _build_procedure_from_content(content: str, proc_name: str) -> Procedure | N
             line_number=0,
             is_external=True,
             set_statements=dict(job.set_statements),
+            source_text=source_text,
         )
     return None
 

@@ -21,6 +21,7 @@ from .errors import (
     ProcedureNotFoundError,
     UndefinedSymbolError,
 )
+from .include_loader import IncludeMemberLoader
 from .model import (
     ConditionalBlock,
     DDStatement,
@@ -1514,6 +1515,7 @@ def explode_job(
     audit: bool = True,
     system_provider: SystemSymbolProvider | None = None,
     strict_symbols: bool = False,
+    include_loader: IncludeMemberLoader | None = None,
 ) -> Job:
     """
     Explode all procedure invocations in a job.
@@ -1532,6 +1534,11 @@ def explode_job(
         audit: Whether to generate audit logs
         system_provider: System symbol provider (defaults to mock provider)
         strict_symbols: If True, raise errors for undefined symbols
+        include_loader: Loader for the ``// INCLUDE MEMBER=`` statements of
+                   a cataloged (external) PROC, searched in the job's JCLLIB
+                   order; defaults to the loader :func:`parse_jcl` read the
+                   job's own INCLUDEs with.  A member it cannot find is a
+                   job warning.
 
     Returns:
         New Job instance with exploded procedures
@@ -1547,8 +1554,11 @@ def explode_job(
     # the job's JCLLIB / proc_base_path (so an external PROC called from inside
     # another PROC or an IF block is found where the top-level ones were),
     # else the default chain. Inline procedures always win.
-    if proc_loader is None:
-        proc_loader = _job_proc_loader(job)
+    include_expander = _IncludeExpandingLoader(
+        proc_loader if proc_loader is not None else _job_proc_loader(job),
+        include_loader or _job_include_loader(job),
+    )
+    proc_loader = include_expander
 
     # Get system provider
     system_provider = system_provider or get_default_provider()
@@ -1640,6 +1650,7 @@ def explode_job(
     # copy in _exploded_job) -- e.g. an undefined &SYMBOL only resolvable
     # inside a PROC body.
     exploded_job.warnings.extend(explosion_warnings)
+    include_expander.record_on(exploded_job)
 
     # Attach audit metadata
     if audit:
@@ -1668,6 +1679,82 @@ def _job_step_scope(job: Job, step: Step, base_scope: SymbolScope) -> SymbolScop
         set_symbols={**job.set_statements, **step.set_symbols},
         system_provider=base_scope.system_provider,
     )
+
+
+def _job_include_loader(job: Job) -> IncludeMemberLoader:
+    """The INCLUDE loader :func:`parse_jcl` attached to *job*, else the
+    default filesystem one."""
+    from .include_loader import JCLLIBMemberLoader
+
+    loader: IncludeMemberLoader | None = getattr(job, "_include_loader", None)
+    return loader if loader is not None else JCLLIBMemberLoader()
+
+
+class _IncludeExpandingLoader(ProcedureLoader):
+    """*inner*, with the INCLUDEs of each external PROC it returns expanded.
+
+    ``parse_jcl`` expands INCLUDEs in the job text, in-stream PROCs
+    included, before parsing; a cataloged PROC is read later, so its
+    INCLUDEs are expanded here, against the job's JCLLIB order (issue #153).
+    :meth:`record_on` adds the members expanded to the exploded job's
+    ``includes`` and a warning for each member not found.
+    """
+
+    def __init__(
+        self, inner: ProcedureLoader, include_loader: IncludeMemberLoader
+    ) -> None:
+        self._inner = inner
+        self._include_loader = include_loader
+        self._included: list[str] = []
+        self._warnings: list[str] = []
+        self._cache: dict[tuple[str, tuple[str, ...] | None], Procedure | None] = {}
+
+    def load_procedure(
+        self, name: str, libraries: Sequence[str] | None = None
+    ) -> Procedure | None:
+        key = (name.upper(), tuple(libraries) if libraries else None)
+        if key not in self._cache:
+            proc = self._inner.load_procedure(name, libraries)
+            self._cache[key] = (
+                self._expanded(proc, libraries) if proc is not None else None
+            )
+        return self._cache[key]
+
+    def record_on(self, job: Job) -> None:
+        job.warnings.extend(self._warnings)
+        job.includes.extend(m for m in self._included if m not in job.includes)
+
+    def _expanded(self, proc: Procedure, libraries: Sequence[str] | None) -> Procedure:
+        from ._statement_parser import _has_include_statement
+        from .include_loader import _extract_include_member, resolve_includes
+        from .proc_loader import _build_procedure_from_content
+        from .utils import split_source_lines
+
+        text = proc.source_text
+        if not proc.is_external or not text or not _has_include_statement(text):
+            return proc
+        members: list[str] = []
+        expanded_text = resolve_includes(
+            text,
+            self._include_loader,
+            list(libraries) if libraries else None,
+            _collected=members,
+        )
+        for line in split_source_lines(expanded_text):
+            missing = _extract_include_member(line.rstrip())
+            if missing:
+                self._warnings.append(
+                    f"INCLUDE member {missing} in PROC {proc.name} not found; "
+                    "its statements are missing from the exploded job"
+                )
+        self._included.extend(m for m in members if m not in self._included)
+        if not members:
+            return proc
+        rebuilt = _build_procedure_from_content(expanded_text, proc.name)
+        if rebuilt is None:
+            return proc
+        rebuilt.source_text = text
+        return rebuilt
 
 
 def _job_proc_loader(job: Job) -> ProcedureLoader:

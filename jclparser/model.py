@@ -245,6 +245,9 @@ class Procedure:
     line_number: int = 0
     is_external: bool = False
     set_statements: dict[str, str] = field(default_factory=dict)
+    #: The text an external PROC was read from (for INCLUDE expansion at
+    #: explosion, issue #153); None for an in-stream PROC.
+    source_text: str | None = field(default=None, repr=False, compare=False)
 
     def add_step(self, step: Step | ConditionalBlock) -> None:
         """Add a step to this procedure"""
