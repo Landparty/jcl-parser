@@ -527,6 +527,46 @@ class TestDSNUTILB:
         assert "REORG TABLESPACE DB1.TS1" in notes
         assert "RUNSTATS TABLESPACE DB1.TS1" in notes
 
+    def test_multi_line_statements_and_more_verbs(self):
+        # #156: option lines are not statements, the target may be on a
+        # later line, and MERGECOPY / COPYTOCOPY / REPORT / EXEC SQL count.
+        src = (
+            "//UTJOB    JOB (A),'X',CLASS=A\n"
+            "//S1       EXEC PGM=DSNUTILB,PARM='DB2P,REORG1'\n"
+            "//SYSIN    DD *\n"
+            "  REORG TABLESPACE DBACCT.TSACCT\n"
+            "        SHRLEVEL REFERENCE\n"
+            "        UNLOAD CONTINUE\n"
+            "        SORTDATA\n"
+            "  -- a comment naming LOAD\n"
+            "  LOAD DATA INDDN SYSREC LOG NO RESUME YES\n"
+            "       INTO TABLE BANK.ACCOUNT\n"
+            "  MERGECOPY TABLESPACE DBACCT.TSACCT NEWCOPY YES\n"
+            "  COPYTOCOPY TABLESPACE DBACCT.TSACCT FROMLASTCOPY\n"
+            "  REPORT RECOVERY TABLESPACE DBACCT.TSACCT\n"
+            "  RUNSTATS TABLESPACE DBACCT.TSACCT\n"
+            "    REPORT YES\n"
+            "  EXEC SQL\n"
+            "    MERGE INTO BANK.HIST H USING ...\n"
+            "  ENDEXEC\n"
+            "  REBUILD INDEX (BANK.IXACCT)\n"
+            "  UNLOAD TABLESPACE DBACCT.TSACCT\n"
+            "/*\n"
+        )
+        (result,) = analyze_job(jp.parse_jcl(src))
+        assert result.notes == [
+            "REORG TABLESPACE DBACCT.TSACCT",
+            "LOAD TABLE BANK.ACCOUNT",
+            "MERGECOPY TABLESPACE DBACCT.TSACCT",
+            "COPYTOCOPY TABLESPACE DBACCT.TSACCT",
+            "REPORT TABLESPACE DBACCT.TSACCT",
+            "RUNSTATS TABLESPACE DBACCT.TSACCT",
+            "EXEC SQL",
+            "REBUILD INDEX BANK.IXACCT",
+            "UNLOAD TABLESPACE DBACCT.TSACCT",
+        ]
+        assert result.summary == "DSNUTILB: 9 DB2 utility statement(s)"
+
     def test_no_sysin_graceful(self):
         src = "//MYJOB    JOB  (ACCT)\n//STEP1    EXEC PGM=DSNUTILB\n"
         job = jp.parse_jcl(src)
