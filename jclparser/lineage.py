@@ -444,6 +444,29 @@ def _member_procedures(path: Path, member: Job) -> dict[str, Procedure]:
     return procs
 
 
+def _bare_procedure_member(path: Path) -> Procedure | None:
+    """*path* read as a cataloged PROC member with no ``PROC`` statement.
+
+    On z/OS the PROC statement of a cataloged procedure is optional (it only
+    gives symbolic parameters defaults), so a member may start at its first
+    ``EXEC``.  :func:`parse_jcl` rejects such a JOB-less file ("EXEC
+    statement before JOB statement"); the file-based PROC loader reads it as
+    the body of a procedure named after the member, and so does this
+    (issue #147).  None when *path* is not such a member.
+    """
+    from .jcl_file_type import FileType, detect_file_type_from_content
+    from .proc_loader import _build_procedure_from_content
+    from .utils import _read_file_with_fallback
+
+    try:
+        content = _read_file_with_fallback(path)
+        if detect_file_type_from_content(content) != FileType.PROC:
+            return None
+        return _build_procedure_from_content(content, path.stem.upper())
+    except (JCLParseError, OSError, UnicodeError, ValueError):
+        return None
+
+
 def load_job_stream(
     directory: str | Path,
     pattern: str = "*",
@@ -456,8 +479,9 @@ def load_job_stream(
     *pattern* is a :meth:`pathlib.Path.glob` pattern (``"**/*.jcl"`` recurses).
     Hidden files are skipped.  A file that fails to parse is recorded in
     :attr:`JobStream.errors` rather than raised; a JOB-less PROC member is
-    listed in :attr:`JobStream.procedures`.  With *explode* (the default)
-    each job's PROC calls are expanded: a PROC is looked up in the job
+    listed in :attr:`JobStream.procedures`, and so is a member with no
+    ``PROC`` statement that starts at its first ``EXEC`` (issue #147).  With
+    *explode* (the default) each job's PROC calls are expanded: a PROC is looked up in the job
     itself, then among the PROC members of the directory (by member name,
     see :func:`_member_procedures`; issue #144), then in *proc_base_path* as
     :func:`parse_jcl` does, then among the built-in PROCs.  A job whose
@@ -482,7 +506,12 @@ def load_job_stream(
                 enable_external_procs=proc_base_path is not None,
             )
         except (JCLParseError, UnicodeError, ValueError) as exc:
-            stream.errors[job_id] = _first_line(str(exc))
+            bare = _bare_procedure_member(path)
+            if bare is None:
+                stream.errors[job_id] = _first_line(str(exc))
+            else:
+                stream.procedures.append(job_id)
+                members.setdefault(path.stem.upper(), bare)
             continue
         if job.is_procedure_member:
             stream.procedures.append(job_id)

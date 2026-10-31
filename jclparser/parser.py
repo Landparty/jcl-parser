@@ -154,6 +154,13 @@ def _parse_jcl_core(
         raise
     if line_map is not None:
         line_map.relabel_job(job, own_procedures)
+    # explode_job() expands the INCLUDEs of a cataloged PROC with the loader
+    # the job's own INCLUDEs were read with (issue #153).
+    if include_loader is None:
+        from .include_loader import JCLLIBMemberLoader
+
+        include_loader = JCLLIBMemberLoader(base_path=proc_base_path)
+    setattr(job, "_include_loader", include_loader)  # noqa: B010
 
     if strict_mode and validate_job:
         _raise_on_fatal_findings(job)

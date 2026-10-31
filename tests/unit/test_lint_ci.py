@@ -195,6 +195,37 @@ class TestSuppressions:
         sup = parse_suppressions("//J JOB\n//* jcl-lint: disable=X\n")
         assert sup.line_codes == {}
 
+    def test_blanks_around_commas_and_a_remark(self) -> None:
+        # #150: a blank after the comma used to drop the codes after it.
+        sup = parse_suppressions(
+            "//J JOB\n"
+            "//* jcl-lint: disable=JCL-LINT-001, JCL-LINT-002 ,X3  why not\n"
+            "//S EXEC PGM=A\n"
+        )
+        assert sup.line_codes == {3: {"JCL-LINT-001", "JCL-LINT-002", "X3"}}
+        sup = parse_suppressions(
+            "//* jcl-lint: disable-file=A B\n"
+            "//* jcl-lint: disable-file=C" + " " * 44 + "SEQ00001\n"
+        )
+        assert sup.file_codes == {"A", "C"}
+
+    def test_in_stream_data_is_not_a_directive(self) -> None:
+        # #150: a //* record inside DD DATA / DLM= data is data.
+        text = (
+            "//JOBB     JOB (ACCT),'X',CLASS=A,TIME=1,REGION=0M\n"
+            "//STEP1    EXEC PGM=IEBGENER\n"
+            "//SYSUT1   DD DATA,DLM=$$\n"
+            "//* jcl-lint: disable-file=all\n"
+            "//* jcl-lint: disable=JCL-LINT-001\n"
+            "//SYSIN    DD DUMMY\n"
+            "$$\n"
+            "//OUT3     DD DSN=BANK.PROD.C,DISP=(NEW,CATLG),UNIT=SYSDA,SPACE=(TRK,1)\n"
+        )
+        sup = parse_suppressions(text)
+        assert sup.file_codes == set()
+        assert sup.line_codes == {}
+        assert {"JCL-LINT-001", "JCL-LINT-006"} <= set(_lint(text, source=text))
+
 
 # ---------------------------------------------------------------------------
 # Rules
@@ -323,9 +354,10 @@ class TestChecks:
     def test_lint_directory(self, jobs: Path) -> None:
         reports = lint_paths([jobs])
         by_uri = {Path(r.uri).name: r for r in reports}
-        # PROC members are not jobs; a junk file is a parse finding.
-        assert sorted(by_uri) == ["BAD.jcl", "CLEAN.jcl", "JUNK.jcl"]
+        # A PROC member is linted for its body; a junk file is a parse finding.
+        assert sorted(by_uri) == ["BAD.jcl", "CLEAN.jcl", "JUNK.jcl", "PROCA.jcl"]
         assert by_uri["CLEAN.jcl"].findings == []
+        assert by_uri["PROCA.jcl"].findings == []
         assert _codes(by_uri["JUNK.jcl"].findings) == [PARSE_ERROR_CODE]
         assert "JCL-LINT-006" in _codes(by_uri["BAD.jcl"].findings)
 
@@ -335,6 +367,39 @@ class TestChecks:
         junk = reports[1].findings[0]
         assert junk.severity is ErrorSeverity.ERROR
         assert junk.line_number == 1
+
+    def test_proc_bodies_are_linted(self, tmp_path: Path) -> None:
+        # #149: a PROC member, an in-stream PROC body and a member with no
+        # PROC statement get the step and DD rules, named PROC.step.
+        body = (
+            "//S1       EXEC PGM=IEFBR14\n"
+            "//X        DD DSN=BANK.PROD.Z,DISP=(NEW,CATLG),UNIT=SYSDA,"
+            "SPACE=(TRK,1)\n"
+        )
+        (tmp_path / "MYPROC.jcl").write_text("//MYPROC   PROC\n" + body + "//  PEND\n")
+        (tmp_path / "BARE.prc").write_text(body)
+        (tmp_path / "E.jcl").write_text(
+            "//E        JOB (A),'X',TIME=1,REGION=0M\n"
+            "//INPROC   PROC\n" + body + "//         PEND\n"
+            "//RUN1     EXEC INPROC\n"
+        )
+        want = ["JCL-LINT-001", "JCL-LINT-002", "JCL-LINT-006"]
+        for name, line, step in (
+            ("MYPROC.jcl", 3, "MYPROC.S1"),
+            ("BARE.prc", 2, "BARE.S1"),
+            ("E.jcl", 4, "INPROC.S1"),
+        ):
+            (report,) = lint_paths([tmp_path / name])
+            assert sorted(_codes(report.findings)) == want, name
+            assert {f.line_number for f in report.findings} == {line}, name
+            assert all(f"'{step}'" in f.message for f in report.findings), name
+        # Exploded, the job's copy and the body report each finding once.
+        (exploded,) = lint_paths([tmp_path / "E.jcl"], explode=True)
+        assert sorted(_codes(exploded.findings)) == want
+        # A directory lints its members too.
+        by_uri = {Path(r.uri).name: r for r in lint_paths([tmp_path])}
+        assert sorted(_codes(by_uri["MYPROC.jcl"].findings)) == want
+        assert sorted(_codes(by_uri["BARE.prc"].findings)) == want
 
     def test_lint_honours_suppressions(self, tmp_path: Path) -> None:
         path = tmp_path / "J.jcl"

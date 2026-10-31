@@ -124,6 +124,7 @@ The disposition sets behind `is_input()` / `is_output()` (and `_DD_LEVEL_DCB_KEY
 | `line_number` | `int` | |
 | `is_external` | `bool` | True when loaded through the loader chain rather than inline |
 | `set_statements` | `dict[str, str]` | Symbols assigned by `SET` statements coded inside the procedure body. Applied only when the procedure is expanded (above job SETs, below PROC defaults and EXEC overrides); never merged into the calling job's `set_statements`. See [advanced/proc-expansion](../advanced/proc-expansion.md#symbol-substitution) |
+| `source_text` | `str \| None` | The member text an external PROC was read from (not in `repr`, equality or JSON); `explode_job` expands its INCLUDEs (#153). `None` for an in-stream PROC |
 
 ## OutputStatement
 

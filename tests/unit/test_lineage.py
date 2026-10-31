@@ -397,6 +397,32 @@ READER = """\
 
 @pytest.mark.unit
 class TestDirectoryProcMembers:
+    def test_member_without_a_proc_statement(self, tmp_path):
+        # #147: the PROC statement is optional in a cataloged procedure.
+        (tmp_path / "PB.prc").write_text(
+            "//S1       EXEC PGM=W\n//O        DD DSN=OUT.Q,DISP=(NEW,CATLG)\n"
+        )
+        (tmp_path / "JE.jcl").write_text("//JE       JOB (A),'X'\n//R        EXEC PB\n")
+        (tmp_path / "JF.jcl").write_text(
+            "//JF       JOB (A),'X'\n//S        EXEC PGM=R\n"
+            "//I        DD DSN=OUT.Q,DISP=SHR\n"
+        )
+        stream = load_job_stream(tmp_path)
+        assert stream.errors == {}
+        assert stream.warnings == {}
+        assert stream.procedures == ["PB.prc"]
+        assert [s.name for s in stream.jobs["JE.jcl"].steps] == ["R.S1"]
+        lineage = build_lineage(stream.jobs)
+        assert ("JE.jcl", "JF.jcl") in {
+            (d.producer, d.consumer) for d in lineage.dependencies
+        }
+
+    def test_job_less_garbage_is_still_not_parsed(self, tmp_path):
+        (tmp_path / "X.jcl").write_text("//O        DD DSN=OUT.Q,DISP=SHR\n")
+        stream = load_job_stream(tmp_path)
+        assert stream.procedures == []
+        assert "X.jcl" in stream.errors
+
     @pytest.mark.parametrize("member", ["compile.prc", "COMPILE.proc", "COMPILE"])
     def test_jobs_are_exploded_with_directory_members(self, tmp_path, member):
         (tmp_path / "caller.jcl").write_text(CALLER)

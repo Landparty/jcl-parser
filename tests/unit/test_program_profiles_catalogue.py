@@ -64,6 +64,35 @@ class TestICETOOL:
         assert len(results) == 1
         assert results[0].notes == ["COPY FROM(IN1) TO(OUT1)", "COUNT FROM(IN1)"]
 
+    def test_datasort_subset_and_other_output_dds(self):
+        # #154: DATASORT and SUBSET are operators; DISCARD / WRITE / LIST
+        # name output DDs; WHENSAME is a SPLICE operand, not an operator.
+        src = (
+            "//MYJOB    JOB  (ACCT)\n"
+            "//STEP1    EXEC PGM=ICETOOL\n"
+            "//TOOLIN   DD *\n"
+            "* comment\n"
+            "DATASORT FROM(IN) TO(OUT) HEADER FIRST USING(CTL1)\n"
+            "SUBSET FROM(IN) TO(OUT2) INPUT REMOVE FIRST(2)\n"
+            "SELECT FROM(IN) TO(OUT3) ON(1,8,CH) FIRSTDUP DISCARD(REST)\n"
+            "COUNT FROM(IN) WRITE(CNT) TEXT('N=')\n"
+            "OCCUR FROM(IN) LIST(RPT) ON(1,5,CH)\n"
+            "SPLICE FROM(IN) TO(OUT4) ON(1,5,CH) -\n"
+            "  WITHALL WITH(6,5)\n"
+            "WHENSAME FROM(IN)\n"
+            "/*\n"
+        )
+        results = analyze_job(jp.parse_jcl(src))
+        assert results[0].notes == [
+            "DATASORT FROM(IN) TO(OUT)",
+            "SUBSET FROM(IN) TO(OUT2)",
+            "SELECT FROM(IN) TO(OUT3) DISCARD(REST)",
+            "COUNT FROM(IN) WRITE(CNT)",
+            "OCCUR FROM(IN) LIST(RPT)",
+            "SPLICE FROM(IN) TO(OUT4)",
+        ]
+        assert results[0].summary == "ICETOOL: 6 operator(s)"
+
     def test_no_toolin_graceful(self):
         src = "//MYJOB    JOB  (ACCT)\n//STEP1    EXEC PGM=ICETOOL\n"
         job = jp.parse_jcl(src)
@@ -497,6 +526,46 @@ class TestDSNUTILB:
         notes = " | ".join(results[0].notes)
         assert "REORG TABLESPACE DB1.TS1" in notes
         assert "RUNSTATS TABLESPACE DB1.TS1" in notes
+
+    def test_multi_line_statements_and_more_verbs(self):
+        # #156: option lines are not statements, the target may be on a
+        # later line, and MERGECOPY / COPYTOCOPY / REPORT / EXEC SQL count.
+        src = (
+            "//UTJOB    JOB (A),'X',CLASS=A\n"
+            "//S1       EXEC PGM=DSNUTILB,PARM='DB2P,REORG1'\n"
+            "//SYSIN    DD *\n"
+            "  REORG TABLESPACE DBACCT.TSACCT\n"
+            "        SHRLEVEL REFERENCE\n"
+            "        UNLOAD CONTINUE\n"
+            "        SORTDATA\n"
+            "  -- a comment naming LOAD\n"
+            "  LOAD DATA INDDN SYSREC LOG NO RESUME YES\n"
+            "       INTO TABLE BANK.ACCOUNT\n"
+            "  MERGECOPY TABLESPACE DBACCT.TSACCT NEWCOPY YES\n"
+            "  COPYTOCOPY TABLESPACE DBACCT.TSACCT FROMLASTCOPY\n"
+            "  REPORT RECOVERY TABLESPACE DBACCT.TSACCT\n"
+            "  RUNSTATS TABLESPACE DBACCT.TSACCT\n"
+            "    REPORT YES\n"
+            "  EXEC SQL\n"
+            "    MERGE INTO BANK.HIST H USING ...\n"
+            "  ENDEXEC\n"
+            "  REBUILD INDEX (BANK.IXACCT)\n"
+            "  UNLOAD TABLESPACE DBACCT.TSACCT\n"
+            "/*\n"
+        )
+        (result,) = analyze_job(jp.parse_jcl(src))
+        assert result.notes == [
+            "REORG TABLESPACE DBACCT.TSACCT",
+            "LOAD TABLE BANK.ACCOUNT",
+            "MERGECOPY TABLESPACE DBACCT.TSACCT",
+            "COPYTOCOPY TABLESPACE DBACCT.TSACCT",
+            "REPORT TABLESPACE DBACCT.TSACCT",
+            "RUNSTATS TABLESPACE DBACCT.TSACCT",
+            "EXEC SQL",
+            "REBUILD INDEX BANK.IXACCT",
+            "UNLOAD TABLESPACE DBACCT.TSACCT",
+        ]
+        assert result.summary == "DSNUTILB: 9 DB2 utility statement(s)"
 
     def test_no_sysin_graceful(self):
         src = "//MYJOB    JOB  (ACCT)\n//STEP1    EXEC PGM=DSNUTILB\n"
