@@ -89,3 +89,102 @@ class TestIncludeInCatalogedProc:
             include_loader=DictMemberLoader(MEMBERS),
         )
         assert _shape(explode_job(job)) == EXPECTED
+
+
+SYMP = (
+    "//SYMP PROC MEM=DDSET1\n"
+    "//STEP2 EXEC PGM=IEFBR14\n"
+    "// INCLUDE MEMBER=&MEM\n"
+    "// PEND\n"
+)
+SYM_MEMBERS = {
+    "DDSET1": "//OUT1 DD DSN=X.Y1,DISP=SHR\n",
+    "DDSET3": "//OUT3 DD DSN=X.Y3,DISP=SHR\n",
+}
+
+
+def _explode_sym(job_text: str, procs: dict[str, str] | None = None):
+    job = parse_jcl(
+        job_text,
+        include_loader=DictMemberLoader(SYM_MEMBERS),
+        enable_external_procs=False,
+    )
+    return explode_job(job, proc_loader=DictProcedureLoader(procs or {"SYMP": SYMP}))
+
+
+@pytest.mark.unit
+class TestSymbolicIncludeInCatalogedProc:
+    """INCLUDE MEMBER=&SYM in a cataloged PROC resolves &SYM in the
+    scope of each call: EXEC value, PROC default, then SET (issue #160)."""
+
+    def test_exec_override(self) -> None:
+        exploded = _explode_sym("//J JOB 1\n//RUN EXEC SYMP,MEM=DDSET3\n")
+        assert _shape(exploded) == [("RUN.STEP2", "IEFBR14", ["OUT3"])]
+        assert exploded.warnings == []
+        assert exploded.includes == ["DDSET3"]
+
+    def test_proc_default(self) -> None:
+        exploded = _explode_sym("//J JOB 1\n//RUN EXEC SYMP\n")
+        assert _shape(exploded) == [("RUN.STEP2", "IEFBR14", ["OUT1"])]
+        assert exploded.warnings == []
+
+    def test_each_call_uses_its_own_value(self) -> None:
+        exploded = _explode_sym(
+            "//J JOB 1\n//A EXEC SYMP,MEM=DDSET3\n//B EXEC SYMP\n"
+            "//C EXEC SYMP,MEM=DDSET3\n"
+        )
+        assert [d for _, _, d in _shape(exploded)] == [["OUT3"], ["OUT1"], ["OUT3"]]
+        assert exploded.includes == ["DDSET3", "DDSET1"]
+
+    def test_job_set_symbol(self) -> None:
+        proc = SYMP.replace("&MEM", "&INC")
+        exploded = _explode_sym(
+            "//J JOB 1\n// SET INC=DDSET3\n//RUN EXEC SYMP\n", {"SYMP": proc}
+        )
+        assert _shape(exploded) == [("RUN.STEP2", "IEFBR14", ["OUT3"])]
+
+    def test_set_inside_proc(self) -> None:
+        proc = (
+            "//SYMP PROC\n// SET INC=DDSET3\n//STEP2 EXEC PGM=IEFBR14\n"
+            "// INCLUDE MEMBER=&INC\n// PEND\n"
+        )
+        exploded = _explode_sym("//J JOB 1\n//RUN EXEC SYMP\n", {"SYMP": proc})
+        assert _shape(exploded) == [("RUN.STEP2", "IEFBR14", ["OUT3"])]
+
+    def test_nested_call_override(self) -> None:
+        outer = "//OUTER PROC\n//IN EXEC SYMP,MEM=DDSET3\n// PEND\n"
+        exploded = _explode_sym(
+            "//J JOB 1\n//RUN EXEC OUTER\n", {"SYMP": SYMP, "OUTER": outer}
+        )
+        assert _shape(exploded) == [("RUN.IN.STEP2", "IEFBR14", ["OUT3"])]
+
+    def test_missing_resolved_member_is_one_warning(self) -> None:
+        exploded = _explode_sym(
+            "//J JOB 1\n//A EXEC SYMP,MEM=NOPE\n//B EXEC SYMP,MEM=NOPE\n"
+        )
+        assert exploded.warnings == [
+            (
+                "INCLUDE member NOPE in PROC SYMP not found; "
+                "its statements are missing from the exploded job"
+            )
+        ]
+
+    def test_undefined_symbol_is_a_warning(self) -> None:
+        proc = SYMP.replace("&MEM", "&UNDEF")
+        exploded = _explode_sym("//J JOB 1\n//RUN EXEC SYMP\n", {"SYMP": proc})
+        assert any("INCLUDE member &UNDEF" in w for w in exploded.warnings)
+
+    def test_filesystem_issue_repro(self, tmp_path: Path) -> None:
+        lib = tmp_path / "MY.PROCLIB"
+        lib.mkdir()
+        (lib / "MYPROC.jcl").write_text(SYMP.replace("SYMP", "MYPROC"))
+        for name, text in SYM_MEMBERS.items():
+            (lib / f"{name}.jcl").write_text(text)
+        job = parse_jcl(
+            "//J      JOB 1\n//       JCLLIB ORDER=(MY.PROCLIB)\n"
+            "//RUN    EXEC MYPROC,MEM=DDSET3\n",
+            proc_base_path=tmp_path,
+        )
+        exploded = explode_job(job)
+        assert _shape(exploded) == [("RUN.STEP2", "IEFBR14", ["OUT3"])]
+        assert exploded.warnings == []

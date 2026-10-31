@@ -1708,6 +1708,9 @@ class _IncludeExpandingLoader(ProcedureLoader):
         self._included: list[str] = []
         self._warnings: list[str] = []
         self._cache: dict[tuple[str, tuple[str, ...] | None], Procedure | None] = {}
+        self._call_cache: dict[
+            tuple[str, tuple[str, ...] | None, tuple[tuple[str, str], ...]], Procedure
+        ] = {}
 
     def load_procedure(
         self, name: str, libraries: Sequence[str] | None = None
@@ -1720,15 +1723,49 @@ class _IncludeExpandingLoader(ProcedureLoader):
             )
         return self._cache[key]
 
+    def for_call(
+        self,
+        proc: Procedure,
+        libraries: Sequence[str] | None,
+        scope: SymbolScope,
+    ) -> Procedure:
+        """*proc* as one call of it sees it: INCLUDE member names written as
+        symbols (``MEMBER=&MEM``) resolved in that call's *scope* -- EXEC
+        values, PROC defaults, SETs (issue #160).
+
+        *proc* is returned as is when no INCLUDE of its text names a symbol.
+        """
+        text = proc.source_text
+        if not text or not _has_symbolic_include(text):
+            return proc
+        symbols = _flattened_caller_scope(scope).set_symbols
+        key = (
+            (proc.name or "").upper(),
+            tuple(libraries) if libraries else None,
+            tuple(sorted(symbols.items())),
+        )
+        if key not in self._call_cache:
+            self._call_cache[key] = self._expanded(proc, libraries, symbols)
+        return self._call_cache[key]
+
     def record_on(self, job: Job) -> None:
         job.warnings.extend(self._warnings)
         job.includes.extend(m for m in self._included if m not in job.includes)
 
-    def _expanded(self, proc: Procedure, libraries: Sequence[str] | None) -> Procedure:
+    def _expanded(
+        self,
+        proc: Procedure,
+        libraries: Sequence[str] | None,
+        symbols: dict[str, str] | None = None,
+    ) -> Procedure:
+        """*proc* with the INCLUDEs of its text expanded.
+
+        Without *symbols* (the expansion at load time), an INCLUDE whose
+        member is a symbol is left for :meth:`for_call`, without a warning.
+        """
         from ._statement_parser import _has_include_statement
-        from .include_loader import _extract_include_member, resolve_includes
+        from .include_loader import resolve_includes
         from .proc_loader import _build_procedure_from_content
-        from .utils import split_source_lines
 
         text = proc.source_text
         if not proc.is_external or not text or not _has_include_statement(text):
@@ -1739,14 +1776,9 @@ class _IncludeExpandingLoader(ProcedureLoader):
             self._include_loader,
             list(libraries) if libraries else None,
             _collected=members,
+            _symbols=dict(symbols) if symbols is not None else None,
         )
-        for line in split_source_lines(expanded_text):
-            missing = _extract_include_member(line.rstrip())
-            if missing:
-                self._warnings.append(
-                    f"INCLUDE member {missing} in PROC {proc.name} not found; "
-                    "its statements are missing from the exploded job"
-                )
+        self._warn_missing(proc, expanded_text, symbols)
         self._included.extend(m for m in members if m not in self._included)
         if not members:
             return proc
@@ -1755,6 +1787,45 @@ class _IncludeExpandingLoader(ProcedureLoader):
             return proc
         rebuilt.source_text = text
         return rebuilt
+
+    def _warn_missing(
+        self, proc: Procedure, expanded_text: str, symbols: dict[str, str] | None
+    ) -> None:
+        """Warn once for each INCLUDE left in *expanded_text* (not found)."""
+        from .include_loader import (
+            _extract_include_member,
+            _record_set_symbols,
+            _substitute_member_symbols,
+        )
+        from .utils import split_source_lines
+
+        seen = dict(symbols) if symbols is not None else {}
+        for line in split_source_lines(expanded_text):
+            _record_set_symbols(line.rstrip(), seen)
+            missing = _extract_include_member(line.rstrip())
+            if not missing:
+                continue
+            if "&" in missing:
+                if symbols is None:
+                    continue
+                missing = _substitute_member_symbols(missing, seen)
+            warning = (
+                f"INCLUDE member {missing} in PROC {proc.name} not found; "
+                "its statements are missing from the exploded job"
+            )
+            if warning not in self._warnings:
+                self._warnings.append(warning)
+
+
+def _has_symbolic_include(text: str) -> bool:
+    """Whether an ``// INCLUDE`` statement of *text* names its member by symbol."""
+    from .include_loader import _extract_include_member
+    from .utils import split_source_lines
+
+    return any(
+        "&" in (_extract_include_member(line.rstrip()) or "")
+        for line in split_source_lines(text)
+    )
 
 
 def _job_proc_loader(job: Job) -> ProcedureLoader:
@@ -1915,6 +1986,41 @@ def _record_expansion(
         )
 
 
+def _load_called_procedure(
+    step: Step,
+    proc_loader: ProcedureLoader,
+    libraries: tuple[str, ...] | None,
+    base_scope: SymbolScope,
+    call_scope: SymbolScope | None,
+    strict_symbols: bool,
+    warnings: list[str] | None,
+) -> Procedure:
+    """The procedure PROC call *step* names, as that call sees it.
+
+    The call's still-unresolved overrides are resolved in the procedure's
+    scope when *call_scope* is given (see :func:`_explode_step`), then the
+    INCLUDEs naming their member by symbol are expanded in the call's scope.
+
+    Raises:
+        ProcedureNotFoundError: If *proc_loader* cannot find the procedure.
+    """
+    proc_name = step.procedure or ""
+    procedure = proc_loader.load_procedure(proc_name, libraries)
+    if procedure is None:
+        raise ProcedureNotFoundError(proc_name, step.line_number)
+    if call_scope is not None:
+        _resolve_call_in_proc_scope(
+            step, procedure, call_scope, strict_symbols, warnings
+        )
+    if isinstance(proc_loader, _IncludeExpandingLoader):
+        procedure = proc_loader.for_call(
+            procedure,
+            libraries,
+            _expansion_scope(procedure, step.parameters, base_scope),
+        )
+    return procedure
+
+
 def _explode_step(
     step: Step,
     proc_loader: ProcedureLoader,
@@ -1993,15 +2099,9 @@ def _explode_step(
     # against the job's library order. Pass an immutable tuple: loaders key their
     # caches on the library list, so a hashable value keeps that contract safe.
     _libs = tuple(jcllib_order) if jcllib_order else None
-    procedure = proc_loader.load_procedure(proc_name, _libs)
-
-    if procedure is None:
-        raise ProcedureNotFoundError(proc_name, step.line_number)
-
-    if call_scope is not None:
-        _resolve_call_in_proc_scope(
-            step, procedure, call_scope, strict_symbols, warnings
-        )
+    procedure = _load_called_procedure(
+        step, proc_loader, _libs, base_scope, call_scope, strict_symbols, warnings
+    )
 
     # Extract parameter overrides from step
     overrides = step.parameters.copy()
