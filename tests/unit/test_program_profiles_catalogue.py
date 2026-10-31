@@ -969,3 +969,48 @@ class TestIEFBR14DeleteNotes:
             "deletes PROD.C",
         ]
         assert result.summary == "IEFBR14: 5 DD dispositions applied"
+
+
+class TestBPXBATCHStdparm:
+    """A //STDPARM DD supplies the parameters and overrides PARM (#159)."""
+
+    def test_in_stream_stdparm(self):
+        src = (
+            "//J JOB 1\n//S2 EXEC PGM=BPXBATCH\n//STDPARM DD *\n"
+            "PGM /u/app/bin/payroll\n/*\n//STDOUT DD SYSOUT=*\n"
+        )
+        result = analyze_job(jp.parse_jcl(src))[0]
+        assert result.summary == "BPXBATCH: PGM /u/app/bin/payroll"
+        assert result.invoked_programs == ["PAYROLL"]
+        assert "parameters from STDPARM" in result.notes
+        assert result.raw_control == "PGM /u/app/bin/payroll"
+
+    def test_stdparm_overrides_parm_and_joins_records(self):
+        src = (
+            "//J JOB 1\n//S2 EXEC PGM=BPXBATCH,PARM='SH echo hi'\n"
+            "//STDPARM DD *\nPGM /bin/prog\n  arg1   \narg2\n/*\n"
+        )
+        result = analyze_job(jp.parse_jcl(src))[0]
+        assert result.invoked_programs == ["PROG"]
+        assert "args: arg1 arg2" in result.notes
+
+    def test_stdparm_dataset_is_noted(self):
+        src = (
+            "//J JOB 1\n//S2 EXEC PGM=BPXBATCH,PARM='SH echo hi'\n"
+            "//STDPARM DD DSN=MY.PARMS(BPX),DISP=SHR\n"
+        )
+        result = analyze_job(jp.parse_jcl(src))[0]
+        assert "no PARM" not in result.summary
+        assert "STDPARM" in result.summary
+        assert any("MY.PARMS(BPX)" in n for n in result.notes)
+        assert result.invoked_programs == []
+
+    def test_stdparm_path_is_noted(self):
+        src = "//J JOB 1\n//S2 EXEC PGM=BPXBATCH\n//STDPARM DD PATH='/u/app/parms'\n"
+        result = analyze_job(jp.parse_jcl(src))[0]
+        assert result.summary == "BPXBATCH: parameters from STDPARM /u/app/parms"
+
+    def test_empty_stdparm(self):
+        src = "//J JOB 1\n//S2 EXEC PGM=BPXBATCH\n//STDPARM DD *\n/*\n"
+        result = analyze_job(jp.parse_jcl(src))[0]
+        assert "STDPARM" in result.summary
