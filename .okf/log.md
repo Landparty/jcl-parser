@@ -1,5 +1,8 @@
 # Update Log
 
+## 2026-11-01 (open-issue sweep)
+* **Fix (#162)**: under the `standard` and `jes3` dialects, the records between a JES3 `//*DATASET` and its `//*ENDDATASET` (or its `END=` terminator) are the input data set's content: kept in order on the `Jes3ControlStatement.data` list of that `//*DATASET`, never read as an implicit `//SYSIN DD *` and never parsed as JCL. An unterminated `//*DATASET` adds a `job.warnings` entry. `jes2` still reads `//*` as a comment. See [core/parsing-pipeline](core/parsing-pipeline.md). Tests: `tests/unit/test_jes3_dataset.py`.
+
 ## 2026-10-31 (open-issue sweep)
 * **Fix (#160)**: `// INCLUDE MEMBER=&MEM` inside a cataloged PROC resolved `&MEM` against nothing, so the member was "not found" and its statements missing. `explode_job` now expands such an INCLUDE per call, with `&MEM` resolved from the EXEC value, the PROC default, the PROC's SETs, then job SETs (`_IncludeExpandingLoader.for_call`). See [advanced/proc-expansion](advanced/proc-expansion.md). Tests: `tests/unit/test_include_in_cataloged_proc.py::TestSymbolicIncludeInCatalogedProc`.
 * **Fix (#159)**: the `BPXBATCH` profile read only `PARM=`, so parameters given on a `//STDPARM` DD (which override PARM) were reported as "no PARM". In-stream STDPARM text is now used in preference to PARM; a STDPARM dataset or file is noted. See [api/public-api](api/public-api.md#tier-2--advanced). Tests: `tests/unit/test_program_profiles_catalogue.py::TestBPXBATCHStdparm`.

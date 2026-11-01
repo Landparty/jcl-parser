@@ -48,6 +48,9 @@ class Jes3ControlStatement(JESControlStatement):
     """
 
     parameters: dict[str, str] = field(default_factory=dict)
+    #: For ``//*DATASET``: the records of the input data set, as coded, up
+    #: to ``//*ENDDATASET`` (or the ``END=`` terminator, which is not kept).
+    data: list[str] = field(default_factory=list)
 
 
 @dataclass

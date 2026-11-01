@@ -188,7 +188,9 @@ def _parse_expanded(
     Also returns the in-stream procedures, read from *content* itself (the
     external ones loaded afterwards come from their own library members).
     """
-    scanned = _merge_source_lines(content)
+    scanned = _merge_source_lines(
+        content, config.dialect if config is not None else "standard"
+    )
     job = _build_job(scanned, config, strict=strict_mode)
     own_procedures = list(job.procedures)
 
@@ -285,6 +287,12 @@ def _build_job(
             if not line.startswith(("//", "/*")):
                 # In-stream data with no DD statement ahead of it.
                 builder.start_implicit_sysin(line, line_num)
+            continue
+
+        # The records of a JES3 //*DATASET input data set are its content,
+        # never JCL and never an implicit SYSIN (issue #162).
+        if (line_num - 1) in scanned.jes3_data_indices:
+            builder.handle_jes3_data(line)
             continue
 
         # Program control records inside a CNTL/ENDCNTL block are kept with
@@ -647,8 +655,14 @@ def _validate_line_by_line(
 
     # Merge continuation lines so multi-line statements are validated as a
     # unit, and learn which records are in-stream data rather than JCL.
-    scanned = _merge_source_lines(content)
-    data_indices = scanned.inline_data_indices | scanned.control_data_indices
+    scanned = _merge_source_lines(
+        content, config.dialect if config is not None else "standard"
+    )
+    data_indices = (
+        scanned.inline_data_indices
+        | scanned.control_data_indices
+        | scanned.jes3_data_indices
+    )
 
     errors: list[ParseError] = []
     structure = _StructureTracker(errors)

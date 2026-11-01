@@ -52,10 +52,18 @@ class ScannedSource(NamedTuple):
     control_data_indices: set[int]
     #: Findings about records that were discarded or repaired.
     warnings: list[str]
+    #: 0-based indices of the records of a JES3 ``//*DATASET`` input data
+    #: set (between ``//*DATASET`` and ``//*ENDDATASET`` or its ``END=``
+    #: terminator, the terminator included when it is not ENDDATASET).
+    jes3_data_indices: frozenset[int] = frozenset()
 
 
-def _merge_source_lines(content: str) -> ScannedSource:
+def _merge_source_lines(content: str, dialect: str = "standard") -> ScannedSource:
     """Normalize, mark in-stream data, and merge continuation lines.
+
+    Under every dialect but ``jes2`` (where ``//*`` is only ever a comment),
+    the records of a JES3 ``//*DATASET`` ... ``//*ENDDATASET`` input data set
+    are data too (issue #162).
 
     Neither in-stream data nor CNTL control records may be parsed as JCL
     statements; the parse loop uses the returned index sets to route them.
@@ -66,7 +74,7 @@ def _merge_source_lines(content: str) -> ScannedSource:
     raw_lines = split_source_lines(content)
     lines = normalize_jcl_lines(raw_lines)
 
-    classifier = _RecordClassifier(lines)
+    classifier = _RecordClassifier(lines, jes3_datasets=dialect != "jes2")
     jcl_indices = classifier.run()
 
     handler = ContinuationLineHandler()
@@ -84,11 +92,16 @@ def _merge_source_lines(content: str) -> ScannedSource:
     # raw record is woven in (trailing blanks aside) rather than the
     # normalized one (issue #115).  CNTL control records are statements
     # with JCL's column rules and stay normalized.
-    data_lines = {i: _data_record(raw_lines[i]) for i in classifier.inline_data_indices}
+    data_lines = {
+        i: _data_record(raw_lines[i])
+        for i in classifier.inline_data_indices | classifier.jes3_data_indices
+    }
     merged_lines = _weave_lines(
         lines,
         merged_start,
-        classifier.inline_data_indices | classifier.control_data_indices,
+        classifier.inline_data_indices
+        | classifier.control_data_indices
+        | classifier.jes3_data_indices,
         data_lines,
     )
 
@@ -113,6 +126,7 @@ def _merge_source_lines(content: str) -> ScannedSource:
         classifier.inline_data_indices,
         classifier.control_data_indices,
         warnings,
+        frozenset(classifier.jes3_data_indices),
     )
 
 
@@ -200,11 +214,18 @@ class _RecordClassifier:
     :attr:`control_data_indices` and :attr:`warnings`.
     """
 
-    def __init__(self, lines: list[str]) -> None:
+    def __init__(self, lines: list[str], *, jes3_datasets: bool = True) -> None:
         self.lines = lines
         self.inline_data_indices: set[int] = set()
         self.control_data_indices: set[int] = set()
+        self.jes3_data_indices: set[int] = set()
         self.warnings: list[str] = []
+
+        # JES3 ``//*DATASET``: the records up to ``//*ENDDATASET`` (or the
+        # ``END=`` terminator) are the content of an input data set.
+        self.jes3_datasets = jes3_datasets
+        self.jes3_terminator: str | None = None
+        self.jes3_start_line = 0
 
         self.in_inline_data = False
         self.delimiter = "/*"
@@ -228,10 +249,57 @@ class _RecordClassifier:
         self.pending: tuple[str, str] | None = None
 
     def run(self) -> list[int]:
-        return [i for i, line in enumerate(self.lines) if self._is_jcl(i, line)]
+        jcl = [i for i, line in enumerate(self.lines) if self._is_jcl(i, line)]
+        if self.jes3_terminator is not None:
+            self.warnings.append(
+                f"Line {self.jes3_start_line}: //*DATASET has no matching "
+                f"{self._jes3_terminator_name()}; its data runs to the end "
+                f"of the source"
+            )
+        return jcl
+
+    def _jes3_terminator_name(self) -> str:
+        return (
+            "//*ENDDATASET"
+            if self.jes3_terminator == _ENDDATASET
+            else f"END={self.jes3_terminator} terminator"
+        )
+
+    def _consume_jes3_data(self, i: int, line: str) -> bool:
+        """Handle a record inside a JES3 ``//*DATASET``; True if it was data.
+
+        The ``//*ENDDATASET`` record itself stays a JCL (JES3 control)
+        record; an ``END=`` terminator record is part of the data block.
+        """
+        if _jes3_command(line) == "ENDDATASET":
+            self.jes3_terminator = None
+            return False
+        if self.jes3_terminator != _ENDDATASET and line.startswith(
+            str(self.jes3_terminator)
+        ):
+            self.jes3_terminator = None
+        self.jes3_data_indices.add(i)
+        return True
+
+    def _opens_jes3_dataset(self, i: int, line: str) -> None:
+        """Note a ``//*DATASET`` record: data follows until its terminator."""
+        if not self.jes3_datasets or _jes3_command(line) != "DATASET":
+            return
+        terminator = _ENDDATASET
+        for param in line.strip()[3:].split(None, 1)[1:2]:
+            for item in param.split(None, 1)[0].split(","):
+                key, _, value = item.partition("=")
+                if key.upper() == "END" and value.strip("'"):
+                    terminator = value.strip("'")
+        self.jes3_terminator = terminator
+        self.jes3_start_line = i + 1
 
     def _is_jcl(self, i: int, line: str) -> bool:
         """Classify record *i*; return True if it is a JCL record."""
+        if self.jes3_terminator is not None and self._consume_jes3_data(i, line):
+            return False
+        if line.startswith("//*") and not self.in_inline_data:
+            self._opens_jes3_dataset(i, line)
         if self.in_inline_data and self._consume_inline_data(i, line):
             return False
         if self.in_cntl_block and self._consume_control_data(i, line):
@@ -369,6 +437,17 @@ class _RecordClassifier:
             return None
         self.pending = None
         return operation, operands
+
+
+#: Marks a ``//*DATASET`` whose data ends at ``//*ENDDATASET``.
+_ENDDATASET = "\0ENDDATASET"
+
+
+def _jes3_command(line: str) -> str | None:
+    """The command of a JES3 ``//*COMMAND`` record (no blank after ``//*``)."""
+    if not line.startswith("//*") or len(line) < 4 or line[3].isspace():
+        return None
+    return line[3:].split(None, 1)[0].upper()
 
 
 #: Statements whose operands can open a data block in the pre-scan.
