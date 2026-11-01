@@ -324,8 +324,12 @@ class _IncludeExpander:
         # stay as-is. They are located with the same scan the parser uses.
         from ._source_scanner import _merge_source_lines
 
-        _, inline_data, control_data, _ = _merge_source_lines(content)
-        data_indices = inline_data | control_data
+        scanned = _merge_source_lines(content)
+        data_indices = (
+            scanned.inline_data_indices
+            | scanned.control_data_indices
+            | scanned.jes3_data_indices
+        )
 
         result: list[_Entry] = []
         for index, line in enumerate(lines):

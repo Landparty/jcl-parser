@@ -304,6 +304,24 @@ class JobBuilder:
             self.pending_jes_typed.append(jes3)
             self.pending_jes_statements.append(raw_text)
 
+    def handle_jes3_data(self, line: str) -> None:
+        """Keep a record of a JES3 ``//*DATASET`` with that statement.
+
+        The ``END=`` terminator record ends the data and is not kept.
+        """
+        from .jes_statements import Jes3ControlStatement
+
+        typed = self.job.jes_typed_statements if self.job else self.pending_jes_typed
+        for stmt in reversed(typed):
+            if (
+                isinstance(stmt, Jes3ControlStatement)
+                and stmt.name.upper() == "DATASET"
+            ):
+                terminator = stmt.parameters.get("END", "").strip("'")
+                if not (terminator and line.startswith(terminator)):
+                    stmt.data.append(line)
+                return
+
     # ------------------------------------------------------------------ #
     # Statement dispatch
     # ------------------------------------------------------------------ #
