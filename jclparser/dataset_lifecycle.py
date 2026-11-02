@@ -63,6 +63,11 @@ class DatasetEvent:
         disp_abnormal: Abnormal termination disposition (same set as normal),
             or ``""`` if omitted.
         line_number: Source line number of the DD statement.
+        concatenation_member: ``0`` for a named DD; for an unnamed
+            concatenation member, its position in the concatenation (the
+            named DD is member 1, so the first unnamed card is member 2).
+            ``dd_name`` is then the name of the DD the concatenation
+            belongs to.
     """
 
     step_name: str
@@ -72,6 +77,14 @@ class DatasetEvent:
     disp_normal: str = ""
     disp_abnormal: str = ""
     line_number: int = 0
+    concatenation_member: int = 0
+
+    @property
+    def dd_label(self) -> str:
+        """The DD as messages name it: ``IN``, or ``IN, concatenation member 2``."""
+        if self.concatenation_member:
+            return f"{self.dd_name}, concatenation member {self.concatenation_member}"
+        return self.dd_name
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +219,14 @@ def _step_events(
     """Record *step*'s events into *lifecycle*; ``None`` when it has none."""
     step_name = step.name or ""
     step_events: list[_Event] = []
+    # An unnamed DD card continues the concatenation of the named DD before
+    # it, so it is reported under that DD's name (as ``Step.steplib`` does).
+    owner, member = "", 0
     for dd in _dataset_dds(step):
+        if dd.name:
+            owner, member = dd.name, 0
+        elif owner:
+            member = member + 1 if member else 2
         if not dd.dataset_name:
             continue
         # A backward reference names the dataset of the DD it points at;
@@ -222,12 +242,13 @@ def _step_events(
 
         event = DatasetEvent(
             step_name=step.name or "(unnamed)",
-            dd_name=dd.name or "",
+            dd_name=dd.name or owner,
             action=_action_from_disp(status),
             disp_status=status,
             disp_normal=normal,
             disp_abnormal=abnormal,
             line_number=dd.line_number,
+            concatenation_member=0 if dd.name else member,
         )
         events = lifecycle.setdefault(dsn_key, [])
         step_events.append((dsn_key, len(events), event))
@@ -460,7 +481,7 @@ class _LifecycleChecker:
                 dsn,
                 pos,
                 f"Dataset '{dsn}' allocated with DISP=NEW,CATLG in step "
-                f"'{evt.step_name}' (DD {evt.dd_name}) but was already "
+                f"'{evt.step_name}' (DD {evt.dd_label}) but was already "
                 f"cataloged in step '{cataloged_by.step_name}' without "
                 f"an intervening DELETE or UNCATLG",
                 evt,
@@ -492,7 +513,7 @@ class _LifecycleChecker:
                 dsn,
                 pos,
                 f"Dataset '{dsn}' opened in step '{evt.step_name}' "
-                f"(DD {evt.dd_name}) after being uncataloged in step "
+                f"(DD {evt.dd_label}) after being uncataloged in step "
                 f"'{uncataloged_by.step_name}'",
                 evt,
             )
@@ -506,7 +527,7 @@ class _LifecycleChecker:
                 dsn,
                 pos,
                 f"Dataset '{dsn}' opened {disp_label} in step "
-                f"'{evt.step_name}' (DD {evt.dd_name}) before it "
+                f"'{evt.step_name}' (DD {evt.dd_label}) before it "
                 f"is allocated in a later step — verify the dataset "
                 f"exists in the catalog",
                 evt,
