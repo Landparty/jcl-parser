@@ -20,7 +20,7 @@ application, for example::
 import logging as _logging
 
 # Package metadata
-__version__ = "2.2.1"  # x-release-please-version
+__version__ = "2.2.2"  # x-release-please-version
 __author__ = "JCL Parser Team"
 __description__ = "Parse IBM JCL scripts into Python objects"
 
