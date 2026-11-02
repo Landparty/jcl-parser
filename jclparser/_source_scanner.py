@@ -282,15 +282,25 @@ class _RecordClassifier:
         return True
 
     def _opens_jes3_dataset(self, i: int, line: str) -> None:
-        """Note a ``//*DATASET`` record: data follows until its terminator."""
+        """Note a ``//*DATASET`` record: data follows until its terminator.
+
+        A JES3 ``//*DATASET`` statement always codes ``DDNAME=``; without it
+        the record is an ordinary comment that happens to start with that
+        word (``//*DATASET DEFINITIONS FOR ...``) and opens no data (#164).
+        """
         if not self.jes3_datasets or _jes3_command(line) != "DATASET":
             return
         terminator = _ENDDATASET
+        has_ddname = False
         for param in line.strip()[3:].split(None, 1)[1:2]:
             for item in param.split(None, 1)[0].split(","):
                 key, _, value = item.partition("=")
+                if key.upper() == "DDNAME" and value:
+                    has_ddname = True
                 if key.upper() == "END" and value.strip("'"):
                     terminator = value.strip("'")
+        if not has_ddname:
+            return
         self.jes3_terminator = terminator
         self.jes3_start_line = i + 1
 

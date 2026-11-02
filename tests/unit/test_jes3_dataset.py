@@ -60,3 +60,22 @@ def test_unterminated_dataset_warns():
 def test_validate_skips_dataset_records():
     errors = validate_jcl(SRC.replace("//INNER EXEC PGM=NOTREAL", "//BAD XYZZY ,,"))
     assert not [e for e in errors if e.line_number == 6]
+
+
+@pytest.mark.parametrize(
+    "comment",
+    ["//*DATASET DEFINITIONS FOR THE NIGHTLY RUN", "//*DATASET", "//*DATASET END=XYZ"],
+)
+def test_dataset_comment_without_ddname_is_a_comment(comment):
+    """A //*DATASET record without DDNAME= is an ordinary comment (#164)."""
+    src = (
+        "//JOBA     JOB (ACCT),'TEST',CLASS=A\n"
+        f"{comment}\n"
+        "//STEP1    EXEC PGM=IEFBR14\n"
+        "//DD1      DD DSN=PROD.A,DISP=SHR\n"
+        "//STEP2    EXEC PGM=SORT\n"
+        "//SORTIN   DD DSN=PROD.B,DISP=SHR\n"
+    )
+    job = parse_jcl(src)
+    assert [s.name for s in job.steps] == ["STEP1", "STEP2"]
+    assert not any("ENDDATASET" in w for w in job.warnings)

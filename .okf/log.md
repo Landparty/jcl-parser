@@ -1,5 +1,8 @@
 # Update Log
 
+## 2026-11-02
+* **Fix (#164)**: a comment starting `//*DATASET` (`//*DATASET DEFINITIONS FOR THE NIGHTLY RUN`, or a bare `//*DATASET`) was read as a JES3 `//*DATASET` and took the rest of the job as its data, leaving no steps. A `//*DATASET` opens data only when it codes `DDNAME=`, as every JES3 `//*DATASET` statement must. See [core/parsing-pipeline](core/parsing-pipeline.md). Tests: `tests/unit/test_jes3_dataset.py::test_dataset_comment_without_ddname_is_a_comment`.
+
 ## 2026-11-01 (open-issue sweep)
 * **Fix (#162)**: under the `standard` and `jes3` dialects, the records between a JES3 `//*DATASET` and its `//*ENDDATASET` (or its `END=` terminator) are the input data set's content: kept in order on the `Jes3ControlStatement.data` list of that `//*DATASET`, never read as an implicit `//SYSIN DD *` and never parsed as JCL. An unterminated `//*DATASET` adds a `job.warnings` entry. `jes2` still reads `//*` as a comment. See [core/parsing-pipeline](core/parsing-pipeline.md). Tests: `tests/unit/test_jes3_dataset.py`.
 
