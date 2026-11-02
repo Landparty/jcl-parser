@@ -7,6 +7,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.2.1](https://github.com/Landparty/jcl-parser/compare/v2.2.0...v2.2.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* a //*DATASET comment without DDNAME= is a comment ([#164](https://github.com/Landparty/jcl-parser/issues/164)) ([f9b42e6](https://github.com/Landparty/jcl-parser/commit/f9b42e6a1e84f1b1cdb03907677c1d339fa9b527))
+* a //*DATASET comment without DDNAME= is a comment ([#164](https://github.com/Landparty/jcl-parser/issues/164)) ([3036331](https://github.com/Landparty/jcl-parser/commit/3036331ce492e40c49835bbd58c064f0cfa4e1e0))
+* **explosion:** expand INCLUDEs inside a cataloged PROC ([1e2dce4](https://github.com/Landparty/jcl-parser/commit/1e2dce4560685fd9b411f128cfbcc0fad2ab8c0d)), closes [#153](https://github.com/Landparty/jcl-parser/issues/153)
+* INCLUDE MEMBER=&symbol in a cataloged PROC; BPXBATCH STDPARM ([088ce06](https://github.com/Landparty/jcl-parser/commit/088ce0622e36b828ff0abe79a025c3dbd56f0a76)), closes [#160](https://github.com/Landparty/jcl-parser/issues/160) [#159](https://github.com/Landparty/jcl-parser/issues/159)
+* JES3 //*DATASET records are the data set's content, not SYSIN or JCL ([f3f821d](https://github.com/Landparty/jcl-parser/commit/f3f821da8ec3625a41b868f4d50e7d045d7b57eb))
+* **lineage:** a PROC member without a PROC statement explodes its callers ([a8f4dae](https://github.com/Landparty/jcl-parser/commit/a8f4dae182924992461797cbbf52c85a6134fb3f)), closes [#147](https://github.com/Landparty/jcl-parser/issues/147)
+* **lint:** lint PROC members and in-stream PROC bodies ([b167395](https://github.com/Landparty/jcl-parser/commit/b16739561ac0cdfa4c0d25e9d0d94f1aac7498ae)), closes [#149](https://github.com/Landparty/jcl-parser/issues/149)
+* **lint:** suppression codes may have blanks after commas; in-stream data is not a directive ([c45fbbb](https://github.com/Landparty/jcl-parser/commit/c45fbbb75b6f6eb2ad68a52e67b4589384b261e2)), closes [#150](https://github.com/Landparty/jcl-parser/issues/150)
+* **profiles:** DSNUTILB splits SYSIN into whole utility statements ([1c26d94](https://github.com/Landparty/jcl-parser/commit/1c26d94314f5715dda9bed4de61b76bfe813a649)), closes [#156](https://github.com/Landparty/jcl-parser/issues/156)
+* **profiles:** ICETOOL knows DATASORT and SUBSET, notes DISCARD/WRITE/LIST outputs ([553d265](https://github.com/Landparty/jcl-parser/commit/553d26514bce03a616ecf7c4eed488fea35bf13e)), closes [#154](https://github.com/Landparty/jcl-parser/issues/154)
+* the six open issues (cataloged-PROC INCLUDE, PROC lint, bare PROC members, suppressions, ICETOOL, DSNUTILB) ([b7cdecd](https://github.com/Landparty/jcl-parser/commit/b7cdecdd3d00903e53afbb56208bec0894b3187c))
+
 ## [2.2.0](https://github.com/Landparty/jcl-parser/compare/v2.1.0...v2.2.0) (2026-10-30)
 
 
