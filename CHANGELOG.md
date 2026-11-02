@@ -7,6 +7,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.2.2](https://github.com/Landparty/jcl-parser/compare/v2.2.1...v2.2.2) (2026-11-02)
+
+
+### Bug Fixes
+
+* **lifecycle:** name the owning DD for a concatenation member ([#166](https://github.com/Landparty/jcl-parser/issues/166)) ([#167](https://github.com/Landparty/jcl-parser/issues/167)) ([93ca7b3](https://github.com/Landparty/jcl-parser/commit/93ca7b32711104050b42029d411d8206dcf3e330))
+
 ## [2.2.1](https://github.com/Landparty/jcl-parser/compare/v2.2.0...v2.2.1) (2026-11-02)
 
 
