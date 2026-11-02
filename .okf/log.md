@@ -1,6 +1,7 @@
 # Update Log
 
 ## 2026-11-02
+* **Fix (#166)**: dataset-lifecycle events and warnings for a dataset in an unnamed concatenation member named the DD as `(DD )`. The event now takes the name of the DD the concatenation belongs to, with the new `DatasetEvent.concatenation_member` position, and messages read `(DD IN, concatenation member 2)`. See [advanced/validation](advanced/validation.md#dataset-lifecycle-validation). Tests: `tests/unit/test_issue_166_concat_member_dd_name.py`.
 * **Fix (#164)**: a comment starting `//*DATASET` (`//*DATASET DEFINITIONS FOR THE NIGHTLY RUN`, or a bare `//*DATASET`) was read as a JES3 `//*DATASET` and took the rest of the job as its data, leaving no steps. A `//*DATASET` opens data only when it codes `DDNAME=`, as every JES3 `//*DATASET` statement must. See [core/parsing-pipeline](core/parsing-pipeline.md). Tests: `tests/unit/test_jes3_dataset.py::test_dataset_comment_without_ddname_is_a_comment`.
 
 ## 2026-11-01 (open-issue sweep)
