@@ -1082,6 +1082,29 @@ def iter_execution_steps(steps: list[Step | ConditionalBlock]) -> Iterator[Step]
             yield from iter_execution_steps(s.else_steps)
 
 
+def dd_label(dds: list[DDStatement], dd: DDStatement) -> str:
+    """*dd* as messages name it: ``IN``, or ``IN, concatenation member 2``
+    for an unnamed concatenation member coded after ``//IN DD`` in *dds*
+    (the named DD is member 1). The same label ``DatasetEvent.dd_label``
+    gives. An unnamed DD with no named DD before it is ``(unnamed)``.
+    """
+    if dd.name:
+        return dd.name
+    owner, member = "", 0
+    for other in dds:
+        if other.name:
+            owner, member = other.name, 0
+        elif owner:
+            member = member + 1 if member else 2
+        if other is dd:
+            break
+    else:
+        return "(unnamed)"
+    if not owner:
+        return "(unnamed)"
+    return f"{owner}, concatenation member {member}"
+
+
 def _dataset_dds(step: Step) -> list[DDStatement]:
     """The DDs of *step* that can name a dataset, in source order.
 

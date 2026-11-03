@@ -15,6 +15,7 @@ from .model import (
     Job,
     Step,
     _dataset_dds,
+    dd_label,
     iter_execution_steps,
 )
 from .parameter_validators import DatasetNameValidator, DISPValidator
@@ -408,7 +409,7 @@ def validate_step_structure(step: Step) -> list[ValidationError]:
 
     # Validate each DD statement
     for dd in step.dd_statements:
-        errors.extend(validate_dd_statement(dd))
+        errors.extend(validate_dd_statement(dd, label=dd_label(step.dd_statements, dd)))
 
     return errors
 
@@ -430,17 +431,25 @@ _TEMP_ALLOCATION_KEYS = (
 )
 
 
-def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
+def validate_dd_statement(
+    dd: DDStatement, label: str | None = None
+) -> list[ValidationError]:
     """
     Validate DD statement structure and parameters.
 
     Args:
         dd: DDStatement object to validate
+        label: How messages name the DD (default ``dd.name``); the step
+            check passes ``model.dd_label`` so an unnamed concatenation
+            member reads ``IN, concatenation member 2``.
 
     Returns:
         List of validation errors
     """
     errors = []
+    # How messages name the DD: *label* when the caller knows the DD's place
+    # in its step (``IN, concatenation member 2``, see ``model.dd_label``).
+    name = label if label is not None else dd.name
 
     # DD name validation — empty names are valid for DD concatenation statements
     if dd.name and not validate_jcl_identifier(dd.name):
@@ -470,7 +479,7 @@ def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
     if dd.disposition and not validate_disposition(dd.disposition):
         errors.append(
             ValidationError(
-                f"Invalid DISP parameter '{dd.disposition}' on DD {dd.name}",
+                f"Invalid DISP parameter '{dd.disposition}' on DD {name}",
                 ErrorType.VALIDATION_ERROR,
                 line_number=dd.line_number,
             )
@@ -500,7 +509,7 @@ def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
     if conflict_count > 1:
         errors.append(
             ValidationError(
-                f"DD {dd.name} has conflicting data source specifications",
+                f"DD {name} has conflicting data source specifications",
                 ErrorType.VALIDATION_ERROR,
                 line_number=dd.line_number,
             )
@@ -508,7 +517,7 @@ def validate_dd_statement(dd: DDStatement) -> list[ValidationError]:
     elif source_count == 0:
         errors.append(
             ValidationError(
-                f"DD {dd.name} must specify a data source (DSN, SYSOUT, DUMMY, or inline data)",
+                f"DD {name} must specify a data source (DSN, SYSOUT, DUMMY, or inline data)",
                 ErrorType.VALIDATION_ERROR,
                 line_number=dd.line_number,
             )

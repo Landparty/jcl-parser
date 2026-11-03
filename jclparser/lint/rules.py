@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from ..errors import ErrorSeverity, ValidationError
-from ..model import ConditionalBlock, _dataset_dds, iter_execution_steps
+from ..model import ConditionalBlock, _dataset_dds, dd_label, iter_execution_steps
 from .base import LintRule
 
 if TYPE_CHECKING:
@@ -29,7 +29,8 @@ class HardcodedHLQRule(LintRule):
         defer = config.should_run(LiteralSetValueHlqRule.code)
         set_values = _qualifier_symbols(job)
         for step in iter_execution_steps(job.steps):
-            for dd in _dataset_dds(step):
+            dds = _dataset_dds(step)
+            for dd in dds:
                 dsn = dd.dataset_name
                 if not dsn or dsn.startswith("&&"):
                     continue
@@ -49,7 +50,7 @@ class HardcodedHLQRule(LintRule):
                 if defer and dsn.split(".", 1)[0].upper() in set_values:
                     continue
                 yield self._err(
-                    f"DD '{dd.name}' in step '{step.name}' uses literal HLQ "
+                    f"DD '{dd_label(dds, dd)}' in step '{step.name}' uses literal HLQ "
                     f"in dataset '{dsn}' — consider &HLQ",
                     line_number=dd.line_number,
                     config=config,
@@ -63,7 +64,8 @@ class LiteralSysdaUnitRule(LintRule):
 
     def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
         for step in iter_execution_steps(job.steps):
-            for dd in _dataset_dds(step):
+            dds = _dataset_dds(step)
+            for dd in dds:
                 unit = dd.parameters.get("UNIT")
                 if not unit:
                     continue
@@ -72,7 +74,7 @@ class LiteralSysdaUnitRule(LintRule):
                 unit_val = unit if isinstance(unit, str) else str(unit[0])
                 if unit_val.strip("()").split(",")[0].strip().upper() == "SYSDA":
                     yield self._err(
-                        f"DD '{dd.name}' in step '{step.name}' uses UNIT=SYSDA",
+                        f"DD '{dd_label(dds, dd)}' in step '{step.name}' uses UNIT=SYSDA",
                         line_number=dd.line_number,
                         config=config,
                     )
@@ -97,7 +99,8 @@ class CriticalDatasetDeleteRule(LintRule):
         if not patterns:
             return
         for step in iter_execution_steps(job.steps):
-            for dd in _dataset_dds(step):
+            dds = _dataset_dds(step)
+            for dd in dds:
                 if not dd.dataset_name:
                     continue
                 upper = dd.dataset_name.upper()
@@ -156,7 +159,8 @@ class NewDatasetWithoutRlseRule(LintRule):
 
     def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
         for step in iter_execution_steps(job.steps):
-            for dd in _dataset_dds(step):
+            dds = _dataset_dds(step)
+            for dd in dds:
                 dsn = dd.dataset_name
                 # A temporary dataset is deleted at the end of the job anyway.
                 if not dsn or dsn.startswith("&&"):
@@ -169,7 +173,7 @@ class NewDatasetWithoutRlseRule(LintRule):
                 if space is None or space.rlse:
                     continue
                 yield self._err(
-                    f"DD '{dd.name}' in step '{step.name}' allocates new dataset "
+                    f"DD '{dd_label(dds, dd)}' in step '{step.name}' allocates new dataset "
                     f"'{dsn}' with SPACE but no RLSE",
                     line_number=dd.line_number,
                     config=config,
@@ -259,7 +263,8 @@ class LiteralSetValueHlqRule(LintRule):
         if not symbols:
             return
         for step in iter_execution_steps(job.steps):
-            for dd in _dataset_dds(step):
+            dds = _dataset_dds(step)
+            for dd in dds:
                 dsn = dd.dataset_name
                 # coded_dataset_name is set only when the name used symbols.
                 if not dsn or dd.coded_dataset_name is not None or "&" in dsn:
@@ -270,7 +275,7 @@ class LiteralSetValueHlqRule(LintRule):
                 if symbol is None:
                     continue
                 yield self._err(
-                    f"DD '{dd.name}' in step '{step.name}' codes HLQ "
+                    f"DD '{dd_label(dds, dd)}' in step '{step.name}' codes HLQ "
                     f"'{dsn.split('.', 1)[0]}' in '{dsn}' literally; "
                     f"SET symbol &{symbol} has that value",
                     line_number=dd.line_number,
