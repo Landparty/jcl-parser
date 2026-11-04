@@ -321,7 +321,10 @@ def validate_backward_references(job: Job) -> list[ValidationError]:
 
 
 def validate_procedure_references(job: Job) -> list[ValidationError]:
-    """Warn on ``EXEC procname`` calls whose PROC was not found.
+    """Check ``EXEC procname`` calls against the PROCs they call.
+
+    A symbolic the call assigns that the PROC never declares or references
+    is an ERROR (``IEFC657I``, issue #172).
 
     :func:`jclparser.parse_jcl` adds every PROC it can load (in-stream,
     JCLLIB / system PROCLIB under the base path, built-in) to
@@ -330,9 +333,24 @@ def validate_procedure_references(job: Job) -> list[ValidationError]:
     a WARNING, not an ERROR (issue #116).  A strict parse of a job with a
     ``JCLLIB ORDER`` still fails on it before this runs.
     """
+    from .explosion import unused_proc_symbols
+
     errors: list[ValidationError] = []
     for step in iter_execution_steps(job.steps):
-        if step.procedure and not job.get_procedure(step.procedure):
+        procedure = job.get_procedure(step.procedure) if step.procedure else None
+        if procedure is not None:
+            # A symbolic the PROC never declares or references (IEFC657I).
+            for name in unused_proc_symbols(step, procedure):
+                errors.append(
+                    ValidationError(
+                        f"Step '{step.name or ''}': symbol {name} is not used by "
+                        f"procedure '{step.procedure}' (IEFC657I); the "
+                        "procedure's defaults apply",
+                        ErrorType.SEMANTIC_ERROR,
+                        line_number=step.line_number,
+                    )
+                )
+        if step.procedure and procedure is None:
             errors.append(
                 ValidationError(
                     f"Procedure '{step.procedure}' not found in-stream or in "
