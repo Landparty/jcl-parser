@@ -1219,6 +1219,71 @@ def is_exec_override_keyword(key: str) -> bool:
     return key.upper().partition(".")[0] in _EXEC_OVERRIDE_KEYWORDS
 
 
+_SYMBOL_REFERENCE = re.compile(r"&&|&([A-Z@#$][A-Z0-9@#$]{0,7})", re.IGNORECASE)
+_INCLUDE_STATEMENT = re.compile(r"^//\S*\s+INCLUDE\s", re.IGNORECASE | re.MULTILINE)
+
+
+def _referenced_symbols(value: Any, found: set[str], seen: set[int]) -> None:
+    """Add every ``&NAME`` written anywhere in *value* to *found*.
+
+    Walks strings, dicts, lists and the model dataclasses (steps, DDs,
+    conditional blocks) a procedure body is made of. ``&&`` is an escaped
+    ampersand, not a reference.
+    """
+    if isinstance(value, str):
+        for match in _SYMBOL_REFERENCE.finditer(value):
+            if match.group(1):
+                found.add(match.group(1).upper())
+        return
+    if id(value) in seen:
+        return
+    seen.add(id(value))
+    if isinstance(value, dict):
+        for item in value.values():
+            _referenced_symbols(item, found, seen)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _referenced_symbols(item, found, seen)
+    elif isinstance(value, (Step, DDStatement, ConditionalBlock)):
+        for name, item in vars(value).items():
+            if name not in ("comments", "inline_data", "original_proc_call"):
+                _referenced_symbols(item, found, seen)
+
+
+def unused_proc_symbols(call: Step, procedure: Procedure) -> list[str]:
+    """The symbolics PROC call *call* assigns that *procedure* never uses.
+
+    A symbolic coded on ``EXEC procname`` that is neither declared on the
+    PROC statement nor referenced as ``&NAME`` in the procedure body is a
+    JCL error on z/OS (``IEFC657I THE SYMBOL x WAS NOT USED``), and the
+    expansion silently runs with the PROC's defaults (issue #172). EXEC
+    keyword overrides (``PARM``, ``COND.PS1``, ...) are not symbolics.
+
+    Returns an empty list when the body cannot be fully checked: a procedure
+    with no steps (unloaded), or one whose text has an ``INCLUDE`` (its
+    members' references are not known before explosion).
+    """
+    if not procedure.steps:
+        return []
+    if procedure.source_text and _INCLUDE_STATEMENT.search(procedure.source_text):
+        return []
+    known = {name.upper() for name in procedure.parameters}
+    _referenced_symbols(
+        [procedure.steps, procedure.set_statements, procedure.parameters],
+        known,
+        set(),
+    )
+    if procedure.source_text:
+        _referenced_symbols(procedure.source_text, known, set())
+    return [
+        key
+        for key in call.parameters
+        if not is_exec_override_keyword(key)
+        and key.upper() != "PROC"
+        and key.upper() not in known
+    ]
+
+
 def _substitute_proc_call_parameters(
     parameters: dict[str, Any],
     scope: SymbolScope,
@@ -2121,6 +2186,12 @@ def _explode_step(
     )
 
     _apply_call_overrides(expanded, step, procedure.name or proc_name, warnings)
+    unused = unused_proc_symbols(step, procedure)
+    if unused and warnings is not None:
+        warnings.append(
+            f"EXEC {step.name or 'PROC'}: symbol(s) {', '.join(unused)} not used "
+            f"by PROC {procedure.name or proc_name} (IEFC657I); its defaults apply"
+        )
     _record_expansion(
         step, procedure, overrides, expanded, depth, audit_records, expansion_map
     )

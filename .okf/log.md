@@ -1,5 +1,9 @@
 # Update Log
 
+## 2026-11-04 (open-issue sweep)
+* **Fix (#172)**: a PROC call that assigns a symbolic the PROC neither declares nor references (`EXEC MYP,MEMBER=PAYROLL` when MYP declares `PROG=`) passed silently, and the expansion ran with the PROC's defaults; on z/OS the converter rejects it with `IEFC657I`. New `explosion.unused_proc_symbols(call, procedure)` collects every `&NAME` in the PROC body (step and DD parameters, IF conditions, SETs, defaults, and an external PROC's `source_text`; `&&` is not a reference); EXEC keyword overrides and `PROC=` are excluded, and a PROC whose text has an `INCLUDE` is not checked. `validate_procedure_references` reports each such symbol as an ERROR, and `explode_job` adds one `exploded_job.warnings` entry per call. See [advanced/proc-expansion](advanced/proc-expansion.md). Tests: `tests/unit/test_issue_172_173.py::TestUnusedProcSymbols`.
+* **Fix (#173)**: the `DFSRRC00` profile read PARM[1] as the application program and PARM[2] as the PSB for every IMS region type, so a message region (`PARM=(MSG,&CL1&CL2&CL3&CL4,...)`) reported its transaction classes as a program. Only BMP, DLI and DBB regions are read that way now; any other region type reports only the type and, for MSG, its classes (`IMS MSG region (DFSRRC00), classes 001 002 003 004`). See [api/public-api](api/public-api.md#tier-2--advanced). Tests: `tests/unit/test_issue_172_173.py::TestImsMessageRegion`.
+
 ## 2026-11-03 (open-issue sweep)
 * **Fix (#169)**: lint rules (JCL-LINT-001, 002, 006, 010) and validators (invalid DISP, conflicting or missing data source) printed an unnamed concatenation member as `DD ''` / `DD  has ...`. They now use the new `model.dd_label()`, the label the dataset-lifecycle checker uses: `DD 'IN, concatenation member 2'`. `validate_dd_statement` gains an optional `label`. See [advanced/validation](advanced/validation.md#dataset-lifecycle-validation). Tests: `tests/unit/test_issue_169_concatenation_member_labels.py`.
 
