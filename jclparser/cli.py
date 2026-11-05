@@ -119,9 +119,15 @@ def _main(argv: list[str] | None = None) -> int:
     # ("FILE --explode steps"); plain parse_args() hands the whole positional
     # run to FILE/query before the flag and then rejects "steps".
     arg_parser = _build_arg_parser()
+    if not _argv:
+        # A bare `jcl-parser` used to print only "the following arguments
+        # are required: FILE"; show the queries and examples instead.
+        arg_parser.print_help()
+        return 2
     args = arg_parser.parse_intermixed_args(argv)
     if args.profile_output and not args.profile:
         arg_parser.error("--profile-output requires --profile")  # exits 2
+    _apply_format(args)
 
     source: Path | str
     if args.file == "-":
@@ -160,6 +166,14 @@ def _main(argv: list[str] | None = None) -> int:
     return _run_query_with_profile(job, args, prof, source)
 
 
+def _apply_format(args: argparse.Namespace) -> None:
+    """``--format json|sarif`` sets the older ``--json`` / ``--sarif`` flags."""
+    if args.format == "json":
+        args.json_output = True
+    elif args.format == "sarif":
+        args.sarif = True
+
+
 def _read_stdin() -> str:
     """The JCL piped on stdin, decoded like a file (``FILE`` is ``-``)."""
     return read_source(getattr(sys.stdin, "buffer", sys.stdin))
@@ -196,10 +210,70 @@ def _is_step_or_dd_name(job: Job, token: str) -> bool:
     )
 
 
+#: The query words ``jcl-parser FILE <word>`` understands, for typo hints.
+_QUERY_WORDS = (
+    "steps",
+    "procs",
+    "detect",
+    "metrics",
+    "lint",
+    "datasets",
+    "sql",
+    "analyze",
+    "paths",
+    "lineage",
+)
+
+_HELP_EPILOG = """\
+queries (the words after FILE):
+  (none)              job summary; with --json the whole parse as JSON
+  steps               every step, the program or PROC it runs, its DDs
+  procs [PROCNAME]    inline/external PROCs; --explode shows the expansion
+  STEP                one step in detail        e.g. STEP010
+  STEP.DDNAME         one DD statement          e.g. STEP010.SYSIN
+  DDNAME              that DD in every step     e.g. SYSOUT
+  detect              is the file a JOB, a PROC, or neither
+  metrics             step, DD, PROC and dataset counts, complexity
+  lint                lint rules (--lint-list lists them; --sarif for CI)
+  datasets            dataset lifecycle: created, read, deleted, passed
+  sql                 DB2 / SQL usage by step
+  analyze [STEP]      what each utility step (SORT, IDCAMS, ...) does
+  paths               which steps can run, from the COND / IF logic
+
+  FILE may be a directory: 'lineage [dot|mermaid]' (the default) maps
+  datasets across its jobs, 'lint' and --validate check every file
+  (--glob picks them). FILE '-' reads the JCL from stdin.
+
+examples:
+  jcl-parser PAYROLL.jcl
+  jcl-parser PAYROLL.jcl steps --explode --proc-path ./proclib
+  jcl-parser PAYROLL.jcl STEP010.SYSIN
+  jcl-parser PAYROLL.jcl lint --fail-on warning
+  jcl-parser PAYROLL.jcl --validate --format json
+  jcl-parser jobs/ lineage mermaid > lineage.mmd
+  jcl-lint jobs/*.jcl --format sarif -o jcl.sarif   (several files, for CI)
+
+exit codes:
+  0  success
+  1  the file could not be read or parsed, a name was not found, or a check
+     reported something (--validate errors, lint findings at --fail-on or
+     above, dataset / SQL findings)
+  2  the command line was rejected
+
+defaults:
+  lint reads [tool.jcl-parser.lint] from the nearest pyproject.toml (or
+  --config). External PROCs are loaded only with --proc-path, except by
+  --validate, which falls back to the JCL_PROCLIB_PATH variable.
+"""
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jcl-parser",
-        description="Parse and inspect IBM JCL files.",
+        usage="jcl-parser FILE [QUERY ...] [options]",
+        description="Parse and inspect IBM z/OS JCL: jobs, steps, DDs and PROCs.",
+        epilog=_HELP_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "file",
@@ -210,14 +284,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "query",
         nargs="*",
         default=[],
-        help=(
-            "Query: 'steps', 'procs [PROCNAME]', a step name, STEP.DDNAME, "
-            "or a DD name to find across all steps; for a directory, "
-            "'lineage [dot|mermaid]'"
-        ),
+        metavar="QUERY",
+        help="What to show (see 'queries' below); none prints the job summary",
     )
     parser.add_argument(
         "--json", action="store_true", dest="json_output", help="Output as JSON"
+    )
+    parser.add_argument(
+        "--format",
+        choices=("text", "json", "sarif"),
+        default=None,
+        help=(
+            "Output format: text (default), json (same as --json) or sarif "
+            "(same as --sarif; lint and --validate only). The spelling "
+            "cobol-parser and jcl-lint use"
+        ),
     )
     parser.add_argument(
         "--validate", action="store_true", help="Validate the JCL and report errors"
@@ -469,7 +550,44 @@ def _cmd_step_or_dd(job: Job, query: str, json_out: bool) -> int:
         return 0
 
     # Fall back to DD name across all steps
-    return _print_dd_across_steps(job, query.upper(), json_out)
+    status = _print_dd_across_steps(job, query.upper(), json_out)
+    if status != 0:
+        hint = _not_found_hint(job, query)
+        if hint:
+            print(hint, file=sys.stderr)
+    return status
+
+
+def _not_found_hint(job: Job, query: str) -> str | None:
+    """A "did you mean" line for a query that named no step or DD.
+
+    A mistyped query word (``stpes``) used to read only as "No step or DD
+    named 'STPES' found", which sends a new user looking for a step.
+    """
+    import difflib
+
+    words = difflib.get_close_matches(query.lower(), _QUERY_WORDS, n=1, cutoff=0.6)
+    names = sorted(
+        {s.name for s in iter_execution_steps(job.steps) if s.name}
+        | {
+            dd.name
+            for s in iter_execution_steps(job.steps)
+            for dd in s.dd_statements
+            if dd.name
+        }
+    )
+    close = difflib.get_close_matches(query.upper(), names, n=3, cutoff=0.6)
+    # JCL names are uppercase: an uppercase query is a misspelt name first,
+    # a lowercase one a misspelt query word first.
+    name_hint = "Did you mean: " + ", ".join(close) + "?" if close else None
+    word_hint = (
+        f"Did you mean the query '{words[0]}'? (see 'jcl-parser --help')"
+        if words
+        else None
+    )
+    if query == query.upper():
+        return name_hint or word_hint
+    return word_hint or name_hint
 
 
 def _cmd_directory(path: Path, args: argparse.Namespace) -> int:
