@@ -1250,14 +1250,46 @@ def _referenced_symbols(value: Any, found: set[str], seen: set[int]) -> None:
                 _referenced_symbols(item, found, seen)
 
 
-def unused_proc_symbols(call: Step, procedure: Procedure) -> list[str]:
+def call_override_symbols(call: Step) -> set[str]:
+    """Every ``&NAME`` in the overrides coded with PROC call *call*.
+
+    The overriding and added DDs after the call (and their concatenations)
+    and the values of its keyword overrides (``PARM.PS1='&X'``) are merged
+    into the procedure, so the call's symbolics are substituted there too
+    (issue #176).
+    """
+    found: set[str] = set()
+    _referenced_symbols(
+        [
+            call.dd_statements,
+            list(call.dd_overrides.values()),
+            list(call.dd_override_concatenations.values()),
+            [
+                value
+                for key, value in call.parameters.items()
+                if is_exec_override_keyword(key)
+            ],
+        ],
+        found,
+        set(),
+    )
+    return found
+
+
+def unused_proc_symbols(
+    call: Step, procedure: Procedure, call_references: set[str] | None = None
+) -> list[str]:
     """The symbolics PROC call *call* assigns that *procedure* never uses.
 
     A symbolic coded on ``EXEC procname`` that is neither declared on the
     PROC statement nor referenced as ``&NAME`` in the procedure body is a
     JCL error on z/OS (``IEFC657I THE SYMBOL x WAS NOT USED``), and the
     expansion silently runs with the PROC's defaults (issue #172). EXEC
-    keyword overrides (``PARM``, ``COND.PS1``, ...) are not symbolics.
+    keyword overrides (``PARM``, ``COND.PS1``, ...) are not symbolics. A
+    reference in the call's overriding or added DDs, or in a keyword
+    override's value, counts as a use (issue #176); *call_references* gives
+    those references when the call's overrides were already substituted
+    (default: :func:`call_override_symbols` of *call*).
 
     Returns an empty list when the body cannot be fully checked: a procedure
     with no steps (unloaded), or one whose text has an ``INCLUDE`` (its
@@ -1275,6 +1307,7 @@ def unused_proc_symbols(call: Step, procedure: Procedure) -> list[str]:
     )
     if procedure.source_text:
         _referenced_symbols(procedure.source_text, known, set())
+    known |= call_override_symbols(call) if call_references is None else call_references
     return [
         key
         for key in call.parameters
@@ -2164,6 +2197,8 @@ def _explode_step(
     # against the job's library order. Pass an immutable tuple: loaders key their
     # caches on the library list, so a hashable value keeps that contract safe.
     _libs = tuple(jcllib_order) if jcllib_order else None
+    # Read before loading resolves the call's overrides (issue #176).
+    call_references = call_override_symbols(step)
     procedure = _load_called_procedure(
         step, proc_loader, _libs, base_scope, call_scope, strict_symbols, warnings
     )
@@ -2186,7 +2221,7 @@ def _explode_step(
     )
 
     _apply_call_overrides(expanded, step, procedure.name or proc_name, warnings)
-    unused = unused_proc_symbols(step, procedure)
+    unused = unused_proc_symbols(step, procedure, call_references)
     if unused and warnings is not None:
         warnings.append(
             f"EXEC {step.name or 'PROC'}: symbol(s) {', '.join(unused)} not used "
