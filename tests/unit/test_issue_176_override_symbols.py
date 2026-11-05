@@ -23,8 +23,10 @@ def _messages(src: str) -> list[str]:
     [
         "//S1   EXEC MYP,HLQ=B,ENV=T\n//PS1.DD2 DD DSN=&ENV..Y,DISP=SHR\n",
         "//S1   EXEC MYP,HLQ=B,ENV=T\n//PS1.DD1 DD DSN=&ENV..Y,DISP=SHR\n",
-        "//S1   EXEC MYP,HLQ=B,ENV=T\n//PS1.DD1 DD DSN=A.B,DISP=SHR\n"
-        "//     DD DSN=&ENV..Z,DISP=SHR\n",
+        (
+            "//S1   EXEC MYP,HLQ=B,ENV=T\n//PS1.DD1 DD DSN=A.B,DISP=SHR\n"
+            "//     DD DSN=&ENV..Z,DISP=SHR\n"
+        ),
         "//S1   EXEC MYP,HLQ=B,ENV=T,PARM.PS1='&ENV'\n",
     ],
 )
@@ -44,6 +46,8 @@ def test_override_dd_symbol_is_substituted() -> None:
 def test_symbol_unused_anywhere_is_still_reported() -> None:
     src = _PROC + "//S2   EXEC MYP,HLQ=B,LIB=Z\n//PS1.DD2 DD DSN=&HLQ..Y,DISP=SHR\n"
     assert _messages(src) == [
-        "Step 'S2': symbol LIB is not used by procedure 'MYP' (IEFC657I); "
-        "the procedure's defaults apply"
+        (
+            "Step 'S2': symbol LIB is not used by procedure 'MYP' (IEFC657I); "
+            "the procedure's defaults apply"
+        )
     ]
