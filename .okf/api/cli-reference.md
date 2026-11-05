@@ -75,6 +75,7 @@ A comment record `//* jcl-lint: disable=CODE[,CODE...]` suppresses those codes o
 | Flag | Description |
 |------|-------------|
 | `--json` | Output as JSON instead of text |
+| `--format text\|json\|sarif` | The `cobol-parser` / `jcl-lint` spelling: `json` sets `--json`, `sarif` sets `--sarif` (`_apply_format`); `text` changes nothing. The old flags keep working |
 | `--validate` | `validate_jcl(path, level="structure", proc_base_path=<--proc-path>)`; exits 1 if it reports anything (warnings included, and `job.validate()` ERRORs such as a duplicate step name, #57), else prints `OK - no errors found.` Without `--proc-path`, `JCL_PROCLIB_PATH` applies (#129) |
 | `--explode` | Expand procedure calls (`job.explode()`) before displaying |
 | `--proc-path PATH` | Base path for external PROC libraries and INCLUDE members (enables `enable_external_procs`); used by the parse and by `--validate`. Without it the parse runs with `enable_external_procs=False`, so no external PROC is loaded and `JCL_PROCLIB_PATH` is not read (unlike `--validate`). The parse already loads every PROC the job calls from it (`procs` lists them `[external]`); when none is listed, `procs` notes which called PROCs were not found there, or that the job calls none |
@@ -90,7 +91,15 @@ A comment record `//* jcl-lint: disable=CODE[,CODE...]` suppresses those codes o
 | `--profile-output PATH` | Write raw cProfile binary to PATH (`.prof` file); requires `--profile` (usage error, exit 2, without it) |
 | `--version` | Print `jcl-parser <__version__>` and exit |
 
-`jcl-parser` has **no** `--format` flag (`jcl-lint` has one) and **no** `--strict` flag.
+`jcl-parser` has **no** `--strict` flag.
+
+**Help and first-run behaviour.** `--help` prints the query words, examples,
+exit codes and where defaults come from (`_HELP_EPILOG`); a bare `jcl-parser`
+prints the same and exits 2. A query that names no step or DD keeps its
+`No step or DD named 'X' found.` line (exit 1) and adds a hint from
+`_not_found_hint`: a close query word (`stpes` → `Did you mean the query
+'steps'?`) or close step/DD names (`STP1` → `Did you mean: STEP1?`); an
+uppercase query tries names first, a lowercase one query words first.
 
 # Citations
 
