@@ -84,15 +84,19 @@ class TestContinuedSetIncludeMember:
         )
         assert [s.name for s in job.steps] == ["S9"]
         assert job.warnings == [
-            "Line 5: INCLUDE member &Q uses a symbol with no SET value before "
-            "it; its statements are missing from the job"
+            (
+                "Line 5: INCLUDE member &Q uses a symbol with no SET value before "
+                "it; its statements are missing from the job"
+            )
         ]
 
     def test_missing_resolved_member_is_named(self) -> None:
         job = parse_jcl(CONTINUED.replace("M=MEMB", "M=NOPE"), include_loader=LOADER)
         assert job.warnings == [
-            "Line 5: INCLUDE member NOPE (from &M) not found in the JCLLIB / "
-            "procedure libraries; its statements are missing from the job"
+            (
+                "Line 5: INCLUDE member NOPE (from &M) not found in the JCLLIB / "
+                "procedure libraries; its statements are missing from the job"
+            )
         ]
 
     def test_continued_set_feeds_jcllib_order(self) -> None:
