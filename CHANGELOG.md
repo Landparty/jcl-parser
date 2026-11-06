@@ -7,6 +7,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.3.0](https://github.com/Landparty/jcl-parser/compare/v2.2.3...v2.3.0) (2026-11-05)
+
+
+### Features
+
+* **cli:** friendlier jcl-parser help, --format alias and did-you-mean hints ([283925b](https://github.com/Landparty/jcl-parser/commit/283925be64c9759d15b03b2427bd6ea4cddd9bd2))
+* **cli:** friendlier jcl-parser help, --format alias and did-you-mean hints ([55d39da](https://github.com/Landparty/jcl-parser/commit/55d39daf62e2743a05380172ef717ebd0e89e2d1))
+
+
+### Bug Fixes
+
+* report PROC symbolics the PROC never uses (IEFC657I); IMS MSG regions name no program ([84de84b](https://github.com/Landparty/jcl-parser/commit/84de84b25826a479e36c8b947f9d0afc17b36ae8))
+* report PROC symbolics the PROC never uses (IEFC657I); IMS MSG regions name no program ([6454fb3](https://github.com/Landparty/jcl-parser/commit/6454fb311f9b74b6982e1a0e9c3ea75d0f750883))
+* symbolics used only in a PROC call's override DDs are not IEFC657I ([cad1a38](https://github.com/Landparty/jcl-parser/commit/cad1a386b5745dcd30b476c6c2d49944f01debfb))
+* symbolics used only in a PROC call's override DDs are not IEFC657I ([096a084](https://github.com/Landparty/jcl-parser/commit/096a0840fda592204bd2c2d8f1624e19f8c69b2b)), closes [#176](https://github.com/Landparty/jcl-parser/issues/176)
+
 ## [2.2.3](https://github.com/Landparty/jcl-parser/compare/v2.2.2...v2.2.3) (2026-11-03)
 
 
