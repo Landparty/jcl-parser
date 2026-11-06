@@ -1898,8 +1898,9 @@ class _IncludeExpandingLoader(ProcedureLoader):
         from .utils import split_source_lines
 
         seen = dict(symbols) if symbols is not None else {}
-        for line in split_source_lines(expanded_text):
-            _record_set_symbols(line.rstrip(), seen)
+        lines = split_source_lines(expanded_text)
+        for index, line in enumerate(lines):
+            _record_set_symbols(line.rstrip(), seen, lines, index + 1)
             missing = _extract_include_member(line.rstrip())
             if not missing:
                 continue
