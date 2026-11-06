@@ -7,6 +7,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.3.1](https://github.com/Landparty/jcl-parser/compare/v2.3.0...v2.3.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* deleting job runs after every reader; continued SET feeds INCLUDE member ([2c649cc](https://github.com/Landparty/jcl-parser/commit/2c649ccb8eba9983ea1f12858d358285dcc5c106))
+* deleting job runs after every reader; continued SET feeds INCLUDE member ([a4be590](https://github.com/Landparty/jcl-parser/commit/a4be5903e1b0cda0424a5fb1fa38bbcb76272ffa)), closes [#179](https://github.com/Landparty/jcl-parser/issues/179) [#180](https://github.com/Landparty/jcl-parser/issues/180)
+
 ## [2.3.0](https://github.com/Landparty/jcl-parser/compare/v2.2.3...v2.3.0) (2026-11-05)
 
 
