@@ -1,5 +1,9 @@
 # Update Log
 
+## 2026-11-06 (open-issue sweep)
+* **Fix (#179)**: lineage counted a deleting DD (normal `DELETE`, status not `NEW`) as a read only, so its job ran after the producer but could be ordered before another job still reading the dataset. `DatasetUse` gains `deletes` (also in `to_dict()`), and `lineage._add_delete_edges` adds an edge from every other job that reads or writes the dataset (or its library / a member) to the deleting job; two jobs that each delete what the other reads are a cycle. See [api/public-api](api/public-api.md). Tests: `tests/unit/test_issue_179_180.py`.
+* **Fix (#180)**: the INCLUDE pre-scan read each `// SET` one record at a time, so a symbol coded on a SET continuation record was never recorded and `INCLUDE MEMBER=&M` stayed unexpanded. `_record_set_symbols` now merges the continuation records (`_continue_operands`), also in the JCLLIB pre-scan and the PROC INCLUDE warning pass. The not-found warning names an undefined symbol as such, and a resolved member as `MEMB (from &M)`. See [advanced/proc-expansion](advanced/proc-expansion.md). Tests: `tests/unit/test_issue_179_180.py`.
+
 ## 2026-11-05 (open-issue sweep)
 * **Fix (#176)**: `unused_proc_symbols` looked for a symbolic only in the PROC body, so one used only in an overriding or added DD after the call (`//PS1.DD2 DD DSN=&ENV..Y`) was reported as IEFC657I by `validate_jcl` and `explode_job`, which then substituted it into that DD. It now also counts `&NAME` in the call's `dd_statements`, `dd_overrides`, `dd_override_concatenations` and keyword-override values (`PARM.PS1=`). See [advanced/proc-expansion](advanced/proc-expansion.md). Tests: `tests/unit/test_issue_176_override_symbols.py`.
 

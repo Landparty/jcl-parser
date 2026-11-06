@@ -22,7 +22,8 @@ share a load library or DBRMLIB do not depend on one another (issue #145).  The 
 A DD's role comes from its ``DISP`` status: ``NEW`` / ``MOD`` write the
 dataset, ``SHR`` / ``OLD`` read it (``OLD`` may also update it in place, which
 DISP alone can't tell).  A normal disposition of ``DELETE`` makes any status
-but ``NEW`` a read (a delete runs after the dataset's producer), and
+but ``NEW`` a read (a delete runs after the dataset's producer and after
+every other job that reads or writes it), and
 ``(NEW,DELETE)`` -- a scratch dataset -- neither.  Temporary datasets (``&&TEMP``), ``NULLFILE``,
 ``SYSOUT`` and DDs without a ``DISP`` are left out; a ``DSN=*.STEP.DD``
 backward reference counts as the dataset it points at.
@@ -93,6 +94,9 @@ class DatasetUse:
     dataset: str
     disp: str
     line_number: int = 0
+    #: The DD deletes the dataset (normal disposition ``DELETE``, any status
+    #: but ``NEW``); it is a read that must also follow every other use.
+    deletes: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -102,6 +106,7 @@ class DatasetUse:
             "dataset": self.dataset,
             "disp": self.disp,
             "line_number": self.line_number,
+            "deletes": self.deletes,
         }
 
 
@@ -131,7 +136,8 @@ class DatasetLineage:
 
 @dataclass(frozen=True)
 class JobDependency:
-    """*consumer* reads datasets that *producer* writes."""
+    """*consumer* reads datasets that *producer* writes, or deletes datasets
+    that *producer* also reads or writes (it must run after that job)."""
 
     producer: str
     consumer: str
@@ -257,6 +263,7 @@ def _record_uses(job_id: str, job: Job, datasets: dict[str, DatasetLineage]) -> 
                 dataset=dsn,
                 disp=evt.disp_status,
                 line_number=evt.line_number,
+                deletes=evt.disp_normal == "DELETE" and evt.disp_status != "NEW",
             )
             role = _role(evt.disp_status, evt.disp_normal)
             if role == "write":
@@ -313,10 +320,39 @@ def _dependencies(datasets: Mapping[str, DatasetLineage]) -> list[JobDependency]
                         labels = edges.setdefault((producer, consumer), [])
                         if label not in labels:
                             labels.append(label)
+    _add_delete_edges(datasets, edges)
     return [
         JobDependency(producer, consumer, tuple(sorted(keys)))
         for (producer, consumer), keys in sorted(edges.items())
     ]
+
+
+def _add_delete_edges(
+    datasets: Mapping[str, DatasetLineage], edges: dict[tuple[str, str], list[str]]
+) -> None:
+    """A job that deletes a dataset runs after every other job that uses it.
+
+    The producer edge is already there (a delete is a read); this adds one
+    from each other reader of the dataset -- or of its library or a member
+    of it -- so the deleter cannot be ordered before a job that still needs
+    the dataset (#179). Two jobs that each delete a dataset the other reads
+    depend on each other, a cycle.
+    """
+    for deleted, lineage in datasets.items():
+        deleters = _unique(u.job for u in lineage.readers if u.deletes)
+        if not deleters:
+            continue
+        for used, other in datasets.items():
+            if used != deleted and not _feeds(used, deleted):
+                continue
+            # Label the edge with the more specific name (the member).
+            label = deleted if deleted != library_of(deleted) else used
+            for user in _unique([*other.reader_jobs, *other.writer_jobs]):
+                for deleter in deleters:
+                    if user != deleter:
+                        labels = edges.setdefault((user, deleter), [])
+                        if label not in labels:
+                            labels.append(label)
 
 
 def _run_order(

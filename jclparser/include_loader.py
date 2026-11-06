@@ -26,6 +26,7 @@ import errno
 import logging
 import os
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -335,21 +336,22 @@ class _IncludeExpander:
         for index, line in enumerate(lines):
             expanded = None
             if index not in data_indices:
-                expanded = self._expand_statement(line, index + 1, depth, active)
+                expanded = self._expand_statement(lines, index, depth, active)
             if expanded is None:
                 expanded = [(line, LineOrigin(None, index + 1))]
             result.extend(expanded)
         return result
 
     def _expand_statement(
-        self, line: str, line_number: int, depth: int, active: frozenset[str]
+        self, lines: list[str], index: int, depth: int, active: frozenset[str]
     ) -> list[_Entry] | None:
-        """The expansion of *line* if it is a resolvable INCLUDE, else None."""
+        """The expansion of ``lines[index]`` if it is a resolvable INCLUDE."""
+        line_number = index + 1
         # Preserve leading whitespace: only strip the line terminator so that
         # in-stream data lines (which may contain '//' after leading spaces)
         # are never mistaken for JCL statements.
-        statement_line = line.rstrip("\r\n")
-        _record_set_symbols(statement_line, self.symbols)
+        statement_line = lines[index].rstrip("\r\n")
+        _record_set_symbols(statement_line, self.symbols, lines, index + 1)
         member = _extract_include_member(statement_line)
         if member is None:
             return None
@@ -413,12 +415,19 @@ def _member_origin(origin: LineOrigin, member: str, include_line: int) -> LineOr
     return LineOrigin(origin.member, include_line, origin.member_line)
 
 
-def _record_set_symbols(line: str, symbols: dict[str, str]) -> None:
+def _record_set_symbols(
+    line: str,
+    symbols: dict[str, str],
+    lines: Sequence[str] = (),
+    follow: int = 0,
+) -> None:
     """Record the assignments of a ``// SET`` statement *line* into *symbols*.
 
     Values are resolved against the symbols already recorded, mirroring the
     parser's left-to-right SET evaluation. Lines that are not a SET statement
-    are ignored.
+    are ignored. A SET whose operand field ends in a comma is continued on the
+    following ``//`` records: *lines* from index *follow* on (the record after
+    *line*) are read for its remaining assignments (#180).
     """
     if not line.startswith("//") or line.startswith("//*"):
         return
@@ -436,6 +445,7 @@ def _record_set_symbols(line: str, symbols: dict[str, str]) -> None:
     from .utils import is_positional_key, jcl_value_text
 
     statement, _ = split_comment_field(line)
+    statement = _continue_operands(statement, lines, follow)
     stmt = parse_statement(statement)
     if stmt is None or stmt.type != "SET":
         return
@@ -443,6 +453,28 @@ def _record_set_symbols(line: str, symbols: dict[str, str]) -> None:
         if value is True or is_positional_key(key):
             continue
         symbols[key.upper()] = _resolve_set_value(jcl_value_text(value), symbols)
+
+
+def _continue_operands(statement: str, lines: Sequence[str], follow: int) -> str:
+    """Append the operands of the continuation records of *statement*.
+
+    A statement whose operand field ends in a comma continues on the next
+    ``//`` record that has a blank in column 3; its operand field (up to the
+    first blank) is appended. ``//*`` comment records in between are skipped.
+    """
+    from ._statement_parser import split_comment_field
+
+    statement = statement.rstrip()
+    while statement.endswith(",") and follow < len(lines):
+        cont = lines[follow].rstrip("\r\n")
+        follow += 1
+        if cont.startswith("//*"):
+            continue
+        if not cont.startswith("// ") or not cont[2:].strip():
+            break
+        operands, _ = split_comment_field("//  " + cont[2:].lstrip())
+        statement += operands[2:].strip()
+    return statement
 
 
 def _substitute_member_symbols(member: str, symbols: dict[str, str]) -> str:

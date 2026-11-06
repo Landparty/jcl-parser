@@ -803,7 +803,7 @@ def _extract_jcllib_order(content: str) -> list[str]:
     symbols: dict[str, str] = {}
     lines = split_source_lines(content)
     for index, line in enumerate(lines):
-        _record_set_symbols(line.lstrip(), symbols)
+        _record_set_symbols(line.lstrip(), symbols, lines, index + 1)
         params_part = _jcllib_operands(line)
         if params_part is None:
             continue

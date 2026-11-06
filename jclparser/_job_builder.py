@@ -621,11 +621,31 @@ class JobBuilder:
             sink.append(member)
             # Found members are expanded before the parse loop runs, so an
             # INCLUDE that reaches here could not be loaded.
-            self._warnings_sink().append(
-                f"Line {stmt.line_number}: INCLUDE member {member} not found in "
-                "the JCLLIB / procedure libraries; its statements are missing "
-                "from the job"
+            self._warnings_sink().append(self._include_warning(stmt, str(member)))
+
+    def _include_warning(self, stmt: Statement, member: str) -> str:
+        """The warning for an INCLUDE whose member could not be loaded."""
+        line = f"Line {stmt.line_number}: INCLUDE member"
+        missing = " its statements are missing from the job"
+        if "&" in member:
+            from .include_loader import _substitute_member_symbols
+
+            symbols = (
+                {**self.pending_sets, **self.job.set_statements}
+                if self.job
+                else self.pending_sets
             )
+            resolved = _substitute_member_symbols(member, symbols)
+            if "&" in resolved:
+                # Not a missing member: its name could not be built (#180).
+                return (
+                    f"{line} {member} uses a symbol with no SET value before "
+                    f"it;{missing}"
+                )
+            member = f"{resolved} (from {member})"
+        return (
+            f"{line} {member} not found in the JCLLIB / procedure libraries;{missing}"
+        )
 
     def _on_conditional(self, stmt: Statement, line_num: int) -> None:
         # Conditional logic - track conditionals properly
