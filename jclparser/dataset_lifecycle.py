@@ -42,7 +42,7 @@ from dataclasses import dataclass
 
 from .errors import ErrorSeverity, ErrorType, ValidationError
 from .metrics import _counted_dataset_name
-from .model import ConditionalBlock, Job, Step, _dataset_dds
+from .model import ConditionalBlock, DDStatement, Job, Step, _dataset_dds
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -68,6 +68,9 @@ class DatasetEvent:
             named DD is member 1, so the first unnamed card is member 2).
             ``dd_name`` is then the name of the DD the concatenation
             belongs to.
+        explicit_volume: The DD names its volume (``VOL=SER=``, or
+            ``VOL=REF=*.step.dd``), so it does not look the dataset up in
+            the catalog (#186).
     """
 
     step_name: str
@@ -78,6 +81,7 @@ class DatasetEvent:
     disp_abnormal: str = ""
     line_number: int = 0
     concatenation_member: int = 0
+    explicit_volume: bool = False
 
     @property
     def dd_label(self) -> str:
@@ -94,6 +98,20 @@ class DatasetEvent:
 _CATLG_VALUES = frozenset({"CATLG", "CATALOG"})
 _DELETE_VALUES = frozenset({"DELETE"})
 _UNCATLG_VALUES = frozenset({"UNCATLG"})
+
+
+def _names_volume(dd: DDStatement) -> bool:
+    """True when *dd* gives the volume itself (``VOL=SER=``, or a ``VOL=REF``
+    back-reference to another DD) instead of going through the catalog."""
+    params = dd.parameters or {}
+    for key in ("VOL", "VOLUME"):
+        value = params.get(key)
+        if value is None:
+            continue
+        text = str(value).upper().replace(" ", "")
+        if "SER=" in text or "REF=*" in text:
+            return True
+    return False
 
 
 def _parse_disp_tokens(disposition: object) -> tuple[str, str, str]:
@@ -249,6 +267,7 @@ def _step_events(
             disp_abnormal=abnormal,
             line_number=dd.line_number,
             concatenation_member=0 if dd.name else member,
+            explicit_volume=_names_volume(dd),
         )
         events = lifecycle.setdefault(dsn_key, [])
         step_events.append((dsn_key, len(events), event))
@@ -506,7 +525,13 @@ class _LifecycleChecker:
     ) -> None:
         """Checks for an OLD / SHR open.  Not for MOD (EXTEND): it creates the
         dataset when it is not there, as in the IEFBR14
-        delete-then-DISP=(MOD,CATLG) idiom."""
+        delete-then-DISP=(MOD,CATLG) idiom.
+
+        A DD that names its volume reads the dataset from that volume, not
+        through the catalog: it is how an uncataloged dataset is reached, so
+        neither check applies to it (#186)."""
+        if evt.explicit_volume:
+            return
         cataloged_by, uncataloged_by = state
         if uncataloged_by is not None and cataloged_by is None:
             self._report(
@@ -588,9 +613,11 @@ def validate_dataset_lifecycle(job: Job) -> list[ValidationError]:
       same dataset is not a duplicate.
     * **Use after uncatalog** — a step opens (``OLD`` / ``SHR``) a dataset
       that was explicitly uncataloged by an earlier step.  ``MOD`` is exempt:
-      it creates the dataset when it does not exist.
-    * **Forward reference** — a step opens a permanent dataset exclusively
-      (``OLD``) whose *first* lifecycle event is an allocation in a *later*
+      it creates the dataset when it does not exist. A DD naming its volume
+      (``VOL=SER=``, ``VOL=REF=*.step.dd``) bypasses the catalog and is
+      exempt from this check and the next.
+    * **Forward reference** — a step opens a permanent dataset (``OLD`` or
+      ``SHR``) whose *first* lifecycle event is an allocation in a *later*
       step (heuristic; reported as WARNING because the dataset may be
       pre-existing).
 

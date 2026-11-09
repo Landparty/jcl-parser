@@ -51,6 +51,16 @@ def _build_procedure_from_content(content: str, proc_name: str) -> Procedure | N
             proc.source_text = source_text
             return proc
 
+    # z/OS calls a cataloged procedure by its member name; the PROC label is
+    # optional and ignored when it differs (#184). A member holding exactly
+    # one PROC, named otherwise or not at all, is that procedure.
+    if len(job.procedures) == 1 and not job.steps:
+        proc = job.procedures[0]
+        proc.name = proc_name
+        proc.is_external = True
+        proc.source_text = source_text
+        return proc
+
     # No explicit PROC/PEND: treat the whole file's steps as the procedure body.
     # Its SETs landed in the wrapper job's table; they belong to the procedure.
     # (With PROC/PEND, the parser already records them on the Procedure.)

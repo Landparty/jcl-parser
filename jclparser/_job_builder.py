@@ -179,6 +179,9 @@ class JobBuilder:
         #: statement, which is legal per z/OS; flushed once job exists.
         self.pending_jes_statements: list[str] = []
         self.pending_jes_typed: list[Any] = []
+        #: Line number of the last JES3 control record when its operand ends
+        #: with a comma: the next ``//*`` record continues it (#185).
+        self._jes3_continues_after: int | None = None
         #: Statements that carry job-level information but were seen before the
         #: JOB statement — or in a JOB-less member such as a cataloged
         #: procedure, where no JOB statement ever arrives.  They used to be
@@ -291,10 +294,11 @@ class JobBuilder:
         if self.dialect == "jes2":
             # Under JES2 a ``//*`` record is only ever a comment.
             return
-        from .jes_statements import parse_jes3_control
+        from .jes_statements import jes3_continued, parse_jes3_control
 
         jes3 = parse_jes3_control(line, line_num)
         if jes3 is None:
+            self._continue_jes3(line, line_num)
             return
         raw_text = line.strip()
         if self.job is not None:
@@ -303,6 +307,35 @@ class JobBuilder:
         else:
             self.pending_jes_typed.append(jes3)
             self.pending_jes_statements.append(raw_text)
+        self._jes3_continues_after = line_num if jes3_continued(jes3) else None
+
+    def _continue_jes3(self, line: str, line_num: int) -> None:
+        """Append a ``//*`` continuation record to the JES3 control statement
+        on the record before it, whose operand ended with a comma (#185)."""
+        from .jes_statements import (
+            jes3_continuation_text,
+            jes3_continued,
+            parse_jes3_control,
+        )
+
+        previous = self._jes3_continues_after
+        self._jes3_continues_after = None
+        if previous is None or line_num != previous + 1:
+            return
+        typed = self.job.jes_typed_statements if self.job else self.pending_jes_typed
+        texts = self.job.jes_statements if self.job else self.pending_jes_statements
+        if not typed or not texts:
+            return
+        if not line.strip()[3:].strip():
+            return
+        merged_text = jes3_continuation_text(typed[-1], line)
+        merged = parse_jes3_control(merged_text, typed[-1].line_number)
+        if merged is None:
+            return
+        typed[-1] = merged
+        texts[-1] = merged_text
+        if jes3_continued(merged):
+            self._jes3_continues_after = line_num
 
     def handle_jes3_data(self, line: str) -> None:
         """Keep a record of a JES3 ``//*DATASET`` with that statement.
