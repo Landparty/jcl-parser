@@ -1,5 +1,11 @@
 # Update Log
 
+## 2026-11-09 (open-issue sweep)
+* **Fix (#183)**: the #179 delete edges also hit a job that deletes and then recreates a dataset (IEFBR14 `MOD,DELETE`, then `NEW,CATLG`), making a cycle with every reader. `lineage._last_use_deletes` keeps the edges only for a job whose last DD on the dataset deletes it. See [api/public-api](api/public-api.md). Tests: `tests/unit/test_issue_183_186.py`.
+* **Fix (#184)**: a PROC member with a nameless or differently named PROC statement loads under its member name. See [advanced/proc-expansion](advanced/proc-expansion.md).
+* **Fix (#185)**: continued JES3 control statements keep their continuation keywords. See [core/parsing-pipeline](core/parsing-pipeline.md).
+* **Fix (#186)**: an OLD/SHR open with `VOL=SER=` (or `VOL=REF=*.`) is not a use after uncatalog or a forward reference; the `validate_dataset_lifecycle` docstring now says the forward-reference check covers SHR too. See [advanced/validation](advanced/validation.md).
+
 ## 2026-11-06 (open-issue sweep)
 * **Fix (#179)**: lineage counted a deleting DD (normal `DELETE`, status not `NEW`) as a read only, so its job ran after the producer but could be ordered before another job still reading the dataset. `DatasetUse` gains `deletes` (also in `to_dict()`), and `lineage._add_delete_edges` adds an edge from every other job that reads or writes the dataset (or its library / a member) to the deleting job; two jobs that each delete what the other reads are a cycle. See [api/public-api](api/public-api.md). Tests: `tests/unit/test_issue_179_180.py`.
 * **Fix (#180)**: the INCLUDE pre-scan read each `// SET` one record at a time, so a symbol coded on a SET continuation record was never recorded and `INCLUDE MEMBER=&M` stayed unexpanded. `_record_set_symbols` now merges the continuation records (`_continue_operands`), also in the JCLLIB pre-scan and the PROC INCLUDE warning pass. The not-found warning names an undefined symbol as such, and a resolved member as `MEMB (from &M)`. See [advanced/proc-expansion](advanced/proc-expansion.md). Tests: `tests/unit/test_issue_179_180.py`.

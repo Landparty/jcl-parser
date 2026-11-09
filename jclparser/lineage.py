@@ -336,10 +336,15 @@ def _add_delete_edges(
     from each other reader of the dataset -- or of its library or a member
     of it -- so the deleter cannot be ordered before a job that still needs
     the dataset (#179). Two jobs that each delete a dataset the other reads
-    depend on each other, a cycle.
+    depend on each other, a cycle. A job that writes the dataset again after
+    deleting it is its producer, not a deleter (#183).
     """
     for deleted, lineage in datasets.items():
-        deleters = _unique(u.job for u in lineage.readers if u.deletes)
+        deleters = [
+            job
+            for job in _unique(u.job for u in lineage.readers if u.deletes)
+            if _last_use_deletes(lineage, job)
+        ]
         if not deleters:
             continue
         for used, other in datasets.items():
@@ -353,6 +358,18 @@ def _add_delete_edges(
                         labels = edges.setdefault((user, deleter), [])
                         if label not in labels:
                             labels.append(label)
+
+
+def _last_use_deletes(lineage: DatasetLineage, job: str) -> bool:
+    """True when *job*'s last DD on the dataset deletes it.
+
+    A job that deletes a dataset and then creates it again in a later step
+    (IEFBR14 ``MOD,DELETE`` then ``NEW,CATLG``) only clears its own previous
+    copy: the other jobs read its new one and run after it, not before (#183).
+    """
+    uses = [u for u in (*lineage.readers, *lineage.writers) if u.job == job]
+    last = max(u.line_number for u in uses)
+    return any(u.deletes for u in uses if u.line_number == last)
 
 
 def _run_order(

@@ -342,6 +342,29 @@ def parse_jes3_control(comment_line: str, line_number: int = 0) -> Any:
     )
 
 
+def jes3_continued(statement: Any) -> bool:
+    """True when a JES3 control statement's operand field ends with a comma,
+    so the next ``//*`` record continues it (z/OS MVS JCL Reference, JES3
+    control statements). JES2 ``/*`` statements are never continued (#185)."""
+    if not isinstance(statement, Jes3ControlStatement):
+        return False
+    if statement.name.upper() in _JES3_FREE_TEXT_COMMANDS:
+        return False
+    parts = statement.raw.split(None, 1)
+    if len(parts) < 2:
+        return False
+    return _operand_field(parts[1].strip()).rstrip().endswith(",")
+
+
+def jes3_continuation_text(statement: Any, continuation_line: str) -> str:
+    """The ``//*COMMAND operands`` text of *statement* with a continuation
+    record's operand (from column 4, leading blanks dropped) appended."""
+    parts = statement.raw.split(None, 1)
+    operand = _operand_field(parts[1].strip()) if len(parts) > 1 else ""
+    more = continuation_line.strip()[3:].strip()
+    return f"//*{parts[0]} {operand}{more}"
+
+
 def parse_jes3_route_xeq(
     comment_line: str, line_number: int = 0
 ) -> Jes3RouteXeqStatement | None:
