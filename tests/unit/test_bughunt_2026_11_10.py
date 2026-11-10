@@ -553,3 +553,52 @@ class TestNestedIfContradictions:
             "// ENDIF\n"
         )
         assert compute_feasible_paths(job).unreachable_steps == ["S2"]
+
+
+class TestQuotedValuesNotRescanned:
+    """#192 follow-up: a symbol substituted into a value coded in apostrophes
+    is text; its commas and parentheses must not be re-scanned as operands."""
+
+    def test_quoted_path_keeps_comma(self) -> None:
+        job = parse_jcl(
+            "//J JOB (A),'X'\n"
+            "// SET U=ME\n"
+            "//S EXEC PGM=A\n"
+            "//D DD PATH='/u/&U/a,b',PATHOPTS=ORDONLY\n"
+        )
+        params = job.steps[0].dd_statements[0].parameters
+        assert params["PATH"] == "/u/ME/a,b"
+        assert params["PATHOPTS"] == "ORDONLY"
+        assert not any(k.startswith("_pos_") for k in params)
+
+    def test_quoted_value_with_parenthesised_symbol_stays_text(self) -> None:
+        job = parse_jcl(
+            "//J JOB (A),'X'\n"
+            "// SET V=(NEW,CATLG)\n"
+            "//S EXEC PGM=A\n"
+            "//D DD DSN='&V',DISP=SHR\n"
+        )
+        params = job.steps[0].dd_statements[0].parameters
+        assert params["DSN"] == "(NEW,CATLG)"
+        assert params["DISP"] == "SHR"
+
+    def test_quoted_path_through_proc_expansion(self) -> None:
+        job = explode_job(
+            parse_jcl(
+                "//J JOB (A),'X'\n"
+                "//P PROC U=ME\n"
+                "//PS EXEC PGM=A\n"
+                "//D DD PATH='/u/&U/a,b',PATHOPTS=ORDONLY\n"
+                "// PEND\n"
+                "//S EXEC P\n"
+            )
+        )
+        params = job.steps[0].dd_statements[0].parameters
+        assert params["PATH"] == "/u/ME/a,b"
+        assert not any(k.startswith("_pos_") for k in params)
+
+    def test_quoted_value_is_plain_str_for_callers(self) -> None:
+        job = parse_jcl("//J JOB (A),'X'\n//S EXEC PGM=A,PARM='A,B'\n")
+        parm = job.steps[0].parameters["PARM"]
+        assert isinstance(parm, str)
+        assert parm == "A,B"

@@ -38,7 +38,7 @@ from .proc_loader import (
     create_default_loader,
 )
 from .system_symbols import SystemSymbolProvider, get_default_provider
-from .utils import MAX_SYMBOL_VALUE_LENGTH, jcl_value_text
+from .utils import MAX_SYMBOL_VALUE_LENGTH, QuotedValue, jcl_value_text
 
 logger = logging.getLogger(__name__)
 
@@ -833,6 +833,13 @@ def _whole_symbol_list(value: Any, scope: SymbolScope) -> list[Any] | None:
     return None
 
 
+def _keep_quoted(coded: str, substituted: str) -> str:
+    """*substituted* as a :class:`QuotedValue` when *coded* was one."""
+    if isinstance(coded, QuotedValue) and not isinstance(substituted, QuotedValue):
+        return QuotedValue(substituted)
+    return substituted
+
+
 def _needs_reparse(value: str) -> bool:
     """Whether a substituted *value* holds operand structure of its own.
 
@@ -890,6 +897,9 @@ def reparse_symbol_values(
         for key, value in substituted.items()
         if isinstance(value, str)
         and isinstance(coded.get(key), str)
+        # A value coded in apostrophes is text: its commas and parentheses,
+        # coded or from a symbol, never separate operands.
+        and not isinstance(coded[key], QuotedValue)
         and "&" in coded[key]
         and reparse_key(key)
         and _needs_reparse(value)
@@ -956,14 +966,17 @@ def substitute_parameters_dict(
             # DISP=(NEW,CATLG) had been coded, substituting inside it.
             value = whole
         if isinstance(value, str):
-            result[key] = substitute_symbols(
+            result[key] = _keep_quoted(
                 value,
-                scope,
-                strict=strict,
-                allow_undefined=allow_undefined,
-                warnings=warnings,
-                collapse_double_amp=collapse_double_amp,
-                keep_undefined=keep_undefined,
+                substitute_symbols(
+                    value,
+                    scope,
+                    strict=strict,
+                    allow_undefined=allow_undefined,
+                    warnings=warnings,
+                    collapse_double_amp=collapse_double_amp,
+                    keep_undefined=keep_undefined,
+                ),
             )
         elif isinstance(value, (list, tuple)):
             result[key] = [
@@ -1139,16 +1152,21 @@ def substitute_dd_statement(
             continue
         value = original_parameters[key]
         if isinstance(value, str):
-            value = _strip_empty_member(
-                substitute_symbols(
-                    value,
-                    scope,
-                    strict=strict,
-                    allow_undefined=allow_undefined,
-                    warnings=param_warnings,
-                    collapse_double_amp=False,
-                    keep_undefined=_dsn_keep_undefined(value, keep_undefined, strict),
-                )
+            value = _keep_quoted(
+                value,
+                _strip_empty_member(
+                    substitute_symbols(
+                        value,
+                        scope,
+                        strict=strict,
+                        allow_undefined=allow_undefined,
+                        warnings=param_warnings,
+                        collapse_double_amp=False,
+                        keep_undefined=_dsn_keep_undefined(
+                            value, keep_undefined, strict
+                        ),
+                    )
+                ),
             )
         else:
             value = substitute_parameters_dict(

@@ -20,7 +20,7 @@ from ._keywords import resuming_keywords
 from .errors import JCLSyntaxError
 from .model import Statement
 from .plugins import ParserConfig, StatementPlugin, get_plugin_registry
-from .utils import POSITIONAL_PARAM_PREFIX, split_source_lines
+from .utils import POSITIONAL_PARAM_PREFIX, QuotedValue, split_source_lines
 
 if TYPE_CHECKING:
     from .parameter_ast import ParameterParser
@@ -727,18 +727,23 @@ def _parse_parameters(
                 parameters[key] = list_items
             else:
                 # Remove quotes from quoted values
-                if value.startswith("'") and value.endswith("'"):
-                    value = value[1:-1].replace("''", "'")
+                if _is_quoted(value):
+                    value = QuotedValue(value[1:-1].replace("''", "'"))
                 parameters[key] = value
         else:
             # Positional parameter
             value = part
-            if value.startswith("'") and value.endswith("'"):
-                value = value[1:-1].replace("''", "'")
+            if _is_quoted(value):
+                value = QuotedValue(value[1:-1].replace("''", "'"))
             parameters[f"{POSITIONAL_PARAM_PREFIX}{i}"] = value
 
     logger.debug("parsed %d parameter(s) at line %d", len(parameters), line_number)
     return parameters
+
+
+def _is_quoted(value: str) -> bool:
+    """Whether *value* is one apostrophe-delimited string (``'A,B'``)."""
+    return len(value) >= 2 and value.startswith("'") and value.endswith("'")
 
 
 def _parse_list_parameter(list_content: str) -> list[str]:
