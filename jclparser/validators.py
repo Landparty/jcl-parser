@@ -13,6 +13,7 @@ from .model import (
     ConditionalBlock,
     DDStatement,
     Job,
+    Procedure,
     Step,
     _dataset_dds,
     dd_label,
@@ -137,11 +138,15 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
             continue
         if step.name:
             if step.name in step_names:
+                # A WARNING: z/OS runs the job, and only a reference to the
+                # name (COND=, IF, a referback) is ambiguous (JCL Reference,
+                # "Rules for names").
                 errors.append(
                     ValidationError(
                         f"Duplicate step name: {step.name}",
                         ErrorType.VALIDATION_ERROR,
                         line_number=step.line_number,
+                        severity=ErrorSeverity.WARNING,
                     )
                 )
             else:
@@ -165,6 +170,8 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
     errors.extend(validate_procedure_references(job))
 
     errors.extend(validate_conditional_structure(job))
+
+    errors.extend(validate_statement_placement(job))
 
     errors.extend(validate_backward_references(job))
 
@@ -212,6 +219,26 @@ def validate_conditional_structure(job: Job) -> list[ValidationError]:
             line_number=line_number,
         )
         for line_number, message in job.conditional_errors
+    ]
+
+
+def validate_statement_placement(job: Job) -> list[ValidationError]:
+    """Report the misplaced or malformed statements the parser recovered from.
+
+    ``Job.statement_findings`` holds them with their severity: a DD before
+    the first EXEC, an unnamed DD with nothing to concatenate onto and a
+    trailing comma with no continuation are ERRORs (z/OS fails the job); a
+    continuation past column 16 is a WARNING (the parse reads it as meant,
+    and editor-written JCL often indents one column too far).
+    """
+    return [
+        ValidationError(
+            message,
+            ErrorType.STRUCTURE_ERROR,
+            line_number=line_number,
+            severity=severity,
+        )
+        for line_number, message, severity in job.statement_findings
     ]
 
 
@@ -350,6 +377,7 @@ def validate_procedure_references(job: Job) -> list[ValidationError]:
                         line_number=step.line_number,
                     )
                 )
+            errors.extend(_unknown_override_findings(step, procedure))
         if step.procedure and procedure is None:
             errors.append(
                 ValidationError(
@@ -362,6 +390,30 @@ def validate_procedure_references(job: Job) -> list[ValidationError]:
                 )
             )
     return errors
+
+
+def _unknown_override_findings(
+    step: Step, procedure: Procedure
+) -> list[ValidationError]:
+    """Warn on *step*'s overrides that name no step of *procedure*."""
+    from .explosion import unknown_override_steps
+
+    findings: list[ValidationError] = []
+    for key in unknown_override_steps(step, procedure):
+        override = step.dd_overrides.get(key)
+        kind = "DD override" if override is not None else "EXEC override"
+        findings.append(
+            ValidationError(
+                f"Step '{step.name or ''}': {kind} {key} names no step of "
+                f"procedure '{procedure.name}'; it is ignored",
+                ErrorType.SEMANTIC_ERROR,
+                line_number=(
+                    override.line_number if override is not None else step.line_number
+                ),
+                severity=ErrorSeverity.WARNING,
+            )
+        )
+    return findings
 
 
 def validate_step_structure(step: Step) -> list[ValidationError]:
@@ -582,6 +634,17 @@ def validate_data_dependencies(job: Job) -> list[ValidationError]:
     return tracker.findings()
 
 
+#: Prefix of the walk-state key recording that a temporary was deleted, and by
+#: which step; a dataset name never starts with it, and it follows the THEN /
+#: ELSE branches exactly as the live temporaries do.
+_DELETED = "-"
+
+
+def _temp_key(dd: DDStatement) -> str:
+    """The temporary dataset *dd* names: ``&&GOSET(GO)`` is ``&&GOSET``."""
+    return (dd.dataset_name or "").split("(", 1)[0]
+
+
 class _TempDatasetTracker:
     """Creation / use of temporary (``&&name``) datasets, in execution order."""
 
@@ -616,22 +679,35 @@ class _TempDatasetTracker:
 
         *active* maps each temporary dataset that still exists (created and
         not yet deleted by an explicit or defaulted DELETE) to the step that
-        created it.  DISP=MOD on one of them extends it (the classic way to
+        created it, and ``_DELETED + name`` to the step that deleted it.  DISP=MOD on one of them extends it (the classic way to
         collect several compiles' object decks in &&LOADSET) rather than
         creating it a second time.
         """
         step_name = step.name or f"Step{len(self.created) + 1}"
+        # A disposition is carried out when the step ends, so a temporary
+        # the step deletes stays usable by the step's later DDs.
+        deleted_here: list[str] = []
         for dd in _dataset_dds(step):
-            if dd.dataset_name and dd.dataset_name.startswith("&&"):
-                self._check_dd(dd, step_name, active)
+            if (
+                dd.dataset_name
+                and dd.dataset_name.startswith("&&")
+                and self._check_dd(dd, step_name, active)
+            ):
+                deleted_here.append(_temp_key(dd))
+        for temp_ds in deleted_here:
+            if active.pop(temp_ds, None) is not None:
+                active[_DELETED + temp_ds] = step_name
 
     def _check_dd(
         self, dd: DDStatement, step_name: str, active: dict[str, str]
-    ) -> None:
-        # &&GOSET(GO) names a member of &&GOSET: key on the dataset.
-        temp_ds = (dd.dataset_name or "").split("(", 1)[0]
-        tokens = dd._disp_tokens() if dd.disposition else []
+    ) -> bool:
+        """Check one temporary DD; return whether the step's end deletes it."""
+        temp_ds = _temp_key(dd)
+        # An omitted DISP is (NEW,DELETE).
+        tokens = dd._disp_tokens() if dd.disposition else ["NEW"]
         extends_existing = bool(tokens) and tokens[0] == "MOD" and temp_ds in active
+        if temp_ds not in active and tokens[0] in ("OLD", "SHR"):
+            self._check_not_deleted(dd, temp_ds, step_name, active)
 
         # Check if this is creating or using the dataset
         if dd.is_output() and not extends_existing:
@@ -649,14 +725,31 @@ class _TempDatasetTracker:
         elif dd.is_input() or extends_existing:
             self.first_use.setdefault(temp_ds, dd.line_number)
 
+        if extends_existing or dd.is_output():
+            active.pop(_DELETED + temp_ds, None)
         normal_disp = tokens[1] if len(tokens) >= 2 else ""
-        if normal_disp == "DELETE" or (
-            tokens and tokens[0] == "NEW" and not normal_disp
-        ):
-            # Deleted at the end of this step (an omitted normal disposition
-            # on a NEW dataset defaults to DELETE): a later step may create
-            # one of the same name again.
-            active.pop(temp_ds, None)
+        # Deleted at the end of this step (an omitted normal disposition on
+        # a NEW dataset defaults to DELETE): a later step may create one of
+        # the same name again, but can no longer read it.
+        return normal_disp == "DELETE" or (tokens[0] == "NEW" and not normal_disp)
+
+    def _check_not_deleted(
+        self, dd: DDStatement, temp_ds: str, step_name: str, active: dict[str, str]
+    ) -> None:
+        """Warn when *dd* reads a temporary an earlier step already deleted."""
+        deleted_by = active.get(_DELETED + temp_ds)
+        if deleted_by is None:
+            return
+        self.errors.append(
+            ValidationError(
+                f"Temporary dataset {temp_ds} is read in step {step_name} "
+                f"after step {deleted_by} deleted it (DISP=PASS keeps a "
+                "temporary dataset for later steps)",
+                ErrorType.VALIDATION_ERROR,
+                line_number=dd.line_number,
+                severity=ErrorSeverity.WARNING,
+            )
+        )
 
     def findings(self) -> list[ValidationError]:
         """The duplicate-creation errors, then the used-but-never-created ones.

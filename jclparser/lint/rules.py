@@ -182,8 +182,12 @@ class NewDatasetWithoutRlseRule(LintRule):
 
 class DuplicateStepNameRule(LintRule):
     code = "JCL-LINT-007"
-    description = "Step names must be unique within a job."
-    default_severity = ErrorSeverity.ERROR
+    description = "Step names should be unique within a job."
+    # z/OS runs a job with duplicate step names; only a reference to one
+    # (COND=, IF, a referback) is ambiguous (JCL Reference, "Rules for
+    # names": names "referenced by other statements in the job should be
+    # unique within the job").
+    default_severity = ErrorSeverity.WARNING
 
     def check(self, job: Job, config: LintConfig) -> Iterable[ValidationError]:
         seen: set[str] = set()

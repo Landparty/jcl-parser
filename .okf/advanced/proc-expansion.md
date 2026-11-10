@@ -20,7 +20,8 @@ timestamp: 2026-10-29T00:00:00Z
    with neither, NO files are read -- the cwd is never searched implicitly)
    Searches the JCLLIB ORDER libraries, then DEFAULT_SYSTEM_PROCLIBS
    (SYS1.PROCLIB) -- also with no JCLLIB at all (issue #116)
-   Layout: <base_path>/<DATASET.NAME>/<PROCNAME>.jcl
+   Layout: <base_path>/<DATASET.NAME>/<PROCNAME>.jcl (also .prc, .proc,
+           any case, or no extension)
    Members over utils.MAX_LIBRARY_MEMBER_BYTES (4 MiB) are refused (warning)
 3. builtin_procs.py   BUILTIN_UTILITY_PROCS  ← last resort (create_builtin_proc_loader)
    Covers: IMS (IMSBATCH, DLIBATCH…), DB2 (DSNUPROC, DSNHICOB), COBOL (IGYWCL…)

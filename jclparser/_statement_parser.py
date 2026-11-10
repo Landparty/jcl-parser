@@ -16,6 +16,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from ._keywords import resuming_keywords
 from .errors import JCLSyntaxError
 from .model import Statement
 from .plugins import ParserConfig, StatementPlugin, get_plugin_registry
@@ -202,7 +203,7 @@ def _paren_group_end(text: str) -> int | None:
     return None
 
 
-def _resumes_operands(text: str) -> bool:
+def _resumes_operands(text: str, keywords: frozenset[str] | None = None) -> bool:
     """Return True if *text*, following a trailing comma and blanks, looks like
     more operands rather than a comment.
 
@@ -214,14 +215,21 @@ def _resumes_operands(text: str) -> bool:
     followed by a comma or the end of the record (and, for a group, holds no
     unquoted blank): ``DSN=A.B,   (CUSTOMER MASTER FILE)`` and
     ``DSN=A.B,   'CUSTOMER' MASTER`` are comments (issue #120).
+
+    With *keywords* (the statement's keyword parameters), only one of them
+    counts: ``DSN=A.B,   RETAIN=30 DAYS`` is a comment on a DD, so the
+    record after it still continues the statement.
     """
     if text[:1] in ("'", "("):
         end = (_quoted_string_end if text[0] == "'" else _paren_group_end)(text)
         return end is not None and (
             text[end : end + 1] == "," or not text[end:].strip()
         )
-    token = text.split(None, 1)[0]
-    return "=" in token.split(",")[0]
+    token = text.split(None, 1)[0].split(",")[0]
+    key, eq, _ = token.partition("=")
+    if not eq:
+        return False
+    return keywords is None or key.upper() in keywords
 
 
 def _closes_parens(text: str, depth: int) -> bool:
@@ -240,7 +248,9 @@ def _closes_parens(text: str, depth: int) -> bool:
     return False
 
 
-def _find_comment_start(operands: str, depth: int = 0) -> int | None:
+def _find_comment_start(
+    operands: str, depth: int = 0, keywords: frozenset[str] | None = None
+) -> int | None:
     """Index of the comment field inside *operands*, or ``None`` if there is none.
 
     The operand field ends at the first blank that is outside quotes and
@@ -249,7 +259,9 @@ def _find_comment_start(operands: str, depth: int = 0) -> int | None:
     follows a subparameter's comma also starts a comment when the rest of
     the record neither resumes operands nor closes the list: the list goes
     on in the next record. *depth* is the paren depth the record starts at
-    (non-zero for a record continuing an open list).
+    (non-zero for a record continuing an open list). *keywords* are the
+    statement's keyword parameters, as for :func:`_resumes_operands`; they
+    bound the top level only (a list holds subparameters such as ``SER=``).
     """
     if " " not in operands and "\t" not in operands:
         # No blank at all: the operand field runs to the end of the record.
@@ -273,7 +285,9 @@ def _find_comment_start(operands: str, depth: int = 0) -> int | None:
                 rest = operands[i:].lstrip()
                 if not rest:
                     return None
-                if operands[:i].rstrip().endswith(",") and _resumes_operands(rest):
+                if operands[:i].rstrip().endswith(",") and _resumes_operands(
+                    rest, keywords
+                ):
                     i = n - len(rest)
                     continue
                 return i
@@ -352,7 +366,9 @@ def split_comment_field(
         if cut is None:
             return line, ""
         return (line[:start] + operands[:cut]).rstrip(), operands[cut:].strip()
-    cut = _find_comment_start(operands, paren_depth)
+    cut = _find_comment_start(
+        operands, paren_depth, resuming_keywords(operation, operands)
+    )
     if cut is None:
         return line, ""
     return (line[:start] + operands[:cut]).rstrip(), operands[cut:].strip()

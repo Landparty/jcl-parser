@@ -16,10 +16,14 @@ simple ``COMMAND OBJECT`` forms.  Unrecognised commands land in
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from ..dataset_lifecycle import DatasetEvent
 from ._invoked import _normalize_control_text
 from .base import ProgramAnalysis, ProgramProfile, _sysin_text
+
+if TYPE_CHECKING:
+    from ..model import Step
 
 # One catalog entry name: a dataset name, optionally quoted or with a member.
 _ENTRY_NAME = r"'[^']*'|[A-Z0-9.@#$&\-]+(?:\([A-Z0-9@#$+\-]+\))?"
@@ -66,6 +70,67 @@ _RE_LISTCAT = re.compile(r"^\s*LISTCAT\b", re.IGNORECASE | re.MULTILINE)
 _RE_COMMAND_START = re.compile(
     r"(?:(?<![^\s)])(THEN|ELSE)(?=\s|$)|;)", re.IGNORECASE | re.MULTILINE
 )
+
+
+# Objects whose DEFINE creates a dataset that later steps or jobs read.
+_DATASET_DEFINE_KINDS = frozenset({"CLUSTER", "GDG", "AIX", "NONVSAM"})
+# REPRO's source / target: a DD name (INFILE / IFILE, OUTFILE / OFILE) or a
+# dataset name (INDATASET / IDS, OUTDATASET / ODS).
+_RE_REPRO_OPERAND = re.compile(
+    r"\b(INFILE|IFILE|OUTFILE|OFILE|INDATASET|IDS|OUTDATASET|ODS)\s*\(\s*("
+    + _ENTRY_NAME
+    + r")",
+    re.IGNORECASE,
+)
+_REPRO_OPERANDS = {
+    "INFILE": ("read", "dd"),
+    "IFILE": ("read", "dd"),
+    "OUTFILE": ("write", "dd"),
+    "OFILE": ("write", "dd"),
+    "INDATASET": ("read", "dsn"),
+    "IDS": ("read", "dsn"),
+    "OUTDATASET": ("write", "dsn"),
+    "ODS": ("write", "dsn"),
+}
+
+
+def idcams_dataset_uses(step: Step) -> list[tuple[str, str, str]]:
+    """The datasets an IDCAMS *step*'s commands write and read.
+
+    Returns ``(role, dataset, dd_name)`` triples: ``"write"`` for the
+    ``NAME(...)`` of a ``DEFINE CLUSTER`` / ``GDG`` / ``AIX`` / ``NONVSAM``
+    and for a ``REPRO`` target, ``"read"`` for a ``REPRO`` source.
+    *dd_name* is the DD a ``REPRO INFILE(dd)`` / ``OUTFILE(dd)`` names
+    (its dataset is that DD's), ``"SYSIN"`` otherwise.  DISP alone takes a
+    ``DISP=SHR`` DD that ``REPRO OUTFILE`` loads for a read; lineage uses
+    this to see the write.
+    """
+    text = _one_command_per_line(_normalize_control_text(_sysin_text(step) or ""))
+    uses: list[tuple[str, str, str]] = []
+    for line in text.splitlines():
+        define = _RE_DEFINE.match(line)
+        if define and _DEFINE_KINDS[define.group(1).upper()] in _DATASET_DEFINE_KINDS:
+            name = _RE_NAME_PARAM.search(line[define.end() :])
+            if name:
+                uses.append(("write", _strip_quotes(name.group(1)), "SYSIN"))
+        elif _RE_REPRO.match(line):
+            uses.extend(_repro_uses(step, line))
+    return uses
+
+
+def _repro_uses(step: Step, command: str) -> list[tuple[str, str, str]]:
+    """The ``(role, dataset, dd_name)`` uses of one ``REPRO`` *command*."""
+    uses: list[tuple[str, str, str]] = []
+    for match in _RE_REPRO_OPERAND.finditer(command):
+        role, kind = _REPRO_OPERANDS[match.group(1).upper()]
+        operand = _strip_quotes(match.group(2))
+        if kind == "dsn":
+            uses.append((role, operand, "SYSIN"))
+            continue
+        dd = step.get_dd(operand.upper())
+        if dd is not None and isinstance(dd.dataset_name, str) and dd.dataset_name:
+            uses.append((role, dd.dataset_name, dd.name or operand.upper()))
+    return uses
 
 
 def _one_command_per_line(text: str) -> str:

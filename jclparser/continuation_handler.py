@@ -20,6 +20,10 @@ from ._statement_parser import (
 
 logger = logging.getLogger(__name__)
 
+#: Statements whose operands are blank-delimited (IF ... THEN); a trailing
+#: comma there is not a continuation request.
+_BLANK_DELIMITED = frozenset({"IF", "THEN", "ELSE", "ENDIF"})
+
 
 @dataclass
 class ContinuationContext:
@@ -79,6 +83,13 @@ class ContinuationLineHandler:
         #: :meth:`merge_continuation_lines`; the parser reports them as job
         #: warnings, since the record's operands are otherwise ignored.
         self.stray_continuations: list[tuple[int, str]] = []
+        #: ``(index_in_input_list, column)`` for every continuation record
+        #: whose text starts after column 16; z/OS requires columns 4-16.
+        self.late_continuations: list[tuple[int, int]] = []
+        #: ``(index_in_input_list, statement_text)`` for every statement
+        #: whose operand field ends with a comma but is followed by no
+        #: continuation record (z/OS: expected continuation not received).
+        self.missing_continuations: list[tuple[int, str]] = []
 
     def _has_implicit_continuation(self, previous_line: str) -> bool:
         """Check if previous line ends with comma (implicit continuation)."""
@@ -241,6 +252,8 @@ class ContinuationLineHandler:
         merged: list[tuple[str, int]] = []
         self.suspect_comments = []
         self.stray_continuations = []
+        self.late_continuations = []
+        self.missing_continuations = []
         i = 0
         # Whether the statement just merged ended on a card image continued
         # in column 72: a complete statement coded that way continues its
@@ -363,6 +376,8 @@ class ContinuationLineHandler:
                 break
 
             self._record_suspect_comment(j + 1, next_comment)
+            if not continues_if:
+                self._check_continuation_column(next_line, j + 1)
             # A quoted string continued from a column-72 card image keeps its
             # blanks through column 71 (see _join_continuation).
             card_image_pad = (
@@ -382,6 +397,8 @@ class ContinuationLineHandler:
             last_record = j
             j += 1
 
+        if group_operation not in _BLANK_DELIMITED and merged_line.endswith(","):
+            self.missing_continuations.append((original_line_num, merged_line))
         continued = j - i - 1
         if continued:
             logger.debug(
@@ -393,6 +410,12 @@ class ContinuationLineHandler:
         merged.append((merged_line, original_line_num))
         merged.extend(interspersed_comments)
         return j
+
+    def _check_continuation_column(self, line: str, line_num: int) -> None:
+        """Record continuation *line* if its text starts after column 16."""
+        column = len(line) - len(line[2:].lstrip()) + 1
+        if column > 16:
+            self.late_continuations.append((line_num, column))
 
     def _join_continuation(
         self,

@@ -257,11 +257,15 @@ class TestValidateDataDependencies:
     """Test validate_data_dependencies function."""
 
     def test_valid_temporary_dataset_flow(self):
-        """Test valid temporary dataset creation and use."""
+        """Test valid temporary dataset creation and use.
+
+        DISP=NEW alone defaults to (NEW,DELETE), which deletes the dataset
+        before STEP2 runs; PASS keeps it for later steps.
+        """
         job = Job("MYJOB")
 
         step1 = Step("STEP1", program="CREATE")
-        dd1 = DDStatement("OUT", dataset_name="&&TEMP", disposition="NEW")
+        dd1 = DDStatement("OUT", dataset_name="&&TEMP", disposition="(NEW,PASS)")
         step1.add_dd(dd1)
         job.add_step(step1)
 

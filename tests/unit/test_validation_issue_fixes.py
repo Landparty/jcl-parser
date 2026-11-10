@@ -18,8 +18,13 @@ class TestValidateJclReportsStructuralErrors:
     def test_duplicate_step_name_reported_at_every_level(self, level):
         errors = validate_jcl(DUP_STEP_JCL, level=level)
         dup = [e for e in errors if "Duplicate step name: S1" in e.message]
+        if level == "basic":
+            # A WARNING: z/OS runs the job (JCL Reference, "Rules for names"),
+            # and the basic level reports only what fails a strict parse.
+            assert dup == []
+            return
         assert len(dup) == 1
-        assert dup[0].severity == ErrorSeverity.ERROR
+        assert dup[0].severity == ErrorSeverity.WARNING
 
     def test_structure_level_matches_job_validate(self):
         expected = [e.message for e in parse_jcl(DUP_STEP_JCL).validate()]

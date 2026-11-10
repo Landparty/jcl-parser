@@ -45,7 +45,7 @@ from ._post_parse import (
     resolve_set_symbols,
 )
 from .condition_parser import parse_condition
-from .errors import JCLSyntaxError
+from .errors import ErrorSeverity, JCLSyntaxError
 from .model import (
     ConditionalBlock,
     DDStatement,
@@ -95,6 +95,10 @@ __all__ = [  # noqa: RUF022 — grouped by the module each name comes from
     "load_external_procedures",
     "resolve_set_symbols",
 ]
+
+
+#: DDs z/OS allows before a job's first EXEC.
+_JOB_LEVEL_DDS = frozenset({"JOBLIB", "JOBCAT", "SYSCHK"})
 
 
 class JobBuilder:
@@ -216,6 +220,18 @@ class JobBuilder:
         #: ``(line, message)``; finish() copies them to
         #: :attr:`Job.conditional_errors`.
         self.conditional_errors: list[tuple[int, str]] = []
+        #: Misplaced DD statements as ``(line, message)``; finish() copies
+        #: them to :attr:`Job.statement_findings`.
+        self.statement_findings: list[tuple[int, str, ErrorSeverity]] = []
+        #: INCLUDE members left unexpanded because they include themselves.
+        self.recursive_includes: set[str] | frozenset[str] = frozenset()
+        #: ``(line, message)`` for each misplaced DD in :attr:`orphaned_dds`;
+        #: reported once the first job-level EXEC picks the DDs up (with no
+        #: EXEC at all they are discarded, and reported as such, instead).
+        self.misplaced_dds: list[tuple[int, str]] = []
+        #: Name of the last job-level DD before the first EXEC (JOBLIB,
+        #: JOBCAT, ...): an unnamed DD after it concatenates onto it.
+        self.last_job_dd: str | None = None
 
     # ------------------------------------------------------------------ #
     # Line-level handling (before statement parsing)
@@ -415,6 +431,9 @@ class JobBuilder:
             pending_dds, self.proc_orphaned_dds = self.proc_orphaned_dds, []
         else:
             pending_dds, self.orphaned_dds = self.orphaned_dds, []
+            for misplaced in self.misplaced_dds:
+                self._statement_error(*misplaced)
+            self.misplaced_dds = []
         for dd in pending_dds:
             self.current_step.add_dd(dd)
 
@@ -427,21 +446,7 @@ class JobBuilder:
         current_dd = self.current_dd
 
         if self.current_step is None:
-            # JOBLIB is a special job-level DD: keep it separate so
-            # job.joblib and job.get_library_search_order() can expose it.
-            if stmt.name == "JOBLIB" and self.job is not None:
-                self.job.joblib_dds.append(current_dd)
-                self.in_joblib_concat = True
-            elif not stmt.name and self.in_joblib_concat and self.job is not None:
-                # Empty-name DD concatenating onto the JOBLIB group
-                self.job.joblib_dds.append(current_dd)
-            elif self.current_procedure is not None:
-                # DD in a PROC body before its first EXEC
-                self.proc_orphaned_dds.append(current_dd)
-            else:
-                self.in_joblib_concat = False
-                # Job-level DD: attached to the next job-level step
-                self.orphaned_dds.append(current_dd)
+            self._on_dd_before_exec(stmt, current_dd, line_num)
         elif stmt.name and "." in stmt.name:
             # This is a DD override for a procedure step
             parts = stmt.name.split(".", 1)  # Split on first dot only
@@ -472,6 +477,12 @@ class JobBuilder:
             ).append(current_dd)
         else:
             # Regular DD statement
+            if not stmt.name and not self.current_step.dd_statements:
+                self._statement_error(
+                    line_num,
+                    "unnamed DD statement right after EXEC concatenates onto "
+                    "no DD; only a DD that follows a named DD may omit its name",
+                )
             self.concat_override_key = None
             self.current_step.add_dd(current_dd)
 
@@ -494,6 +505,46 @@ class JobBuilder:
                 )
             self.current_delimiter = current_delimiter
             self.current_terminates_on_slash = terminates_on_slash
+
+    def _statement_error(self, line_num: int, message: str) -> None:
+        """Record a statement z/OS rejects that the parse recovers from."""
+        self.statement_findings.append((line_num, message, ErrorSeverity.ERROR))
+        self._warnings_sink().append(f"Line {line_num}: {message}")
+
+    def _on_dd_before_exec(
+        self, stmt: Statement, current_dd: DDStatement, line_num: int
+    ) -> None:
+        """Place a DD coded before the first EXEC of its job or PROC."""
+        if self.current_procedure is not None:
+            # DD in a PROC body before its first EXEC
+            self.proc_orphaned_dds.append(current_dd)
+            return
+        name = stmt.name or self.last_job_dd
+        if stmt.name:
+            self.last_job_dd = stmt.name
+        if self.job is not None and name not in _JOB_LEVEL_DDS:
+            self.misplaced_dds.append(
+                (
+                    line_num,
+                    (
+                        f"DD {stmt.name or '(unnamed)'} comes before the first "
+                        "EXEC; only JOBLIB, JOBCAT and SYSCHK may precede it "
+                        "(it is attached to the first step)"
+                    ),
+                )
+            )
+        # JOBLIB is a special job-level DD: keep it separate so
+        # job.joblib and job.get_library_search_order() can expose it.
+        if stmt.name == "JOBLIB" and self.job is not None:
+            self.job.joblib_dds.append(current_dd)
+            self.in_joblib_concat = True
+        elif not stmt.name and self.in_joblib_concat and self.job is not None:
+            # Empty-name DD concatenating onto the JOBLIB group
+            self.job.joblib_dds.append(current_dd)
+        else:
+            self.in_joblib_concat = False
+            # Job-level DD: attached to the next job-level step
+            self.orphaned_dds.append(current_dd)
 
     def _on_proc(self, stmt: Statement, line_num: int) -> None:
         # Inline procedure definition - start tracking procedure
@@ -675,9 +726,20 @@ class JobBuilder:
                     f"{line} {member} uses a symbol with no SET value before "
                     f"it;{missing}"
                 )
+            if resolved in self.recursive_includes:
+                return self._recursive_include_warning(line, resolved)
             member = f"{resolved} (from {member})"
+        elif member in self.recursive_includes:
+            return self._recursive_include_warning(line, member)
         return (
             f"{line} {member} not found in the JCLLIB / procedure libraries;{missing}"
+        )
+
+    @staticmethod
+    def _recursive_include_warning(line: str, member: str) -> str:
+        return (
+            f"{line} {member} includes itself (directly or through other "
+            "members); the recursive INCLUDE is ignored"
         )
 
     def _on_conditional(self, stmt: Statement, line_num: int) -> None:
@@ -1006,6 +1068,7 @@ class JobBuilder:
         self._warn_orphaned_dds(job)
         self._warn_unclosed_ifs(job)
         self._warn_after_null(job)
+        job.statement_findings.extend(self.statement_findings)
 
         return job
 

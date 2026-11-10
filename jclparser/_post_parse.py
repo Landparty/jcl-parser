@@ -528,18 +528,22 @@ def _substitute_step_parameters(
     step: Step, scope: SymbolScope, job_warnings: list[str]
 ) -> None:
     """Substitute SET symbols into *step*'s EXEC parameters, warning on *job_warnings*."""
-    from .explosion import substitute_parameters_dict
+    from .explosion import reparse_symbol_values, substitute_parameters_dict
     from .system_symbols import is_system_symbol_name
 
     _step_warnings: list[str] = []
-    step.parameters = substitute_parameters_dict(
+    # A value that brings in operands (COND=&C with C=(0,LE)) is re-scanned.
+    step.parameters = reparse_symbol_values(
         step.parameters,
-        scope,
-        strict=False,
-        warnings=_step_warnings,
-        collapse_double_amp=False,
-        keep_undefined=is_system_symbol_name,
-    )
+        substitute_parameters_dict(
+            step.parameters,
+            scope,
+            strict=False,
+            warnings=_step_warnings,
+            collapse_double_amp=False,
+            keep_undefined=is_system_symbol_name,
+        ),
+    )[0]
     for _msg in _step_warnings:
         job_warnings.append(
             f"Line {step.line_number}: Step {step.name or '(unnamed)'}: {_msg}"

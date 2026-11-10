@@ -40,8 +40,8 @@
 //* Empty parameters
 //DD7      DD DSN=,DISP=SHR
 //*
-//* Null statement (just //)
-//
+//* Null statement (just //) left out: it would end the job here
+//*
 //STEP4    EXEC PGM=IEFBR14
 //*
 //* Multiple spaces between elements

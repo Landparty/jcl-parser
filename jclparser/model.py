@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from .errors import ValidationError
+from .errors import ErrorSeverity, ValidationError
 from .parameter_ast import DCBParameter, ParameterParser, SPACEParameter
 
 if TYPE_CHECKING:
@@ -785,6 +785,16 @@ class Job:
     #: so on :attr:`warnings`), but z/OS rejects such a job, so
     #: :meth:`validate` reports each as an error.
     conditional_errors: list[tuple[int, str]] = field(default_factory=list)
+    #: Other statements z/OS rejects that the parser recovers from, as
+    #: ``(line_number, message, severity)``: a DD before the first EXEC
+    #: (other than JOBLIB / JOBCAT / SYSCHK), an unnamed DD that
+    #: concatenates onto no DD and a trailing comma with no continuation
+    #: are errors; a continuation record that starts after column 16 is a
+    #: warning.  Each is also on :attr:`warnings`; :meth:`validate` reports
+    #: each at its severity.
+    statement_findings: list[tuple[int, str, ErrorSeverity]] = field(
+        default_factory=list
+    )
     #: Symbols listed in ``EXPORT SYMLIST=(...)`` statements at job scope.
     #: Propagated into invoked PROC scopes during explosion.  A literal ``"*"``
     #: exports every SET symbol.
