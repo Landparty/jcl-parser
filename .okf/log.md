@@ -1,5 +1,8 @@
 # Update Log
 
+## 2026-11-10 (#192 follow-up: quoted values)
+* **Fix**: the #192 symbol re-scan split a value coded in apostrophes at its commas: `PATH='/u/&U/a,b'` lost `,b` and gained a stray `_pos_1`. The parse now marks such values as `utils.QuotedValue` (a `str` subclass, so callers see an ordinary string); `reparse_symbol_values` skips them and substitution keeps the mark, also through `explode_job`. Tests: `TestQuotedValuesNotRescanned` in `tests/unit/test_bughunt_2026_11_10.py`.
+
 ## 2026-11-10 (bug-hunt fixes: passes 1-2 and the all-samples run)
 * **Fix**: a temporary dataset deleted at the end of one step (explicit `DELETE`, or an omitted DISP / `DISP=NEW`, which default to `(NEW,DELETE)`) and read `OLD`/`SHR` by a later step is a WARNING from `validate_data_dependencies` ("... after step S1 deleted it"). Dispositions apply at step end and the state follows IF branches. See [advanced/validation](advanced/validation.md).
 * **Fix**: a comment field after a trailing comma whose first token is `KEY=...` no longer resumes the operands unless `KEY` is a keyword of the statement (`_keywords.py`: JOB, DD, `EXEC PGM=`; a PROC call stays lenient), so `DSN=A.B,   RETAIN=30 DAYS` keeps the next record's `DISP=SHR`. See [development/invariants](development/invariants.md) (17).

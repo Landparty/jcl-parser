@@ -45,6 +45,18 @@ def split_source_lines(text: str, keepends: bool = False) -> list[str]:
     return records
 
 
+class QuotedValue(str):
+    """A parameter value that was coded in apostrophes (``PATH='/u/a,b'``).
+
+    The parse removes the apostrophes; the type remembers them, so a symbol
+    substituted into the value is never re-scanned for operands (its commas
+    and parentheses are text, #192 follow-up). It is an ordinary ``str`` for
+    every other purpose.
+    """
+
+    __slots__ = ()
+
+
 def is_positional_key(key: str) -> bool:
     """Return ``True`` if *key* represents a positional (keyword-less) JCL parameter."""
     return key.startswith(POSITIONAL_PARAM_PREFIX)
