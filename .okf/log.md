@@ -1,5 +1,21 @@
 # Update Log
 
+## 2026-11-10 (bug-hunt fixes: passes 1-2 and the all-samples run)
+* **Fix**: a temporary dataset deleted at the end of one step (explicit `DELETE`, or an omitted DISP / `DISP=NEW`, which default to `(NEW,DELETE)`) and read `OLD`/`SHR` by a later step is a WARNING from `validate_data_dependencies` ("... after step S1 deleted it"). Dispositions apply at step end and the state follows IF branches. See [advanced/validation](advanced/validation.md).
+* **Fix**: a comment field after a trailing comma whose first token is `KEY=...` no longer resumes the operands unless `KEY` is a keyword of the statement (`_keywords.py`: JOB, DD, `EXEC PGM=`; a PROC call stays lenient), so `DSN=A.B,   RETAIN=30 DAYS` keeps the next record's `DISP=SHR`. See [development/invariants](development/invariants.md) (17).
+* **Fix**: new `Job.statement_findings` `(line, message, severity)`, reported by `job.validate()` (`validators.validate_statement_placement`) and copied by `explode_job`: a DD other than JOBLIB / JOBCAT / SYSCHK before the first EXEC (ERROR; still attached to the first step), an unnamed DD right after EXEC (ERROR), a trailing comma with no continuation record (ERROR), a continuation record starting after column 16 (WARNING). Each is also on `job.warnings`. Scanner findings about records after a null statement are dropped. See [core/data-model](core/data-model.md).
+* **Fix**: a symbol value that brings in operand structure is re-scanned as if coded (`explosion.reparse_symbol_values`): `DSN=&V` with `V='A.B,DISP=SHR'`, `DD &P` with a keyword list, `DISP=&D` / `COND=&C` with a parenthesised value (now a list, as the interface contract promises). PARM keeps its value whole. Both the SET pass and `explode_job`.
+* **Fix**: a recursive INCLUDE is reported as "includes itself" instead of "not found" (`resolve_includes_with_origins(recursive=)`).
+* **Fix**: `validate_jcl` warns on an EXEC or DD override that names no step of the called PROC (`explosion.unknown_override_steps`).
+* **Fix**: when the strict parse fails (a PROC missing from a JCLLIB library), `validate_jcl` also reports the `job.validate()` findings of a lenient parse, so the other errors are not hidden. See [advanced/validation](advanced/validation.md#strict-parse-fallback).
+* **Fix**: PROC members named `NAME.prc` / `NAME.proc` load from a library directory. See [advanced/proc-expansion](advanced/proc-expansion.md).
+* **Fix**: lineage counts IDCAMS commands: `DEFINE CLUSTER/GDG/AIX/NONVSAM NAME(X)` writes X, `REPRO OUTFILE/OUTDATASET` writes (a `DISP=SHR` DD it loads is no longer a read), `REPRO INFILE/INDATASET` reads (`program_profiles.idcams.idcams_dataset_uses`).
+* **Fix**: the lifecycle forward-reference warning is not given when the job deletes the dataset between the read and the later allocation (read, delete, recreate).
+* **Change**: a duplicate step name is a WARNING (validate and `JCL-LINT-007`): z/OS runs the job; the JCL Reference ("Rules for names") only asks that names *referenced by other statements* be unique. A strict parse no longer fails on it.
+* **Fix**: `compute_feasible_paths` judges a nested IF under the enclosing IFs' conditions that nothing in between can change, so `IF S1.RC > 4` around `IF S1.RC < 2` reports the inner THEN steps unreachable.
+* **Tests**: `tests/unit/test_bughunt_2026_11_10.py`; the `comment_whitespace_edge_cases.jcl` and `special_characters.jcl` fixtures no longer end the job early with a stray `//`, and their tests now check every step.
+* **Not changed**: a SYSOUT override of a PROC DD keeps the PROC DD's DISP. The JCL Reference says an override "modifies only that parameter; the system uses all other parameters on the original statement", and no mutual-exclusion nullification rule for SYSOUT/DISP could be confirmed.
+
 ## 2026-11-09 (open-issue sweep)
 * **Fix (#183)**: the #179 delete edges also hit a job that deletes and then recreates a dataset (IEFBR14 `MOD,DELETE`, then `NEW,CATLG`), making a cycle with every reader. `lineage._last_use_deletes` keeps the edges only for a job whose last DD on the dataset deletes it. See [api/public-api](api/public-api.md). Tests: `tests/unit/test_issue_183_186.py`.
 * **Fix (#184)**: a PROC member with a nameless or differently named PROC statement loads under its member name. See [advanced/proc-expansion](advanced/proc-expansion.md).

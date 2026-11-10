@@ -96,7 +96,7 @@ def _messages(errors):
 
 class TestStrictMode:
     def test_config_strict_mode_rejects_invalid_job(self):
-        with pytest.raises(JCLValidationError, match="Duplicate step name: S1"):
+        with pytest.raises(JCLValidationError, match="created in multiple steps"):
             parse_jcl(_INVALID, config=ParserConfig(strict_mode=True))
 
     def test_keyword_still_enables_strict_with_a_lenient_config(self):

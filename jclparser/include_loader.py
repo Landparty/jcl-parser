@@ -269,6 +269,7 @@ def resolve_includes_with_origins(
     max_depth: int = 8,
     max_lines: int = 1_000_000,
     collected: list[str] | None = None,
+    recursive: set[str] | None = None,
 ) -> tuple[str, list[LineOrigin]]:
     """Expand INCLUDEs like :func:`resolve_includes`; also map lines to origins.
 
@@ -277,7 +278,9 @@ def resolve_includes_with_origins(
         per line of it (``origins[n - 1]`` is where line *n* came from), so
         a line number in the expanded text can be reported against the main
         source -- and the member -- it was read from.  *collected*, when
-        given, receives the name of every member expanded.
+        given, receives the name of every member expanded, and *recursive*
+        the name of every member an INCLUDE was left intact for because it
+        includes itself (directly or through other members).
 
     Raises:
         JCLStructureError: If expansion would inline more than *max_lines*.
@@ -285,6 +288,8 @@ def resolve_includes_with_origins(
     expander = _IncludeExpander(
         loader, libraries, max_depth, max_lines, collected, [max_lines], {}
     )
+    if recursive is not None:
+        expander.recursive = recursive
     entries = expander.expand(content, 0, frozenset())
     return "".join(text for text, _ in entries), [origin for _, origin in entries]
 
@@ -309,6 +314,8 @@ class _IncludeExpander:
         self.collected = collected
         self.budget = budget
         self.symbols = symbols
+        #: Members an INCLUDE was left intact for because it is recursive.
+        self.recursive: set[str] = set()
 
     def expand(self, content: str, depth: int, active: frozenset[str]) -> list[_Entry]:
         """Expand the INCLUDEs of *content*; one entry per resulting line.
@@ -361,6 +368,7 @@ class _IncludeExpander:
             logger.warning(
                 "INCLUDE member %r is recursive; leaving statement intact", member
             )
+            self.recursive.add(member)
             return None
         expanded = self._expand_member(member, depth, active)
         if expanded is None:

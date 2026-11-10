@@ -447,10 +447,16 @@ class _LifecycleChecker:
         # Each dataset's allocations (position in flattened order, IF
         # branches), for the forward-reference heuristic.
         self.allocations: dict[str, list[tuple[int, _Path]]] = {}
+        # Each dataset's deletions of an existing copy (normal disposition
+        # DELETE, status not NEW): a later allocation after one recreates
+        # the dataset rather than creating it for the first time.
+        self.deletions: dict[str, list[tuple[int, _Path]]] = {}
         for step in _iter_step_events(nodes):
             for dsn, pos, evt in step.events:
                 if evt.action == "ALLOCATE":
                     self.allocations.setdefault(dsn, []).append((pos, step.path))
+                elif evt.disp_normal == "DELETE" and evt.disp_status != "NEW":
+                    self.deletions.setdefault(dsn, []).append((pos, step.path))
         # Errors per dataset, keyed by event position, so they come out
         # grouped by dataset in event order however the branches are walked.
         self.found: dict[str, list[tuple[int, ValidationError]]] = {}
@@ -468,11 +474,21 @@ class _LifecycleChecker:
     def _allocated_only_later(self, dsn: str, pos: int, path: _Path) -> bool:
         """True when *dsn* is allocated after *pos*, and not before it, on a
         path through the job that also runs the event at *pos*: the THEN
-        and ELSE branches of one IF never both run."""
+        and ELSE branches of one IF never both run.
+
+        Not when the job deletes the dataset in between: read, delete,
+        recreate (back up, then rebuild) expects the dataset to exist when
+        the job starts, so the allocation is a recreation."""
         on_path = [
             p for p, alloc in self.allocations.get(dsn, []) if _on_one_path(path, alloc)
         ]
-        return bool(on_path) and min(on_path) > pos
+        if not on_path or min(on_path) < pos:
+            return False
+        first = min(on_path)
+        return not any(
+            pos < p < first and _on_one_path(path, where)
+            for p, where in self.deletions.get(dsn, [])
+        )
 
     def _report(self, dsn: str, pos: int, message: str, evt: DatasetEvent) -> None:
         self.found.setdefault(dsn, []).append(

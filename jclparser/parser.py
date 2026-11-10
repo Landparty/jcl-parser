@@ -26,6 +26,7 @@ importable from ``jclparser.parser``.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal, overload
 
@@ -134,8 +135,9 @@ def _parse_jcl_core(
     strict_mode = strict_mode or (config is not None and config.strict_mode)
     # Handle different input source types (FileNotFoundError propagates)
     content = read_source(source)
+    recursive_includes: set[str] = set()
     content, expanded_includes, line_map = _expand_includes(
-        content, include_loader, proc_base_path
+        content, include_loader, proc_base_path, recursive_includes
     )
 
     try:
@@ -145,6 +147,7 @@ def _parse_jcl_core(
             strict_mode=strict_mode,
             proc_base_path=proc_base_path,
             enable_external_procs=enable_external_procs,
+            recursive_includes=recursive_includes,
         )
         _resolve_references(job, expanded_includes, strict=strict_mode)
     except JCLParseError as exc:
@@ -182,22 +185,33 @@ def _parse_expanded(
     strict_mode: bool,
     proc_base_path: str | Path | None,
     enable_external_procs: bool,
+    recursive_includes: set[str] | frozenset[str] = frozenset(),
 ) -> tuple[Job, list[Procedure]]:
     """Parse the INCLUDE-expanded *content*: scan, build, load PROCs.
 
     Also returns the in-stream procedures, read from *content* itself (the
     external ones loaded afterwards come from their own library members).
+    *recursive_includes* are the members whose INCLUDE was left in
+    *content* because it is recursive, not because it was not found.
     """
     scanned = _merge_source_lines(
         content, config.dialect if config is not None else "standard"
     )
-    job = _build_job(scanned, config, strict=strict_mode)
+    job, null_line = _build_job(
+        scanned, config, strict=strict_mode, recursive_includes=recursive_includes
+    )
     own_procedures = list(job.procedures)
 
     # Anything the line-classification pass discarded or repaired (a comment
     # field that looked like operands, an unterminated CNTL block) is reported
-    # rather than dropped without a trace.
-    job.warnings.extend(scanned.warnings)
+    # rather than dropped without a trace -- unless it is about a record
+    # after a null statement, which is not part of the job at all.
+    job.warnings.extend(
+        w for w in scanned.warnings if not _after_null(_warning_line(w), null_line)
+    )
+    job.statement_findings.extend(
+        f for f in scanned.errors if not _after_null(f[0], null_line)
+    )
 
     # Create and attach procedure loader for external PROC loading
     load_external_procedures(
@@ -217,11 +231,14 @@ def _expand_includes(
     content: str,
     include_loader: IncludeMemberLoader | None,
     proc_base_path: str | Path | None,
+    recursive: set[str] | None = None,
 ) -> tuple[str, list[str], IncludeLineMap | None]:
     """Expand INCLUDE MEMBER= statements.
 
     This runs before the main parse loop so that inlined content participates
     in continuation-line merging and everything else that follows.
+    *recursive*, when given, receives the members left unexpanded because
+    their INCLUDE is recursive.
 
     Returns:
         The expanded content, the members expanded, and the map from its
@@ -247,6 +264,7 @@ def _expand_includes(
         loader=include_loader,
         libraries=jcllib_libs,
         collected=expanded,
+        recursive=recursive,
     )
     logger.debug(
         "expanded %d INCLUDE member(s) before parse: %s",
@@ -256,17 +274,37 @@ def _expand_includes(
     return content, expanded, IncludeLineMap(origins) if expanded else None
 
 
+_WARNING_LINE = re.compile(r"Line (\d+):")
+
+
+def _warning_line(warning: str) -> int | None:
+    """The line a ``"Line N: ..."`` warning is about, if it names one."""
+    match = _WARNING_LINE.match(warning)
+    return int(match.group(1)) if match else None
+
+
+def _after_null(line: int | None, null_line: int | None) -> bool:
+    """Whether *line* comes after the null statement on *null_line*."""
+    return line is not None and null_line is not None and line > null_line
+
+
 def _build_job(
-    scanned: ScannedSource, config: ParserConfig | None, *, strict: bool = False
-) -> Job:
+    scanned: ScannedSource,
+    config: ParserConfig | None,
+    *,
+    strict: bool = False,
+    recursive_includes: set[str] | frozenset[str] = frozenset(),
+) -> tuple[Job, int | None]:
     """Run the parse loop over the scanned source lines.
 
     The builder holds all loop state and has one handler per statement type
-    (see jclparser/_job_builder.py).
+    (see jclparser/_job_builder.py). Also returns the line of the null
+    statement that ended the job, if any.
     """
     builder = JobBuilder(
         dialect=config.dialect if config is not None else "standard", strict=strict
     )
+    builder.recursive_includes = recursive_includes
     for line, line_num in scanned.merged_lines:
         # Handle inline data continuation
         if builder.consume_inline_data(line):
@@ -309,7 +347,7 @@ def _build_job(
         # Process the statement (dispatches on stmt.type)
         builder.handle_statement(stmt, line_num)
 
-    return builder.finish()
+    return builder.finish(), builder.null_line
 
 
 def _resolve_references(
@@ -546,7 +584,71 @@ def validate_jcl(
         strict_error = exc
 
     errors.extend(_validate_line_by_line(source, config, strict_error))
+    # The strict error must not hide the job's other findings (a PROC
+    # missing from a JCLLIB library used to leave it the only one): when a
+    # lenient parse gets through, its job.validate() findings are reported
+    # too.
+    _add_lenient_findings(
+        source,
+        effective_level,
+        config,
+        errors,
+        strict_error,
+        proc_base_path=proc_base_path,
+        enable_external_procs=enable_external_procs,
+    )
     return errors
+
+
+def _add_lenient_findings(
+    source: str,
+    level: ValidationLevel,
+    config: ParserConfig | None,
+    errors: list[ParseError],
+    strict_error: JCLParseError,
+    *,
+    proc_base_path: str | Path | None,
+    enable_external_procs: bool,
+) -> None:
+    """Add the ``job.validate()`` findings of a non-strict parse of *source*.
+
+    Used once the strict parse failed with *strict_error*: a finding that
+    restates it (the WARNING form of the PROC it could not find) is left
+    out, and so is everything for a job with no steps, whose strict error
+    (a DD with no EXEC to belong to) already says what is wrong.
+    """
+    try:
+        job = _parse_jcl_core(
+            source,
+            strict_mode=False,
+            config=config,
+            proc_base_path=proc_base_path,
+            enable_external_procs=enable_external_procs,
+            validate_job=False,
+        )
+    except JCLParseError:
+        return
+    if not job.steps:
+        return
+    findings: list[ParseError] = []
+    _add_job_findings(job, level, findings)
+    if level == ValidationLevel.SEMANTIC and config is not None:
+        _add_plugin_findings(job, config, findings)
+    strict_subject = _finding_subject(strict_error.message)
+    for finding in findings:
+        if (
+            strict_subject is not None
+            and finding.line_number == (strict_error.line_number or 0)
+            and _finding_subject(finding.message) == strict_subject
+        ):
+            continue
+        _add_unless_reported(finding, errors)
+
+
+def _finding_subject(message: str) -> str | None:
+    """``"Procedure 'X'"`` of a ``"Procedure 'X' not found..."`` message."""
+    subject, found, _ = message.partition(" not found")
+    return subject if found else None
 
 
 _STRICT_ERROR_TYPES: dict[type[Exception], ErrorType] = {

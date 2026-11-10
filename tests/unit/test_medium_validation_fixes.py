@@ -54,7 +54,7 @@ class TestIssue119FindingLines:
 
     def test_job_validate_str_includes_line(self) -> None:
         messages = [str(e) for e in parse_jcl(_ISSUE_119_JCL).validate()]
-        assert messages[0] == "Line 5: Duplicate step name: S1"
+        assert messages[0] == "Line 5: [WARNING] Duplicate step name: S1"
         assert all(m.startswith(("Line 4:", "Line 5:")) for m in messages)
 
     def test_step_rules_use_step_line(self) -> None:

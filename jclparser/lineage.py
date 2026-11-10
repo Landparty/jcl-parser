@@ -27,6 +27,11 @@ every other job that reads or writes it), and
 ``(NEW,DELETE)`` -- a scratch dataset -- neither.  Temporary datasets (``&&TEMP``), ``NULLFILE``,
 ``SYSOUT`` and DDs without a ``DISP`` are left out; a ``DSN=*.STEP.DD``
 backward reference counts as the dataset it points at.
+
+An IDCAMS step's commands count too: ``DEFINE CLUSTER`` / ``GDG`` / ``AIX`` /
+``NONVSAM`` writes the dataset it names, and ``REPRO`` writes its
+``OUTFILE`` / ``OUTDATASET`` (a ``DISP=SHR`` DD it loads is a write, not a
+read) and reads its ``INFILE`` / ``INDATASET``.
 """
 
 from __future__ import annotations
@@ -40,7 +45,7 @@ from typing import Any
 from .dataset_lifecycle import analyze_dataset_lifecycle
 from .errors import JCLParseError
 from .explosion import _job_proc_loader
-from .model import Job, Procedure
+from .model import Job, Procedure, iter_execution_steps
 from .parser import parse_jcl
 from .proc_loader import (
     CompositeProcedureLoader,
@@ -269,6 +274,47 @@ def _record_uses(job_id: str, job: Job, datasets: dict[str, DatasetLineage]) -> 
             if role == "write":
                 lineage.writers.append(use)
             elif role == "read":
+                lineage.readers.append(use)
+    _record_idcams_uses(job_id, job, datasets)
+
+
+def _record_idcams_uses(
+    job_id: str, job: Job, datasets: dict[str, DatasetLineage]
+) -> None:
+    """Record the datasets IDCAMS commands write and read (issue: CardDemo).
+
+    ``DEFINE CLUSTER NAME(X)`` writes X; ``REPRO ... OUTFILE(DD)`` writes
+    the DD's dataset even though the DD is ``DISP=SHR`` (its DISP use is
+    taken back as a read); ``REPRO INFILE(DD)`` / ``INDATASET(X)`` read.
+    """
+    from .program_profiles.idcams import idcams_dataset_uses
+
+    for step in iter_execution_steps(job.steps):
+        if (step.program or "").upper() != "IDCAMS":
+            continue
+        for role, dsn, dd_name in idcams_dataset_uses(step):
+            if dsn.startswith("&&") or "&" in dsn:
+                continue
+            key = dataset_key(dsn)
+            lineage = datasets.setdefault(key, DatasetLineage(key))
+            use = DatasetUse(
+                job=job_id,
+                step=step.name or "",
+                dd=dd_name,
+                dataset=dsn,
+                disp="IDCAMS",
+                line_number=step.line_number,
+            )
+            same_dd = [
+                u
+                for u in lineage.readers
+                if (u.job, u.step, u.dd) == (job_id, use.step, dd_name)
+            ]
+            if role == "write":
+                for reader in same_dd:
+                    lineage.readers.remove(reader)
+                lineage.writers.append(use)
+            elif not same_dd:
                 lineage.readers.append(use)
 
 

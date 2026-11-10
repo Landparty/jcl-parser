@@ -291,7 +291,11 @@ class TestCommentWhitespaceEdgeCases:
             job = parse_jcl(jcl_file)
             # Should parse despite various comment styles
             assert job.name == "CMTTEST"
-            assert len(job.steps) >= 1
+            # Every step is reached: the fixture once used a bare ``//`` as
+            # a blank line, a null statement that ended the job at STEP4.
+            assert len(job.steps) == 14
+            assert job.steps[-1].name == "STEP15"
+            assert job.warnings == []
         except JCLSyntaxError as e:
             # Some edge case comment patterns may not be supported
             pytest.skip(f"Parser doesn't support this comment pattern: {e}")
@@ -436,6 +440,14 @@ class TestSpecialCharacters:
         try:
             job = parse_jcl(jcl_file)
             assert job.name == "SPECIAL"
+            # No null statement cuts the job short (it once ended at STEP4).
+            assert len(job.steps) == 15
+            step5 = job.get_step("STEP5")
+            assert step5 is not None
+            # "Space before comma": the blank ends the operand field.
+            assert step5.get_dd("DD10").parameters == {"DSN": "MY.DATA"}
+            # "Trailing comma" with no continuation record is reported.
+            assert any("DD11" in w and "no continuation" in w for w in job.warnings)
         except JCLSyntaxError as e:
             # Some edge cases with special characters may not be fully supported
             pytest.skip(f"Parser doesn't fully support this pattern: {e}")

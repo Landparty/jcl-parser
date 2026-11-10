@@ -18,6 +18,7 @@ from .errors import (
     CircularProcedureError,
     ExplosionDepthError,
     JCLStructureError,
+    JCLSyntaxError,
     ProcedureNotFoundError,
     UndefinedSymbolError,
 )
@@ -666,9 +667,12 @@ def _substitute_proc_body_step(
             step.parameters, scope, strict=strict, warnings=warnings
         )
     else:
-        step.parameters = substitute_parameters_dict(
-            step.parameters, scope, strict=strict, warnings=warnings
-        )
+        step.parameters = reparse_symbol_values(
+            step.parameters,
+            substitute_parameters_dict(
+                step.parameters, scope, strict=strict, warnings=warnings
+            ),
+        )[0]
     # The step's own DDs and, for a nested ``EXEC procname``, its
     # PROCSTEP.DDNAME overrides.
     for dd in _step_dds_and_overrides(step):
@@ -827,6 +831,93 @@ def _whole_symbol_list(value: Any, scope: SymbolScope) -> list[Any] | None:
     if isinstance(raw, (list, tuple)):
         return deepcopy(list(raw))
     return None
+
+
+def _needs_reparse(value: str) -> bool:
+    """Whether a substituted *value* holds operand structure of its own.
+
+    z/OS substitutes symbols before it scans the operand field, so a value
+    with a comma outside quotes and parentheses (``A.B,DISP=SHR``) holds more
+    than one operand, and a parenthesised one (``(NEW,CATLG)``) is a list,
+    exactly as if it had been coded in place of the symbol.
+    """
+    depth = 0
+    in_quotes = False
+    for char in value:
+        if char == "'":
+            in_quotes = not in_quotes
+        elif in_quotes:
+            continue
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif char == "," and depth == 0:
+            return True
+    return depth == 0 and value.startswith("(") and value.endswith(")")
+
+
+def _no_parm_key(key: str) -> bool:
+    """False for PARM (and ``PARM.step``), whose value is never re-scanned.
+
+    ``PARM=&P`` with ``P='A,B'`` is strictly a JCL error (the comma ends the
+    PARM value), but keeping ``'A,B'`` as the PARM value is what a reader of
+    the parse wants.
+    """
+    return key.partition(".")[0].upper() not in ("PARM", "PGM", "PROC")
+
+
+def reparse_symbol_values(
+    coded: dict[str, Any],
+    substituted: dict[str, Any],
+    reparse_key: Callable[[str], bool] = _no_parm_key,
+) -> tuple[dict[str, Any], set[str]]:
+    """Re-scan the substituted parameters whose symbols brought in operands.
+
+    *coded* are the parameters as coded, *substituted* the same after
+    symbol substitution.  A value that came from a symbol and holds a
+    top-level comma or is one parenthesised group (:func:`_needs_reparse`) is
+    parsed again as operand text, so ``DSN=&V`` with ``V='A.B,DISP=SHR'``
+    becomes ``DSN=A.B`` plus ``DISP=SHR`` and ``DISP=&D`` with
+    ``D=(NEW,CATLG)`` the list ``["NEW", "CATLG"]``, exactly as if the value
+    had been coded.  A keyword the re-scan yields that the statement
+    already codes keeps its coded value.
+
+    Returns the parameters, in coded order, and the keys the re-scan set.
+    """
+    candidates = [
+        key
+        for key, value in substituted.items()
+        if isinstance(value, str)
+        and isinstance(coded.get(key), str)
+        and "&" in coded[key]
+        and reparse_key(key)
+        and _needs_reparse(value)
+    ]
+    if not candidates:
+        return substituted, set()
+    from ._statement_parser import _parse_parameters
+    from .utils import is_positional_key
+
+    result: dict[str, Any] = {}
+    reparsed: set[str] = set()
+    for key, value in substituted.items():
+        parsed: dict[str, Any] | None = None
+        if key in candidates:
+            text = value if is_positional_key(key) else f"{key}={value}"
+            try:
+                parsed = _parse_parameters(text)
+            except JCLSyntaxError:
+                parsed = None
+        if not parsed:
+            result.setdefault(key, value)
+            continue
+        for new_key, new_value in parsed.items():
+            if new_key in result or (new_key != key and new_key in substituted):
+                continue
+            result[new_key] = new_value
+            reparsed.add(new_key)
+    return result, reparsed
 
 
 def substitute_parameters_dict(
@@ -1072,6 +1163,7 @@ def substitute_dd_statement(
         dd.parameters[key] = value
     # Restore coded key order (DSN keys were substituted separately).
     dd.parameters = {k: dd.parameters[k] for k in original_parameters}
+    _reparse_dd_symbol_values(dd, original_parameters)
     if local_warnings is not None and param_warnings:
         local_warnings.extend(m for m in param_warnings if m not in local_warnings)
 
@@ -1082,6 +1174,22 @@ def substitute_dd_statement(
             warnings.append(
                 f"Line {dd.line_number}: DD {dd.name or '(unnamed)'}: {msg}"
             )
+
+
+def _reparse_dd_symbol_values(dd: DDStatement, coded: dict[str, Any]) -> None:
+    """Re-scan *dd*'s symbol values that brought in operands (in place).
+
+    See :func:`reparse_symbol_values`; ``dataset_name`` and ``disposition``
+    follow the re-scanned ``DSN`` / ``DISP``.
+    """
+    dd.parameters, reparsed = reparse_symbol_values(coded, dd.parameters)
+    if not reparsed:
+        return
+    for key in _DSN_KEYS:
+        if key in reparsed and isinstance(dd.parameters[key], str):
+            dd.dataset_name = dd.parameters[key]
+    if "DISP" in reparsed:
+        dd.disposition = dd.parameters["DISP"]
 
 
 # DD parameters that each name the DD's data source. They are mutually
@@ -1274,6 +1382,35 @@ def call_override_symbols(call: Step) -> set[str]:
         set(),
     )
     return found
+
+
+def unknown_override_steps(call: Step, procedure: Procedure) -> list[str]:
+    """The overrides on *call* whose step qualifier names no step of *procedure*.
+
+    ``REGION.NOPE=4M`` and a ``//NOPE.D DD`` override, when *procedure* has
+    no step ``NOPE``, are returned as coded (``"REGION.NOPE"``,
+    ``"NOPE.D"``); :func:`explode_job` ignores them with a warning.  Empty
+    when the body cannot be fully checked (no steps loaded, or an
+    ``INCLUDE`` in its text that may hold more steps).
+    """
+    if not procedure.steps:
+        return []
+    if procedure.source_text and _INCLUDE_STATEMENT.search(procedure.source_text):
+        return []
+    names = {
+        (step.name or "").upper() for step in iter_execution_steps(procedure.steps)
+    }
+    unknown = [
+        key
+        for key in call.parameters
+        if is_exec_override_keyword(key)
+        and key.partition(".")[2]
+        and key.partition(".")[2].upper() not in names
+    ]
+    unknown += [
+        key for key in call.dd_overrides if key.partition(".")[0].upper() not in names
+    ]
+    return unknown
 
 
 def unused_proc_symbols(
@@ -1972,9 +2109,12 @@ def _substituted_plain_step(
         substituted_step.program = substitute_symbols(
             substituted_step.program, scope, strict=strict, warnings=warnings
         )
-    substituted_step.parameters = substitute_parameters_dict(
-        substituted_step.parameters, scope, strict=strict, warnings=warnings
-    )
+    substituted_step.parameters = reparse_symbol_values(
+        substituted_step.parameters,
+        substitute_parameters_dict(
+            substituted_step.parameters, scope, strict=strict, warnings=warnings
+        ),
+    )[0]
     for dd in substituted_step.dd_statements:
         substitute_dd_statement(dd, scope, strict=strict, warnings=warnings)
     return substituted_step
@@ -2005,6 +2145,7 @@ def _exploded_job(job: Job, exploded_steps: list[Step | ConditionalBlock]) -> Jo
     for _attr in (
         "unresolved_output_refs",
         "conditional_errors",
+        "statement_findings",
         "sql_detections",
         "jes_typed_statements",
         "jes_statements",

@@ -42,7 +42,9 @@ from typing import TYPE_CHECKING
 from .condition_parser import (
     NOT_RUN,
     AbendCondition,
+    AndCondition,
     ConditionNode,
+    NotCondition,
     ReturnCodeCondition,
     RunCondition,
     StepResult,
@@ -337,6 +339,10 @@ _ABENDS_NOT_MODELLED = (
 #: how many steps preceded it in execution order.
 _Signature = tuple[str, int]
 
+#: An enclosing IF's parsed condition (wrapped in ``NOT`` for its ELSE
+#: branch), or ``None`` when it did not parse, and how many steps preceded it.
+_Guard = tuple["ConditionNode | None", int]
+
 
 def _tests_running_state(ast: ConditionNode) -> bool:
     """True when *ast* has an unqualified ``RC`` / ``ABEND`` / ``RUN`` atom.
@@ -350,6 +356,21 @@ def _tests_running_state(ast: ConditionNode) -> bool:
     return any(
         isinstance(child, ConditionNode) and _tests_running_state(child)
         for child in (getattr(ast, attr, None) for attr in ("operand", "left", "right"))
+    )
+
+
+def _stable_guard(guard: ConditionNode, between: set[str]) -> bool:
+    """True when nothing that ran since the enclosing IF can change *guard*.
+
+    An unqualified ``RC`` / ``ABEND`` / ``RUN`` atom covers every step run so
+    far, and a named step that ran in between was "not run" when the outer
+    IF tested it (issue #109 has the same rule for repeated IFs).
+    """
+    if _tests_running_state(guard):
+        return False
+    return not any(
+        name in between or name.partition(".")[0] in between
+        for name in _collect_referenced_steps(guard)
     )
 
 
@@ -407,26 +428,36 @@ class _FeasibilityWalker:
         steps: list[Step | ConditionalBlock],
         signatures: list[_Signature],
         preds_before: list[str],
+        guards: list[_Guard] | None = None,
     ) -> list[str]:
         """Walk *steps*; return the predecessor list after the last of them.
 
         *preds_before* are the steps that precede *steps* in execution order
         (for a THEN/ELSE branch: everything before the IF), so an IF is never
         evaluated against a step that runs after it.  *signatures* are the
-        conditions of the enclosing IFs (an ELSE branch's as ``NOT(...)``).
+        conditions of the enclosing IFs (an ELSE branch's as ``NOT(...)``),
+        *guards* the same parsed: a nested IF only runs when they hold.
         """
+        guards = guards or []
         running_preds = list(preds_before)
         for item in steps:
             if isinstance(item, ConditionalBlock):
                 # An un-parsed condition can't be analysed, but its branches
                 # are still walked for duplicate IF signatures.
                 if item.condition_ast is not None:
-                    self._judge(item, item.condition_ast, running_preds)
+                    self._judge(
+                        item,
+                        item.condition_ast,
+                        running_preds,
+                        self._context(guards, running_preds),
+                    )
                     if _repeats_enclosing_if(item, signatures, running_preds):
                         self.report.duplicate_if_branches.append(
                             (item.line_number, item.condition)
                         )
-                running_preds = self._walk_branches(item, signatures, running_preds)
+                running_preds = self._walk_branches(
+                    item, signatures, running_preds, guards
+                )
             elif isinstance(item, Step) and item.name:
                 running_preds.append(item.name.upper())
         return running_preds
@@ -436,18 +467,41 @@ class _FeasibilityWalker:
         block: ConditionalBlock,
         signatures: list[_Signature],
         preds_before: list[str],
+        guards: list[_Guard],
     ) -> list[str]:
         at_if = len(preds_before)
+        ast = block.condition_ast
         then_preds = self.walk(
-            block.then_steps, [*signatures, (block.condition, at_if)], preds_before
+            block.then_steps,
+            [*signatures, (block.condition, at_if)],
+            preds_before,
+            [*guards, (ast, at_if)],
         )
         else_preds = self.walk(
             block.else_steps,
             [*signatures, (f"NOT({block.condition})", at_if)],
             preds_before,
+            [*guards, (NotCondition(ast) if ast is not None else None, at_if)],
         )
         # After ENDIF, a step of either branch may have run.
         return list(dict.fromkeys(then_preds + else_preds[len(preds_before) :]))
+
+    def _context(self, guards: list[_Guard], preds: list[str]) -> ConditionNode | None:
+        """The enclosing IFs' conditions that still hold at a nested IF.
+
+        Their conjunction, or ``None`` when none of them can be used: one
+        that did not parse, that an intervening step may change
+        (:func:`_stable_guard`), or that tests RUN / ABEND when abends are
+        not modelled.
+        """
+        context: ConditionNode | None = None
+        for guard, at_if in guards:
+            if guard is None or not _stable_guard(guard, set(preds[at_if:])):
+                continue
+            if not self.include_abends and _tests_run_or_abend(guard):
+                continue
+            context = guard if context is None else AndCondition(context, guard)
+        return context
 
     def _outcome(
         self, block: ConditionalBlock, ast: ConditionNode, preds: list[str]
@@ -484,9 +538,17 @@ class _FeasibilityWalker:
         return outcome
 
     def _judge(
-        self, block: ConditionalBlock, ast: ConditionNode, preds: list[str]
+        self,
+        block: ConditionalBlock,
+        ast: ConditionNode,
+        preds: list[str],
+        context: ConditionNode | None = None,
     ) -> None:
-        outcome = self._outcome(block, ast, preds)
+        outcome = (
+            self._outcome(block, ast, preds)
+            if context is None
+            else self._nested_outcome(block, ast, preds, context)
+        )
         if outcome is None:
             return
         ever_true, ever_false, ever_unknown = outcome
@@ -513,6 +575,34 @@ class _FeasibilityWalker:
                 for step in iter_execution_steps(block.else_steps)
                 if step.name
             )
+
+    def _nested_outcome(
+        self,
+        block: ConditionalBlock,
+        ast: ConditionNode,
+        preds: list[str],
+        context: ConditionNode,
+    ) -> tuple[bool, bool, bool] | None:
+        """The outcome of nested IF *block* while the enclosing IFs hold.
+
+        Its THEN branch runs when ``context AND ast`` can be true, its ELSE
+        branch when ``context AND NOT ast`` can be: ``IF S1.RC > 4`` around
+        ``IF S1.RC < 2`` never runs its THEN steps.  When *context* itself
+        can never be true the enclosing IF has said so already: ``None``.
+        """
+        then_outcome = self._outcome(block, AndCondition(context, ast), preds)
+        if then_outcome is None:
+            return None
+        else_outcome = self._outcome(
+            block, AndCondition(context, NotCondition(ast)), preds
+        )
+        if else_outcome is None:
+            return None
+        then_true, _, then_unknown = then_outcome
+        else_true, _, else_unknown = else_outcome
+        if not (then_true or else_true or then_unknown or else_unknown):
+            return None
+        return (then_true, else_true, then_unknown or else_unknown)
 
 
 def compute_feasible_paths(

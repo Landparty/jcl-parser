@@ -269,12 +269,23 @@ class TestOrphanedDdWarning:
         assert job.steps == []
         assert any("DD1" in w and "no EXEC" in w for w in job.warnings)
 
-    def test_orphaned_dd_attached_to_first_exec_does_not_warn(self):
-        # DDs before the first EXEC (e.g. JOBLIB-adjacent) are legitimately
-        # attached once an EXEC does appear -- no warning in that case.
+    def test_orphaned_dd_attached_to_first_exec_warns(self):
+        # A DD other than JOBLIB / JOBCAT / SYSCHK before the first EXEC is
+        # a misplaced DD on z/OS: it is still attached to the first step,
+        # but the parse says so.
         jcl = "//J JOB 1\n//DD1 DD DSN=A.B,DISP=SHR\n//S EXEC PGM=X\n"
         job = parse_jcl(jcl)
         assert job.steps[0].get_dd("DD1") is not None
+        assert len(job.warnings) == 1
+        assert "DD DD1 comes before the first EXEC" in job.warnings[0]
+
+    def test_job_level_dds_attached_to_first_exec_do_not_warn(self):
+        jcl = (
+            "//J JOB 1\n//JOBCAT DD DSN=CAT1,DISP=SHR\n// DD DSN=CAT2,DISP=SHR\n"
+            "//SYSCHK DD DSN=CHK,DISP=OLD\n//S EXEC PGM=X\n"
+        )
+        job = parse_jcl(jcl)
+        assert job.steps[0].get_dd("SYSCHK") is not None
         assert job.warnings == []
 
 

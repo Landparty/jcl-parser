@@ -615,12 +615,12 @@ class TestReviewFixes:
 
         from jclparser.errors import JCLValidationError
 
-        # Duplicate step names are an ERROR-severity structural issue.
-        # STEP1 appears twice -> must still raise in strict_mode.
+        # An invalid DISP is an ERROR-severity finding -> must still raise in
+        # strict_mode (a duplicate step name is only a WARNING: z/OS runs it).
         src = (
             "//MYJOB    JOB  (ACCT)\n"
             "//STEP1    EXEC PGM=IEFBR14\n"
-            "//STEP1    EXEC PGM=IEFBR14\n"
+            "//D        DD DSN=A.B,DISP=BOGUS\n"
         )
         with pytest.raises(JCLValidationError):
             jp.parse_jcl(src, strict_mode=True)

@@ -27,7 +27,7 @@ from ._statement_parser import (
     statement_operation,
 )
 from .continuation_handler import ContinuationLineHandler
-from .errors import JCLSyntaxError
+from .errors import ErrorSeverity, JCLSyntaxError
 from .utils import (
     instream_delimiter,
     is_card_image,
@@ -56,6 +56,10 @@ class ScannedSource(NamedTuple):
     #: set (between ``//*DATASET`` and ``//*ENDDATASET`` or its ``END=``
     #: terminator, the terminator included when it is not ENDDATASET).
     jes3_data_indices: frozenset[int] = frozenset()
+    #: ``(1-based line, message, severity)`` for records z/OS rejects that
+    #: the merge recovered from (a continuation past column 16, a trailing
+    #: comma with no continuation record); see :attr:`Job.statement_findings`.
+    errors: tuple[tuple[int, str, ErrorSeverity], ...] = ()
 
 
 def _merge_source_lines(content: str, dialect: str = "standard") -> ScannedSource:
@@ -121,13 +125,46 @@ def _merge_source_lines(content: str, dialect: str = "standard") -> ScannedSourc
         for jcl_line_num, record in handler.stray_continuations
     ]
 
+    errors = _continuation_errors(handler, jcl_indices)
+    warnings += [f"Line {line}: {message}" for line, message, _ in errors]
+
     return ScannedSource(
         merged_lines,
         classifier.inline_data_indices,
         classifier.control_data_indices,
         warnings,
         frozenset(classifier.jes3_data_indices),
+        errors,
     )
+
+
+def _continuation_errors(
+    handler: ContinuationLineHandler, jcl_indices: Sequence[int]
+) -> tuple[tuple[int, str, ErrorSeverity], ...]:
+    """The continuation records z/OS rejects, by source line number."""
+    errors = [
+        (
+            jcl_indices[jcl_line_num - 1] + 1,
+            (
+                f"continuation record starts in column {column}; a "
+                "continuation must start in columns 4-16"
+            ),
+            ErrorSeverity.WARNING,
+        )
+        for jcl_line_num, column in handler.late_continuations
+    ]
+    errors += [
+        (
+            jcl_indices[jcl_line_num - 1] + 1,
+            (
+                "statement ends with a comma but no continuation record "
+                f"follows (expected continuation not received): {text!r}"
+            ),
+            ErrorSeverity.ERROR,
+        )
+        for jcl_line_num, text in handler.missing_continuations
+    ]
+    return tuple(sorted(errors))
 
 
 def merge_continuations(

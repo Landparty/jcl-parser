@@ -30,9 +30,9 @@
 //* Comment with trailing spaces
 //*
 //STEP4    EXEC PGM=IEFBR14
-//
-//* Empty line above (just //)
-//
+//*
+//* Empty comment line above (a bare // is a null statement: it would end the job)
+//*
 //DD4      DD DUMMY
 //*
 //* Test various whitespace patterns
