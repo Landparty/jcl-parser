@@ -11,6 +11,8 @@ Grammar (simplified)::
     not_expr   := ('NOT' | '¬' | '^' | '~') not_expr | primary
     primary    := '(' condition ')' | atom
     atom       := step_ref 'RC' op integer
+               |  integer op step_ref 'RC'
+               |  integer op integer             (constants, e.g. after SET substitution)
                |  step_ref 'ABEND' [ ('=' | '¬=') ('TRUE' | 'FALSE') ]
                |  step_ref 'RUN'   [ ('=' | '¬=') ('TRUE' | 'FALSE') ]
     step_ref   := IDENTIFIER '.'                  (optional — omitted means "all steps so far")
@@ -121,20 +123,42 @@ class ReturnCodeCondition(ConditionNode):
                 return None
             rc = max(r[0] for r in ran)
 
-        op, v = self.operator, self.value
-        if op == "EQ":
-            return rc == v
-        if op == "NE":
-            return rc != v
-        if op == "LT":
-            return rc < v
-        if op == "GT":
-            return rc > v
-        if op == "LE":
-            return rc <= v
-        if op == "GE":
-            return rc >= v
-        return None
+        return _compare(rc, self.operator, self.value)
+
+
+def _compare(left: int, op: str, right: int) -> bool | None:
+    """``left op right`` for a normalised operator (``EQ`` ... ``GE``)."""
+    if op == "EQ":
+        return left == right
+    if op == "NE":
+        return left != right
+    if op == "LT":
+        return left < right
+    if op == "GT":
+        return left > right
+    if op == "LE":
+        return left <= right
+    if op == "GE":
+        return left >= right
+    return None
+
+
+@dataclass
+class ConstantComparison(ConditionNode):
+    """``number op number`` -- a comparison of two constants.
+
+    It arises once a SET symbol has been substituted into the condition:
+    Zowe's IBM-shipped ``SZWESAMP`` members code ``// SET OPT=1`` and then
+    ``// IF (&OPT EQ 1) THEN``, which z/OS evaluates as ``(1 EQ 1)``.
+    Its value never depends on the steps.
+    """
+
+    left: int
+    operator: str  # EQ NE LT GT LE GE
+    right: int
+
+    def evaluate(self, step_results: dict[str, StepResult]) -> bool | None:
+        return _compare(self.left, self.operator, self.right)
 
 
 @dataclass
@@ -497,6 +521,10 @@ class _Parser:
             raise ValueError(f"Expected an operator after {value}, got {op_tok!r}")
         self._consume()
         next_tok = self._peek()
+        if next_tok is not None and _RE_DIGITS.match(next_tok):
+            # ``1 EQ 1``: two constants, e.g. after SET substitution.
+            self._consume()
+            return ConstantComparison(left=int(value), operator=op, right=int(next_tok))
         ref = next_tok.upper() if next_tok else ""
         if ref != "RC" and not ref.endswith(".RC"):
             raise ValueError(f"Expected RC after {value} {op_tok}, got {next_tok!r}")

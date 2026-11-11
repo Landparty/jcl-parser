@@ -9,7 +9,11 @@ import logging
 import re
 from typing import Any
 
-from ._semantic_checks import check_job_references, check_step_operands
+from ._semantic_checks import (
+    called_procedure_dds,
+    check_job_references,
+    check_step_operands,
+)
 from .errors import ErrorSeverity, ErrorType, ValidationError
 from .model import (
     ConditionalBlock,
@@ -338,11 +342,38 @@ def validate_backward_references(job: Job) -> list[ValidationError]:
     return errors
 
 
+def _unused_symbol_finding(
+    step: Step, procedure: Procedure, name: str
+) -> ValidationError:
+    """The IEFC657I finding for symbol *name* that *procedure* never uses.
+
+    Against a bundled template (``procedure.is_builtin``) it is only a
+    WARNING: the template is a guess at the IBM PROC, and the site's own
+    member -- not loaded -- may well declare the symbol.
+    """
+    message = (
+        f"Step '{step.name or ''}': symbol {name} is not used by "
+        f"procedure '{step.procedure}' (IEFC657I); the procedure's defaults apply"
+    )
+    if procedure.is_builtin:
+        return ValidationError(
+            f"{message} (checked against the built-in {step.procedure} template; "
+            "the site's PROC may declare it)",
+            ErrorType.SEMANTIC_ERROR,
+            line_number=step.line_number,
+            severity=ErrorSeverity.WARNING,
+        )
+    return ValidationError(
+        message, ErrorType.SEMANTIC_ERROR, line_number=step.line_number
+    )
+
+
 def validate_procedure_references(job: Job) -> list[ValidationError]:
     """Check ``EXEC procname`` calls against the PROCs they call.
 
     A symbolic the call assigns that the PROC never declares or references
-    is an ERROR (``IEFC657I``, issue #172).
+    is an ERROR (``IEFC657I``, issue #172) -- a WARNING when the PROC is a
+    bundled template, which may not match the site's member.
 
     :func:`jclparser.parse_jcl` adds every PROC it can load (in-stream,
     JCLLIB / system PROCLIB under the base path, built-in) to
@@ -359,15 +390,7 @@ def validate_procedure_references(job: Job) -> list[ValidationError]:
         if procedure is not None:
             # A symbolic the PROC never declares or references (IEFC657I).
             for name in unused_proc_symbols(step, procedure):
-                errors.append(
-                    ValidationError(
-                        f"Step '{step.name or ''}': symbol {name} is not used by "
-                        f"procedure '{step.procedure}' (IEFC657I); the "
-                        "procedure's defaults apply",
-                        ErrorType.SEMANTIC_ERROR,
-                        line_number=step.line_number,
-                    )
-                )
+                errors.append(_unused_symbol_finding(step, procedure, name))
             errors.extend(_unknown_override_findings(step, procedure))
         if step.procedure and procedure is None:
             errors.append(
@@ -688,7 +711,7 @@ def validate_data_dependencies(job: Job) -> list[ValidationError]:
     Returns:
         List of validation errors
     """
-    tracker = _TempDatasetTracker()
+    tracker = _TempDatasetTracker(job)
     tracker.walk(job.steps, {})
     return tracker.findings()
 
@@ -710,12 +733,18 @@ def _temp_key(dd: DDStatement) -> str:
 class _TempDatasetTracker:
     """Creation / use of temporary (``&&name``) datasets, in execution order."""
 
-    def __init__(self) -> None:
+    def __init__(self, job: Job | None = None) -> None:
+        self.job = job
         self.errors: list[ValidationError] = []
         #: dataset -> name of the step that (last) created it
         self.created: dict[str, str] = {}
         #: dataset -> line of the first DD that reads or extends it
         self.first_use: dict[str, int] = {}
+        #: temporaries first used after a call to a PROC that is not
+        #: available: it may have created them, so "never created" is unproven
+        self.maybe_created: set[str] = set()
+        #: a call to an unavailable PROC has been walked
+        self.opaque_call_seen = False
 
     def walk(
         self, items: list[Step | ConditionalBlock], active: dict[str, str]
@@ -759,6 +788,37 @@ class _TempDatasetTracker:
         for temp_ds in deleted_here:
             if active.pop(temp_ds, None) is not None:
                 active[_DELETED + temp_ds] = step_name
+        self._add_procedure_temporaries(step, step_name, active)
+
+    def _add_procedure_temporaries(
+        self, step: Step, step_name: str, active: dict[str, str]
+    ) -> None:
+        """Record the temporaries the PROC *step* calls passes on.
+
+        A compile PROC passes ``&&LOADSET`` / ``&&GOSET`` to a later job step
+        (pass 25): every ``&&`` DD the PROC creates and does not delete at its
+        step's end exists after the call.  The call's own DD overrides were
+        checked above and win.  A PROC that is not available may create
+        anything, so later "never created" findings are not made.
+        """
+        if self.job is None or not step.procedure:
+            return
+        proc_dds = called_procedure_dds(self.job, step)
+        if proc_dds is None:
+            self.opaque_call_seen = True
+            return
+        for dd in proc_dds:
+            name = dd.dataset_name or ""
+            if not name.startswith("&&") or not dd.is_output():
+                continue
+            temp_ds = _temp_key(dd)
+            tokens = dd._disp_tokens() if dd.disposition else ["NEW"]
+            normal = tokens[1] if len(tokens) >= 2 else ""
+            if normal == "DELETE" or (tokens[0] == "NEW" and not normal):
+                continue
+            self.created.setdefault(temp_ds, step_name)
+            active.setdefault(temp_ds, step_name)
+            active.pop(_DELETED + temp_ds, None)
 
     def _check_dd(
         self, dd: DDStatement, step_name: str, active: dict[str, str]
@@ -786,6 +846,8 @@ class _TempDatasetTracker:
             active[temp_ds] = step_name
         elif dd.is_input() or extends_existing:
             self.first_use.setdefault(temp_ds, dd.line_number)
+            if self.opaque_call_seen:
+                self.maybe_created.add(temp_ds)
 
         if extends_existing or dd.is_output():
             active.pop(_DELETED + temp_ds, None)
@@ -823,7 +885,7 @@ class _TempDatasetTracker:
         """
         errors = list(self.errors)
         for temp_ds, line_number in self.first_use.items():
-            if temp_ds not in self.created:
+            if temp_ds not in self.created and temp_ds not in self.maybe_created:
                 errors.append(
                     ValidationError(
                         f"Temporary dataset {temp_ds} used but never created",

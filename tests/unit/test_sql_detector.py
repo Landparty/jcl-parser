@@ -24,8 +24,6 @@ class TestIsDb2Program:
             "DSNTEP2",
             "DSNTEP4",
             "DSNTIAD",
-            "IKJEFT01",
-            "IKJEFT1B",
             "DSNUPROC",
             "DSNUTILB",
             "DSNTEP",
@@ -40,6 +38,8 @@ class TestIsDb2Program:
 
     def test_non_db2_program(self):
         assert is_db2_program("IEFBR14") is False
+        # TSO batch on its own is no DB2 program (see TestTsoBatchDb2).
+        assert is_db2_program("IKJEFT01") is False
         assert is_db2_program("SORT") is False
 
     def test_none(self):
@@ -196,7 +196,9 @@ class TestDetectSqlInStep:
 
     def test_multiple_dds(self):
         dd1 = DDStatement(name="SYSIN", inline_data="SELECT * FROM T1")
-        dd2 = DDStatement(name="SYSTSIN", inline_data="BIND PLAN(P) MEMBER(M)")
+        dd2 = DDStatement(
+            name="SYSTSIN", inline_data="DSN SYSTEM(DB2P)\nBIND PLAN(P) MEMBER(M)"
+        )
         step = Step(name="RUN", program="IKJEFT01", dd_statements=[dd1, dd2])
         result = detect_sql_in_step(step)
         assert len(result.sql_statements) == 2
@@ -344,4 +346,4 @@ class TestDb2Programs:
 
     def test_contains_key_programs(self):
         assert "DSNTEP2" in DB2_PROGRAMS
-        assert "IKJEFT01" in DB2_PROGRAMS
+        assert "IKJEFT01" not in DB2_PROGRAMS

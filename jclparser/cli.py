@@ -37,7 +37,7 @@ import contextlib
 import io
 import json
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -56,12 +56,15 @@ from .checks import (
 from .dataset_lifecycle import analyze_dataset_lifecycle, validate_dataset_lifecycle
 from .errors import (
     CircularProcedureError,
+    ErrorSeverity,
     ExplosionDepthError,
     JCLStructureError,
     JCLSyntaxError,
     JCLValidationError,
+    ParseError,
     ProcedureNotFoundError,
     UndefinedSymbolError,
+    ValidationError,
 )
 from .jcl_file_type import detect_file_type
 from .lineage import JobStream, LineageReport, load_job_stream
@@ -147,6 +150,7 @@ def _main(argv: list[str] | None = None) -> int:
             json_output=args.json_output,
             proc_path=args.proc_path,
             sarif=args.sarif,
+            fail_on=_validate_fail_on(args),
         )
 
     # --- detect mode (no parse needed) ---
@@ -256,8 +260,9 @@ examples:
 exit codes:
   0  success
   1  the file could not be read or parsed, a name was not found, or a check
-     reported something (--validate errors, lint findings at --fail-on or
-     above, dataset / SQL findings)
+     reported something (--validate errors -- or findings at --fail-on or
+     above when it is given --, lint findings at --fail-on or above,
+     dataset / SQL findings)
   2  the command line was rejected
 
 defaults:
@@ -352,7 +357,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--fail-on",
         choices=("info", "warning", "error"),
         default=None,
-        help="Lowest lint severity that exits 1 (default: config, else info)",
+        help=(
+            "Lowest severity that exits 1: for lint the default is the config, "
+            "else info; for --validate it is error"
+        ),
     )
     parser.add_argument(
         "--profile",
@@ -602,7 +610,7 @@ def _cmd_directory(path: Path, args: argparse.Namespace) -> int:
             print(f"Error: no files matching {args.glob!r} in {path}", file=sys.stderr)
             return 1
         _print_reports(reports, args, "OK - no errors found.")
-        return 1 if any(r.findings for r in reports) else 0
+        return exit_code(reports, _validate_fail_on(args))
     if tokens == ["lint"] and not args.validate:
         return _cmd_lint_directory(path, args)
     if args.validate or (tokens and tokens[0] != "lineage"):
@@ -715,20 +723,40 @@ def _print_lineage(stream: JobStream, report: LineageReport) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _validate_fail_on(args: argparse.Namespace) -> ErrorSeverity:
+    """The lowest severity that fails ``--validate``: ``--fail-on``, else ERROR.
+
+    A WARNING alone (a duplicate step name, a PROC not found in any
+    library) used to exit 1 although the help promised that only errors do.
+    """
+    if args.fail_on:
+        return parse_severity(args.fail_on, "--fail-on")
+    return ErrorSeverity.ERROR
+
+
+def _validate_exit(
+    errors: Sequence[ParseError | ValidationError], fail_on: ErrorSeverity
+) -> int:
+    """1 when a finding in *errors* is at least as severe as *fail_on*."""
+    return exit_code([FileReport("", [as_finding(e) for e in errors])], fail_on)
+
+
 def _cmd_validate(
     path: Path | str,
     json_output: bool = False,
     proc_path: str | None = None,
     sarif: bool = False,
+    fail_on: ErrorSeverity = ErrorSeverity.ERROR,
 ) -> int:
     # --proc-path is the base for external PROCs and INCLUDE members, as for
     # every other command; without it JCL_PROCLIB_PATH still applies (#129).
     errors = validate_jcl(path, level="structure", proc_base_path=proc_path)
+    status = _validate_exit(errors, fail_on)
     if sarif:
         uri = path.as_posix() if isinstance(path, Path) else None
         findings = [as_finding(err) for err in errors]
         print(json.dumps(to_sarif(findings, artifact_uri=uri), indent=2))
-        return 0 if not errors else 1
+        return status
     if json_output:
         items = [
             {
@@ -740,8 +768,9 @@ def _cmd_validate(
             }
             for err in errors
         ]
-        print(json.dumps({"valid": len(items) == 0, "errors": items}, indent=2))
-        return 0 if not items else 1
+        valid = not any(i["severity"] == "ERROR" for i in items)
+        print(json.dumps({"valid": valid, "errors": items}, indent=2))
+        return status
     if not errors:
         print("OK - no errors found.")
         return 0
@@ -751,7 +780,7 @@ def _cmd_validate(
         line = getattr(err, "line_number", None)
         loc = f" line {line}" if line else ""
         print(f"{tag}{loc} {err.message}")
-    return 1
+    return status
 
 
 def _cmd_list_available(
@@ -1099,7 +1128,7 @@ def _print_procs(job: Job, proc_path: str | None = None) -> None:
         print("(no inline procedures)")
     else:
         for proc in job.procedures:
-            tag = "[external]" if proc.is_external else "[inline]"
+            tag = _proc_tag(proc)
             print(f"PROC: {proc.name}  {tag}")
             if proc.parameters:
                 for k, v in proc.parameters.items():
@@ -1139,9 +1168,16 @@ def _no_external_procs_note(job: Job, proc_path: str) -> str:
     )
 
 
+def _proc_tag(proc: Procedure) -> str:
+    """``[builtin]`` (bundled template), ``[external]`` or ``[inline]``."""
+    if proc.is_builtin:
+        return "[builtin]"
+    return "[external]" if proc.is_external else "[inline]"
+
+
 def _print_proc_detail(proc: Procedure) -> None:
     """Print full detail for a single PROC definition."""
-    tag = "[external]" if proc.is_external else "[inline]"
+    tag = _proc_tag(proc)
     print(f"PROC: {proc.name}  {tag}  (line {proc.line_number})")
     if proc.parameters:
         print("  Parameters (defaults):")
@@ -1300,8 +1336,12 @@ def _print_dd_brief(dd: DDStatement, indent: int = 0) -> None:
     disp = f"DISP={_fmt_value(dd.disposition)}" if dd.disposition else ""
     inline = " [inline data]" if dd.has_inline_data else ""
     sysout_val = dd.parameters.get("SYSOUT")
-    sysout = f"SYSOUT={sysout_val}" if sysout_val else ""
-    parts = [p for p in [dsn, disp, sysout] if p]
+    sysout = f"SYSOUT={_fmt_value(sysout_val)}" if sysout_val else ""
+    # Positional operands: DUMMY used to leave the line blank.
+    positional = [
+        _fmt_value(v) for k, v in dd.parameters.items() if is_positional_key(k)
+    ]
+    parts = [p for p in [*positional, dsn, disp, sysout] if p]
     detail = "  ".join(parts)
     print(f"{pad}{dd.name:<12} {detail}{inline}")
 
@@ -1314,7 +1354,7 @@ def _print_dd_detail(dd: DDStatement) -> None:
         print(f"    DISP={_fmt_value(dd.disposition)}")
     sysout_val = dd.parameters.get("SYSOUT")
     if sysout_val:
-        print(f"    SYSOUT={sysout_val}")
+        print(f"    SYSOUT={_fmt_value(sysout_val)}")
     # Show other interesting parameters
     skip_keys = {"DSN", "DSNAME", "DISP", "SYSOUT", "DCB", "SPACE", "*"}
     for k, v in dd.parameters.items():

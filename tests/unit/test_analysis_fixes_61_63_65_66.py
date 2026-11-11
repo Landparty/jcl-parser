@@ -192,10 +192,9 @@ class TestProfileSqlMatchesSqlDetector:
     def test_tso_delete_alter_not_embedded_sql(self):
         job = parse_jcl(_TSO_DELETE_ALTER)
         assert analyze_job(job)[0].notes == ["CALL(MYPGM)"]
-        # IKJEFT01 stays flagged as a possible DB2 driver (is_db2_program),
-        # but no SQL statement is found -- the two APIs agree.
-        (det,) = detect_sql_in_job(job)
-        assert det.sql_statements == []
+        # No DSN command and no DB2 library: TSO batch running no DB2 work
+        # is not reported at all, and no SQL statement is found.
+        assert detect_sql_in_job(job) == []
 
     def test_tso_bind_still_reported(self):
         job = parse_jcl(
