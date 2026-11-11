@@ -9,6 +9,7 @@
 * **Change**: JCL-LINT-001 leaves system and product libraries alone (`LintConfig.system_hlqs`, default `DEFAULT_SYSTEM_HLQS`: `SYS1`, `CEE`, `IGY*`, `DSN*`, `DFH*`, ...; TOML `system-hlqs`) and placeholder HLQs (`<HLQ>`, `{prefix}`). On the corpus it went from 874 findings (348 on `SYS1.*`) to 382.
 * **Already fixed**: pass 7's comment after a continued quoted string on JOB (`job_class == 'A   CMT'`) and on `SUBSYS=`.
 * **Not changed** (deliberate, as before): a SYSOUT override keeping the PROC's DISP, duplicate step names as a WARNING, the three-level override, symbols on the JOB statement, `TIME` / `REGION` / `MSGLEVEL` values, `ABENDCC` conditions (documented limitation) and `MockSystemSymbolProvider` as the explosion default (design note).
+* **Fix** (pass 28): a NUL no longer makes valid JCL "Not a JCL file" by itself. NUL padding after the last record and a few non-printable bytes in in-stream data are JCL; content is binary only when its first record holds a NUL or more than 5 % of it is control characters (`parser._looks_binary`).
 * **Tests**: `tests/unit/test_open_bughunt_items.py`.
 
 ## 2026-11-11 (CLI sweep over open-source JCL)

@@ -344,3 +344,31 @@ class TestLiteralHlqRule:
     def test_system_hlqs_must_be_strings(self) -> None:
         with pytest.raises(LintConfigError, match="system-hlqs"):
             lint_config_from_mapping({"system-hlqs": "SYS1"})
+
+
+# ---------------------------------------------------------------------------
+# Pass 28: a stray NUL does not make valid JCL "Not a JCL file"
+# ---------------------------------------------------------------------------
+
+
+class TestNulBytes:
+    JOB = "//J JOB 1\n//S EXEC PGM=X\n//IN DD *\nA\n/*\n"
+
+    def test_trailing_nul_padding_is_jcl(self) -> None:
+        assert validate_jcl(self.JOB + "\x00" * 50) == []
+
+    def test_nul_in_instream_data_is_jcl(self) -> None:
+        assert validate_jcl(self.JOB.replace("\nA\n", "\nA\x00B\n")) == []
+
+    def test_nul_in_first_record_is_binary(self) -> None:
+        errors = validate_jcl("\x00\x01//J JOB 1\n//S EXEC PGM=X\n")
+        assert [e.message for e in errors] == [
+            "Not a JCL file: binary content (NUL bytes)"
+        ]
+
+    def test_mostly_control_characters_is_binary(self) -> None:
+        noise = "".join(chr(i % 32) for i in range(2000))
+        errors = validate_jcl(self.JOB + noise)
+        assert [e.message for e in errors] == [
+            "Not a JCL file: binary content (NUL bytes)"
+        ]

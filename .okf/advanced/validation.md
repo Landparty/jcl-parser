@@ -75,7 +75,9 @@ the same source succeeds and has steps, its `job.validate()` findings are added 
 library no longer hides duplicate names, bad DISPs and the rest.
 
 **Files that are not JCL.** Before parsing, `validate_jcl()` returns a single ERROR
-for content that is plainly not JCL: `Not a JCL file: binary content (NUL bytes)`, or
+for content that is plainly not JCL: `Not a JCL file: binary content (NUL bytes)` (a NUL in
+the first record, or NULs with more than 5 % control characters; NUL padding after the last
+record and stray bytes in in-stream data do not count, `parser._looks_binary`), or
 `Not a JCL file: no record starts with //` for non-blank text with no `//` record
 (empty input keeps "No JOB statement found"). The line-by-line pass reports the first
 20 "Invalid JCL statement (must start with //)" records and sums up the rest as one

@@ -757,11 +757,11 @@ _MAX_NON_JCL_RECORD_ERRORS = 20
 def _not_jcl_error(content: str) -> ParseError | None:
     """One ERROR when *content* is plainly not JCL, else ``None``.
 
-    That is binary content (a NUL character) or non-blank text in which no
-    record starts with ``//`` (empty input keeps its "No JOB statement
-    found").
+    That is binary content (:func:`_looks_binary`) or non-blank text in
+    which no record starts with ``//`` (empty input keeps its "No JOB
+    statement found").
     """
-    if "\x00" in content:
+    if _looks_binary(content):
         message = "Not a JCL file: binary content (NUL bytes)"
     elif content.strip() and not any(
         line.startswith("//") for line in content.splitlines()
@@ -775,6 +775,30 @@ def _not_jcl_error(content: str) -> ParseError | None:
         line_number=1,
         severity=ErrorSeverity.ERROR,
     )
+
+
+#: Share of control characters (other than tab, newline, carriage return,
+#: form feed) above which content is binary, not text: random bytes give
+#: about 11 %, JCL with a few hex constants in its in-stream data far less.
+_BINARY_CONTROL_SHARE = 0.05
+_TEXT_CONTROLS = frozenset("\t\n\r\f")
+
+
+def _looks_binary(content: str) -> bool:
+    """Whether *content* is binary rather than JCL text.
+
+    A NUL counts only in the first record or among many control characters:
+    NUL padding after the last record (a fixed-block transfer) and a few
+    non-printable bytes in in-stream data are still JCL (pass 28).
+    """
+    body = content.rstrip("\x00 \t\r\n")
+    if "\x00" not in body:
+        return False
+    first = next((line for line in body.splitlines() if line.strip()), "")
+    if "\x00" in first:
+        return True
+    controls = sum(1 for char in body if char < " " and char not in _TEXT_CONTROLS)
+    return controls > _BINARY_CONTROL_SHARE * len(body)
 
 
 def _cap_non_jcl_records(errors: list[ParseError]) -> list[ParseError]:
