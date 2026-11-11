@@ -48,6 +48,8 @@ _DEFINE_KINDS = {
     "NVSAM": "NONVSAM",
     "USERCATALOG": "USERCATALOG",
     "UCAT": "USERCATALOG",
+    # A catalog alias: no dataset is allocated (noted, no dataset event).
+    "ALIAS": "ALIAS",
 }
 _RE_DEFINE = re.compile(
     r"^\s*DEF(?:INE)?\s+("
@@ -64,12 +66,37 @@ _RE_NAME_PARAM = re.compile(
 _RE_REPRO = re.compile(r"^\s*REPRO\b", re.IGNORECASE | re.MULTILINE)
 _RE_ALTER = re.compile(r"^\s*ALTER\s+([A-Z0-9.@#$\-']+)", re.IGNORECASE | re.MULTILINE)
 _RE_LISTCAT = re.compile(r"^\s*LISTCAT\b", re.IGNORECASE | re.MULTILINE)
+# ``BLDINDEX`` (abbreviation ``BIX``) builds an alternate index from its base.
+_RE_BLDINDEX = re.compile(r"^\s*(?:BLDINDEX|BIX)\b", re.IGNORECASE | re.MULTILINE)
+_RE_INDATASET = re.compile(
+    r"\b(?:INDATASET|IDS)\s*\(\s*('[^']*'|[A-Z0-9.@#$&\-]+)\s*\)", re.IGNORECASE
+)
+_RE_OUTDATASET = re.compile(
+    r"\b(?:OUTDATASET|ODS)\s*\(\s*('[^']*'|[A-Z0-9.@#$&\-]+)\s*\)", re.IGNORECASE
+)
 # A command also starts after ``THEN`` / ``ELSE`` (``IF LASTCC = 0 THEN
 # DELETE X``) and after a ``;`` terminator (``DELETE A; DELETE B``).  Not
 # inside a name: ``MY.THEN.FILE`` is no keyword.
 _RE_COMMAND_START = re.compile(
     r"(?:(?<![^\s)])(THEN|ELSE)(?=\s|$)|;)", re.IGNORECASE | re.MULTILINE
 )
+
+
+def _bldindex_notes(text: str) -> list[str]:
+    """One note per ``BLDINDEX`` command of *text* (one command per line)."""
+    notes = []
+    for m in _RE_BLDINDEX.finditer(text):
+        end = text.find("\n", m.end())
+        command = text[m.end() : end if end != -1 else len(text)]
+        source = _RE_INDATASET.search(command)
+        target = _RE_OUTDATASET.search(command)
+        note = "IDCAMS BLDINDEX"
+        if source:
+            note += f" {_strip_quotes(source.group(1))}"
+        if target:
+            note += f" -> {_strip_quotes(target.group(1))}"
+        notes.append(note)
+    return notes
 
 
 # Objects whose DEFINE creates a dataset that later steps or jobs read.
@@ -187,6 +214,9 @@ class IDCAMSProfile(ProgramProfile):
             tail = text[m.end() : end if end != -1 else len(text)]
             name_m = _RE_NAME_PARAM.search(tail)
             dsn = _strip_quotes(name_m.group(1)) if name_m else "(unknown)"
+            notes.append(f"IDCAMS DEFINE {define_kind} {dsn}")
+            if define_kind == "ALIAS":
+                continue  # a catalog entry, not a dataset
             events.append(
                 DatasetEvent(
                     step_name=step.name or "",
@@ -197,7 +227,8 @@ class IDCAMSProfile(ProgramProfile):
                     line_number=step.line_number,
                 )
             )
-            notes.append(f"IDCAMS DEFINE {define_kind} {dsn}")
+
+        notes.extend(_bldindex_notes(text))
 
         if _RE_REPRO.search(text):
             notes.append("IDCAMS REPRO (copy INFILE -> OUTFILE)")

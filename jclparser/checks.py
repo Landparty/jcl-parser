@@ -87,8 +87,16 @@ def as_finding(err: ParseError | ValidationError) -> ValidationError:
     )
 
 
+#: The longest parse-failure message a report quotes.
+_MAX_FAILURE_MESSAGE = 160
+
+
 def _parse_failure(exc: Exception) -> ValidationError:
     message = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+    # A binary file's first "statement" is raw bytes: keep the report text.
+    message = "".join(c if c.isprintable() else "?" for c in message)
+    if len(message) > _MAX_FAILURE_MESSAGE:
+        message = message[: _MAX_FAILURE_MESSAGE - 3] + "..."
     return ValidationError(
         message=f"Not parsed: {message}",
         error_type=ErrorType.SYNTAX_ERROR,

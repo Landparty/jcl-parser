@@ -338,11 +338,38 @@ def validate_backward_references(job: Job) -> list[ValidationError]:
     return errors
 
 
+def _unused_symbol_finding(
+    step: Step, procedure: Procedure, name: str
+) -> ValidationError:
+    """The IEFC657I finding for symbol *name* that *procedure* never uses.
+
+    Against a bundled template (``procedure.is_builtin``) it is only a
+    WARNING: the template is a guess at the IBM PROC, and the site's own
+    member -- not loaded -- may well declare the symbol.
+    """
+    message = (
+        f"Step '{step.name or ''}': symbol {name} is not used by "
+        f"procedure '{step.procedure}' (IEFC657I); the procedure's defaults apply"
+    )
+    if procedure.is_builtin:
+        return ValidationError(
+            f"{message} (checked against the built-in {step.procedure} template; "
+            "the site's PROC may declare it)",
+            ErrorType.SEMANTIC_ERROR,
+            line_number=step.line_number,
+            severity=ErrorSeverity.WARNING,
+        )
+    return ValidationError(
+        message, ErrorType.SEMANTIC_ERROR, line_number=step.line_number
+    )
+
+
 def validate_procedure_references(job: Job) -> list[ValidationError]:
     """Check ``EXEC procname`` calls against the PROCs they call.
 
     A symbolic the call assigns that the PROC never declares or references
-    is an ERROR (``IEFC657I``, issue #172).
+    is an ERROR (``IEFC657I``, issue #172) -- a WARNING when the PROC is a
+    bundled template, which may not match the site's member.
 
     :func:`jclparser.parse_jcl` adds every PROC it can load (in-stream,
     JCLLIB / system PROCLIB under the base path, built-in) to
@@ -359,15 +386,7 @@ def validate_procedure_references(job: Job) -> list[ValidationError]:
         if procedure is not None:
             # A symbolic the PROC never declares or references (IEFC657I).
             for name in unused_proc_symbols(step, procedure):
-                errors.append(
-                    ValidationError(
-                        f"Step '{step.name or ''}': symbol {name} is not used by "
-                        f"procedure '{step.procedure}' (IEFC657I); the "
-                        "procedure's defaults apply",
-                        ErrorType.SEMANTIC_ERROR,
-                        line_number=step.line_number,
-                    )
-                )
+                errors.append(_unused_symbol_finding(step, procedure, name))
             errors.extend(_unknown_override_findings(step, procedure))
         if step.procedure and procedure is None:
             errors.append(

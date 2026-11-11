@@ -1,5 +1,18 @@
 # Update Log
 
+## 2026-11-11 (CLI sweep over open-source JCL)
+Every `jcl-parser` subcommand was run on 491 JCL files from 19 public GitHub repositories (Zowe, IBM samples, CardDemo, MVS sysgen, ...). No crashes; these fixes come from its findings.
+* **Fix**: `parse_condition` reads a comparison of two numbers (`(0 EQ 1)`) as the new `ConstantComparison` node. #195's SET substitution in IF turned Zowe's `IF (&IFZOWECA EQ 1)` into one, which was then warned about as unreadable and left out of `paths`; now it validates clean and the dead branch is reported unreachable. See [core/data-model](core/data-model.md#condition-ast-node-types).
+* **Fix**: a PROC from the bundled templates (`builtin_procs`) is marked `Procedure.is_builtin`; `procs` lists it `[builtin]` (it said `[external]`) and an IEFC657I unused-symbol finding against it is a WARNING, not an ERROR (the COBOL course's `IGYWCLG,SRC=` was an ERROR against the template). See [advanced/proc-expansion](advanced/proc-expansion.md).
+* **Fix**: SQL detection no longer counts every `IKJEFT01`/`1A`/`1B` step as DB2 (they left `DB2_PROGRAMS`); TSO batch is DB2 only with a `DSN` command in SYSTSIN or an `SDSNLOAD`/`SDSNEXIT` STEPLIB or JOBLIB, and without that its in-stream data is not scanned for SQL (Zowe's `SYSTSIN DD DDNAME=RACF`). Assembler (`IFOX00`, `ASMA90`, `IEV90`, IBM `ASMF*`/`ASMA*` PROCs), binder, SMP/E (`GIMSMP`, `SMPCNTL`/`SMPPTFIN` DDs), `DFHCSDUP` and `IXCMIAPU` input is not scanned (`DROP`, `SELECT`, `DELETE`). See [api/public-api](api/public-api.md).
+* **Fix**: `validate_jcl` gives one ERROR for a binary file or text with no `//` record, and caps "must start with //" errors at 20 plus a summary; `DIR --validate --glob '**/*'` produced 388 MB on one repository and ran out of memory on another. `DIR lint` / `jcl-lint` parse-failure messages are made printable and cut at 160 characters. See [advanced/validation](advanced/validation.md#strict-parse-fallback).
+* **Change**: `--validate` (file and directory) exits 1 only for an ERROR, as its help said; a WARNING alone exits 0 unless `--fail-on warning`/`info` is given, and `--json`'s `valid` ignores warnings. See [api/cli-reference](api/cli-reference.md).
+* **Fix**: an empty `DD *` that is the last statement of the file is an empty in-stream dataset (`inline_data == ""`), not a DD with no data source.
+* **Fix**: `analyze`: IEBGENER/ICEGENER with in-stream SYSUT1 or SYSOUT SYSUT2 (the `SYSOUT=(A,INTRDR)` submit idiom) is a copy, with `reads in-stream data` / `writes to the internal reader` notes; IDCAMS notes `BLDINDEX` and `DEFINE ALIAS` (no dataset event for an alias).
+* **Fix**: step and DD display shows positional operands (`DUMMY` was a blank line) and SYSOUT sublists as `SYSOUT=(A,INTRDR)` instead of a Python list.
+* **Not changed**: `//BGZGIT JOB <JOB PARAMETERS>` still shows `Acct: <JOB`: the operand field ends at the first blank (invariant 7), so that is what the card says.
+* **Tests**: `tests/unit/test_cli_open_repo_sweep.py`.
+
 ## 2026-11-11 (bug-hunt fixes: passes 3-21)
 * **Fix**: a statement record longer than 80 columns was cut at column 71 like a card image, silently dropping operands. It is now read whole and reported (WARNING on `Job.statement_findings`); see [development/invariants](development/invariants.md) (1).
 * **Fix**: a trailing comma followed by a nameless statement (`// SET`, `// PEND`, `// ENDIF`, `// ELSE`, `// INCLUDE`, `// DD`) no longer merges that statement into the previous one as junk keys (`'SET X'`); it is parsed as its own statement and the comma is the usual "expected continuation not received" ERROR.

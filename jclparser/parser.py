@@ -573,6 +573,13 @@ def validate_jcl(
         # returns nothing on a second read (issue #132).
         source = read_source(source)
 
+    not_jcl = _not_jcl_error(source)
+    if not_jcl is not None:
+        # A binary file or one with no ``//`` record at all: one finding,
+        # not one "must start with //" error per line (a directory
+        # ``--validate`` over a repo used to emit gigabytes).
+        return [not_jcl]
+
     # First try normal parsing to catch basic structure issues
     try:
         # Strict parse for the parse-time structure errors (unresolvable
@@ -742,6 +749,59 @@ def _add_plugin_findings(
             )
 
 
+#: How many "must start with //" errors the line-by-line pass reports
+#: before it sums up the rest in one finding.
+_MAX_NON_JCL_RECORD_ERRORS = 20
+
+
+def _not_jcl_error(content: str) -> ParseError | None:
+    """One ERROR when *content* is plainly not JCL, else ``None``.
+
+    That is binary content (a NUL character) or non-blank text in which no
+    record starts with ``//`` (empty input keeps its "No JOB statement
+    found").
+    """
+    if "\x00" in content:
+        message = "Not a JCL file: binary content (NUL bytes)"
+    elif content.strip() and not any(
+        line.startswith("//") for line in content.splitlines()
+    ):
+        message = "Not a JCL file: no record starts with //"
+    else:
+        return None
+    return ParseError(
+        error_type=ErrorType.SYNTAX_ERROR,
+        message=message,
+        line_number=1,
+        severity=ErrorSeverity.ERROR,
+    )
+
+
+def _cap_non_jcl_records(errors: list[ParseError]) -> list[ParseError]:
+    """Keep the first :data:`_MAX_NON_JCL_RECORD_ERRORS` "must start with //"
+    errors in *errors* and replace the rest with one summary finding."""
+    marker = "Invalid JCL statement (must start with //)"
+    bad = [e for e in errors if e.message.startswith(marker)]
+    if len(bad) <= _MAX_NON_JCL_RECORD_ERRORS:
+        return errors
+    dropped = {id(e) for e in bad[_MAX_NON_JCL_RECORD_ERRORS:]}
+    kept = [e for e in errors if id(e) not in dropped]
+    last = bad[_MAX_NON_JCL_RECORD_ERRORS - 1]
+    kept.insert(
+        kept.index(last) + 1,
+        ParseError(
+            error_type=ErrorType.SYNTAX_ERROR,
+            message=(
+                f"{len(dropped)} more record(s) do not start with // "
+                "(not reported one by one)"
+            ),
+            line_number=bad[_MAX_NON_JCL_RECORD_ERRORS].line_number,
+            severity=ErrorSeverity.ERROR,
+        ),
+    )
+    return kept
+
+
 def _validate_line_by_line(
     source: str | Path | IO[Any],
     config: ParserConfig | None,
@@ -794,6 +854,7 @@ def _validate_line_by_line(
         _check_statement(line, line_num, config, structure, errors)
 
     structure.finish()
+    errors = _cap_non_jcl_records(errors)
     if strict_error is not None and not structure.exempt_from(strict_error):
         _add_unless_reported(_strict_parse_error(strict_error), errors)
     return errors

@@ -24,6 +24,9 @@ customer/site PROCs of the same name always take precedence.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+from .model import Procedure
 from .proc_loader import DictProcedureLoader, ProcedureLoader
 
 # ---------------------------------------------------------------------------
@@ -236,11 +239,24 @@ BUILTIN_UTILITY_PROCS: dict[str, str] = {
 }
 
 
+class _BuiltinProcedureLoader(DictProcedureLoader):
+    """A :class:`DictProcedureLoader` that marks what it loads ``is_builtin``."""
+
+    def load_procedure(
+        self, name: str, libraries: Sequence[str] | None = None
+    ) -> Procedure | None:
+        proc = super().load_procedure(name, libraries)
+        if proc is not None:
+            proc.is_builtin = True
+        return proc
+
+
 def create_builtin_proc_loader() -> ProcedureLoader:
     """Return a loader serving the bundled utility PROC templates.
 
-    The loader is a plain :class:`DictProcedureLoader`; place it last in a
-    :class:`CompositeProcedureLoader` chain so inline and site PROCs override
-    these defaults.
+    The loader is a :class:`DictProcedureLoader` that sets
+    :attr:`~jclparser.model.Procedure.is_builtin` on each PROC it returns;
+    place it last in a :class:`CompositeProcedureLoader` chain so inline and
+    site PROCs override these defaults.
     """
-    return DictProcedureLoader(BUILTIN_UTILITY_PROCS)
+    return _BuiltinProcedureLoader(BUILTIN_UTILITY_PROCS)

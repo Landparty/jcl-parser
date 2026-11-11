@@ -244,6 +244,9 @@ class Procedure:
     steps: list[Step | ConditionalBlock] = field(default_factory=list)
     line_number: int = 0
     is_external: bool = False
+    #: True for a bundled template from :mod:`jclparser.builtin_procs` -- a
+    #: guess at a common IBM PROC, not the site's own member.
+    is_builtin: bool = False
     set_statements: dict[str, str] = field(default_factory=dict)
     #: The text an external PROC was read from (for INCLUDE expansion at
     #: explosion, issue #153); None for an in-stream PROC.

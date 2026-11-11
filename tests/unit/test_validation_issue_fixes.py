@@ -42,11 +42,13 @@ class TestValidateJclReportsStructuralErrors:
     def test_cli_validate_exits_nonzero(self, tmp_path, capsys):
         jcl = tmp_path / "dup.jcl"
         jcl.write_text(DUP_STEP_JCL)
+        # A WARNING alone exits 0, as the help says; --fail-on warning fails.
         rc = main([str(jcl), "--validate"])
         out = capsys.readouterr().out
-        assert rc == 1
+        assert rc == 0
         assert "Duplicate step name: S1" in out
         assert "OK - no errors found." not in out
+        assert main([str(jcl), "--validate", "--fail-on", "warning"]) == 1
 
 
 BRANCH_TEMP_JCL = """\

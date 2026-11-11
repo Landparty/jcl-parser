@@ -8,6 +8,7 @@ identifies steps that execute known DB2 utility programs.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -24,14 +25,20 @@ DB2_PROGRAMS: frozenset[str] = frozenset(
         "DSNTEP4",  # DB2 batch SQL processor (extended)
         "DSNTIAD",  # DB2 interactive SQL
         "DSNTIAUL",  # DB2 sample unload utility
-        "IKJEFT01",  # TSO batch - commonly used to run DB2 commands
-        "IKJEFT1A",  # TSO batch (alias)
-        "IKJEFT1B",  # TSO batch (alias)
         "DSNUPROC",  # DB2 utility driver
         "DSNUTILB",  # DB2 utility (batch)
         "DSNTEP",  # DB2 test (short name)
     }
 )
+
+# TSO batch (the terminal monitor program).  It runs DB2 work only through
+# the DSN command processor, so a step running it is a DB2 step when its
+# SYSTSIN holds a ``DSN`` command or its STEPLIB / JOBLIB is a DB2 library
+# (``SDSNLOAD``, ``SDSNEXIT``); otherwise it runs REXX, RACF, OGET, ... .
+TSO_BATCH_PROGRAMS: frozenset[str] = frozenset({"IKJEFT01", "IKJEFT1A", "IKJEFT1B"})
+
+_DSN_COMMAND_RE = re.compile(r"^\s*DSN(\s|\(|$)", re.IGNORECASE | re.MULTILINE)
+_DB2_LIBRARY_RE = re.compile(r"\.SDSN(LOAD|EXIT)\b", re.IGNORECASE)
 
 # Catalogued PROCs that run DB2 work (``EXEC DSNUPROC`` names a PROC, not a
 # program).  On an exploded job their steps run the DB2 programs themselves.
@@ -53,6 +60,9 @@ DB2_PROCEDURES: frozenset[str] = frozenset(
 # ``program``, so the step is classified by the program its PROC runs.
 PROCEDURE_PROGRAMS: dict[str, str] = {
     "DSNUPROC": "DSNUTILB",
+    # IBM assembler PROCs: their SYSIN is assembler source (DROP, USING, ...)
+    **dict.fromkeys(("ASMFC", "ASMFCL", "ASMFCG", "ASMFCLG"), "IFOX00"),
+    **dict.fromkeys(("ASMAC", "ASMACL", "ASMACG", "ASMACLG"), "ASMA90"),
 }
 
 # Programs whose in-stream data is their own control language, not SQL.  Their
@@ -61,9 +71,14 @@ PROCEDURE_PROGRAMS: dict[str, str] = {
 NON_SQL_CONTROL_PROGRAMS: frozenset[str] = frozenset(
     {
         "ADRDSSU",
+        "ASMA90",  # assemblers: DROP, USING, ... are instructions
         "BPXBATCH",
+        "DFHCSDUP",  # CICS CSD utility: DEFINE / DELETE resources
         "DFSORT",
         "FTP",
+        "GIMSMP",  # SMP/E: APPLY SELECT(...), REJECT, ...
+        "HEWL",
+        "HEWLH096",
         "ICEGENER",
         "ICEMAN",
         "ICETOOL",
@@ -75,10 +90,15 @@ NON_SQL_CONTROL_PROGRAMS: frozenset[str] = frozenset(
         "IEBPTPCH",
         "IEBUPDTE",
         "IEFBR14",
+        "IEV90",
+        "IEWBLINK",
+        "IEWL",
+        "IFOX00",
         "IEHINITT",
         "IEHLIST",
         "IEHPROGM",
         "IRXJCL",
+        "IXCMIAPU",  # logger / CFRM policy utility: DELETE LOGSTREAM
         "SORT",
         "SORTD",
         "SYNCSORT",
@@ -91,6 +111,11 @@ NON_SQL_CONTROL_PROGRAMS: frozenset[str] = frozenset(
 # whose options reuse SQL verbs; only the SQL inside an ``EXEC SQL ...
 # ENDEXEC`` utility statement is SQL.
 DB2_UTILITY_CONTROL_PROGRAMS: frozenset[str] = frozenset({"DSNUTILB"})
+
+# DD names whose in-stream data is a non-SQL control language whatever the
+# program (SMP/E reads SMPCNTL; on an unexploded SMP/E PROC call the step has
+# no program to go by).
+NON_SQL_CONTROL_DDS: frozenset[str] = frozenset({"SMPCNTL", "SMPPTFIN"})
 
 _EXEC_SQL_RE = re.compile(r"\bEXEC\s+SQL\b", re.IGNORECASE)
 _ENDEXEC_RE = re.compile(r"\bENDEXEC\b", re.IGNORECASE)
@@ -170,7 +195,12 @@ class SQLDetectionResult:
 
 
 def is_db2_program(program_name: str | None) -> bool:
-    """Return True if *program_name* is a known DB2 utility."""
+    """Return True if *program_name* is a known DB2 utility.
+
+    TSO batch (:data:`TSO_BATCH_PROGRAMS`) is not one on its own;
+    :func:`detect_sql_in_step` decides from the step's DDs whether it runs
+    DB2 work.
+    """
     if not program_name:
         return False
     return program_name.upper() in DB2_PROGRAMS
@@ -241,7 +271,7 @@ def detect_sql_in_dd(dd: DDStatement) -> list[tuple[str, str]]:
 
 
 def detect_sql_in_step(
-    step: Step, procedure: Procedure | None = None
+    step: Step, procedure: Procedure | None = None, joblib: Sequence[str] = ()
 ) -> SQLDetectionResult:
     """Analyse a step for SQL content.
 
@@ -257,25 +287,56 @@ def detect_sql_in_step(
     as ``BIND`` count.  For a program in
     :data:`DB2_UTILITY_CONTROL_PROGRAMS` only ``EXEC SQL ... ENDEXEC``
     utility statements are scanned
-    (:func:`detect_sql_in_utility_statements`).
+    (:func:`detect_sql_in_utility_statements`).  TSO batch counts as a DB2
+    program only when it runs the DSN command processor
+    (:func:`_tso_step_runs_db2`; *joblib* is the job's JOBLIB datasets).
     """
     result = SQLDetectionResult(
         step_name=step.name,
         program=step.program,
         is_db2_program=is_db2_program(step.program)
-        or bool(step.procedure and step.procedure.upper() in DB2_PROCEDURES),
+        or bool(step.procedure and step.procedure.upper() in DB2_PROCEDURES)
+        or _tso_step_runs_db2(step, joblib),
     )
+    # TSO batch without the DSN command processor runs no SQL at all: its
+    # in-stream data is TSO / RACF / REXX input whatever the DD is called
+    # (``//SYSTSIN DD DDNAME=RACF`` reads the RACF DD).
+    tso_only = (
+        step.program or ""
+    ).upper() in TSO_BATCH_PROGRAMS and not result.is_db2_program
     is_tso_input = False
     for dd in _dataset_dds(step):
         # An unnamed DD is a concatenation member of the last named one, so
         # ``//  DD *`` after ``//SYSTSIN DD ...`` is TSO input too.
         if dd.name:
-            is_tso_input = dd.name.upper().rpartition(".")[2] == _TSO_COMMAND_DD
+            is_tso_input = tso_only or (
+                dd.name.upper().rpartition(".")[2] == _TSO_COMMAND_DD
+            )
         for kw, cat in _sql_in_program_input(dd, _dd_program(step, dd, procedure)):
             if is_tso_input and cat not in _TSO_SQL_CATEGORIES:
                 continue
             result.sql_statements.append((kw, cat, dd.name))
     return result
+
+
+def _tso_step_runs_db2(step: Step, joblib: Sequence[str] = ()) -> bool:
+    """True when *step* runs TSO batch with the DB2 DSN command processor:
+    a ``DSN`` command in its in-stream SYSTSIN, or a DB2 load library
+    (``SDSNLOAD`` / ``SDSNEXIT``) on its STEPLIB or the job's JOBLIB."""
+    if (step.program or "").upper() not in TSO_BATCH_PROGRAMS:
+        return False
+    if any(_DB2_LIBRARY_RE.search(dsn) for dsn in joblib):
+        return True
+    is_tso_input = False
+    for dd in _dataset_dds(step):
+        if dd.name:
+            is_tso_input = dd.name.upper().rpartition(".")[2] == _TSO_COMMAND_DD
+        if is_tso_input and _DSN_COMMAND_RE.search(dd.inline_data or ""):
+            return True
+        dsn = dd.parameters.get("DSN") or dd.parameters.get("DSNAME")
+        if isinstance(dsn, str) and _DB2_LIBRARY_RE.search(dsn):
+            return True
+    return False
 
 
 def _dd_program(step: Step, dd: DDStatement, procedure: Procedure | None) -> str:
@@ -301,7 +362,8 @@ def _dd_program(step: Step, dd: DDStatement, procedure: Procedure | None) -> str
 
 def _sql_in_program_input(dd: DDStatement, program: str) -> list[tuple[str, str]]:
     """SQL in the in-stream data of *dd*, read as input to *program*."""
-    if program in NON_SQL_CONTROL_PROGRAMS:
+    ddname = (dd.name or "").upper().rpartition(".")[2]
+    if program in NON_SQL_CONTROL_PROGRAMS or ddname in NON_SQL_CONTROL_DDS:
         return []
     if program in DB2_UTILITY_CONTROL_PROGRAMS:
         return detect_sql_in_utility_statements(control_card_text(dd.inline_data or ""))
@@ -318,7 +380,7 @@ def detect_sql_in_job(job: Job) -> list[SQLDetectionResult]:
     results: list[SQLDetectionResult] = []
     for step in iter_execution_steps(job.steps):
         procedure = job.get_procedure(step.procedure) if step.procedure else None
-        det = detect_sql_in_step(step, procedure)
+        det = detect_sql_in_step(step, procedure, job.joblib)
         if det.has_sql:
             results.append(det)
     return results

@@ -1249,8 +1249,10 @@ class JobBuilder:
         """
         # In-stream data that runs to end-of-file without a closing delimiter
         # is still valid: end-of-input terminates it.  Flush whatever was
-        # collected rather than silently discarding it.
-        if self.in_inline_data and self.current_dd and self.inline_data_lines:
+        # collected rather than silently discarding it -- even nothing: a
+        # ``DD *`` that is the last statement is an empty in-stream dataset,
+        # as it is before a following statement or a ``/*``.
+        if self.in_inline_data and self.current_dd:
             self.current_dd.inline_data = "\n".join(self.inline_data_lines)
         unclosed_data_warning = self._unclosed_data_warning()
 

@@ -21,7 +21,7 @@ from ._control import ControlStatement, parse_control_statements, split_operands
 from .base import ProgramAnalysis, ProgramProfile, _concatenation, _dd_event
 
 if TYPE_CHECKING:
-    from ..model import Step
+    from ..model import DDStatement, Step
 
 
 class _Flow:
@@ -40,20 +40,39 @@ class _Flow:
         self._seen.add((dd_name, verb))
         for dd in _concatenation(self.step, dd_name):
             if not dd.dataset_name:
+                self._note_non_dataset(verb, dd)
                 continue
             self.events.append(
                 _dd_event(self.step, dd_name, dd, default_status=default_status)
             )
             self.notes.append(f"{verb} {dd.dataset_name}")
 
+    def _note_non_dataset(self, verb: str, dd: DDStatement) -> None:
+        """Note a member of the copy that is no dataset: in-stream data
+        (``SYSUT1 DD *``) or SYSOUT (``SYSUT2 DD SYSOUT=(A,INTRDR)``)."""
+        if dd.inline_data is not None:
+            self.notes.append(f"{verb} in-stream data")
+            return
+        sysout = dd.parameters.get("SYSOUT")
+        if sysout is None:
+            return
+        parts = [sysout] if isinstance(sysout, str) else [str(p) for p in sysout]
+        if len(parts) > 1 and parts[1].upper() == "INTRDR":
+            self.notes.append("writes to the internal reader (submits it as a job)")
+        else:
+            self.notes.append(f"writes to SYSOUT class {parts[0] or '*'}")
+
 
 def _copy_utility_analysis(step: Step, program: str) -> ProgramAnalysis:
     flow = _Flow(step)
     flow.add("SYSUT1", "reads", "SHR")
     flow.add("SYSUT2", "writes", "NEW")
+    # In-stream SYSUT1 and SYSOUT SYSUT2 are no dataset events, but the
+    # copy is there all the same (the INTRDR submit idiom).
+    has_copy = flow.events or (step.get_dd("SYSUT1") and step.get_dd("SYSUT2"))
     summary = (
         f"{program}: copy SYSUT1 -> SYSUT2"
-        if flow.events
+        if has_copy
         else f"{program} (no SYSUT1/SYSUT2)"
     )
     return ProgramAnalysis(
