@@ -7,7 +7,9 @@ and data integrity checks for parsed JCL structures.
 
 import logging
 import re
+from typing import Any
 
+from ._semantic_checks import check_job_references, check_step_operands
 from .errors import ErrorSeverity, ErrorType, ValidationError
 from .model import (
     ConditionalBlock,
@@ -20,6 +22,7 @@ from .model import (
     iter_execution_steps,
 )
 from .parameter_validators import DatasetNameValidator, DISPValidator
+from .utils import jcl_value_text
 
 logger = logging.getLogger(__name__)
 
@@ -129,28 +132,7 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
     flat_steps = list(iter_execution_steps(job.steps))
 
     # Validate step name uniqueness
-    step_names: set[str] = set()
-    for step in flat_steps:
-        # An exploded step called from an unnamed EXEC carries a placeholder
-        # qualifier (``PROC.PS1``), so two unnamed calls of one PROC share a
-        # name without either being a coding error.
-        if step.is_exploded and not step.original_proc_call:
-            continue
-        if step.name:
-            if step.name in step_names:
-                # A WARNING: z/OS runs the job, and only a reference to the
-                # name (COND=, IF, a referback) is ambiguous (JCL Reference,
-                # "Rules for names").
-                errors.append(
-                    ValidationError(
-                        f"Duplicate step name: {step.name}",
-                        ErrorType.VALIDATION_ERROR,
-                        line_number=step.line_number,
-                        severity=ErrorSeverity.WARNING,
-                    )
-                )
-            else:
-                step_names.add(step.name)
+    errors.extend(_duplicate_step_names(flat_steps))
 
     # Validate each step
     for step in flat_steps:
@@ -174,6 +156,15 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
     errors.extend(validate_statement_placement(job))
 
     errors.extend(validate_backward_references(job))
+
+    errors.extend(check_job_references(job))
+
+    reported_lines = {e.line_number for e in errors if e.line_number}
+    errors.extend(
+        e
+        for e in validate_procedure_bodies(job)
+        if not e.line_number or e.line_number not in reported_lines
+    )
 
     logger.debug(
         "validation of job %s produced %d finding(s)",
@@ -481,6 +472,9 @@ def validate_step_structure(step: Step) -> list[ValidationError]:
     for dd in step.dd_statements:
         errors.extend(validate_dd_statement(dd, label=dd_label(step.dd_statements, dd)))
 
+    # PARM length, PARM with PARMDD, COND= syntax, SYSOUT class, GDG range
+    errors.extend(check_step_operands(step))
+
     return errors
 
 
@@ -545,8 +539,13 @@ def validate_dd_statement(
             )
         )
 
-    # Validate DISP parameter format
-    if dd.disposition and not validate_disposition(dd.disposition):
+    # Validate DISP parameter format (not one still holding a symbol, as in
+    # a PROC body: DISP=&DISP is judged once explode_job() resolves it).
+    if (
+        dd.disposition
+        and "&" not in jcl_value_text(dd.disposition)
+        and not validate_disposition(dd.disposition)
+    ):
         errors.append(
             ValidationError(
                 f"Invalid DISP parameter '{dd.disposition}' on DD {name}",
@@ -584,7 +583,8 @@ def validate_dd_statement(
                 line_number=dd.line_number,
             )
         )
-    elif source_count == 0:
+    elif source_count == 0 and not _has_symbol(params):
+        # A symbol (``//D DD &OPTS`` in a PROC) may supply the source.
         errors.append(
             ValidationError(
                 f"DD {name} must specify a data source (DSN, SYSOUT, DUMMY, or inline data)",
@@ -593,6 +593,65 @@ def validate_dd_statement(
             )
         )
 
+    return errors
+
+
+def _has_symbol(params: dict[str, Any]) -> bool:
+    """Whether any key or value of DD *params* holds a ``&`` symbol."""
+    return any(
+        "&" in key or "&" in jcl_value_text(value) for key, value in params.items()
+    )
+
+
+def validate_procedure_bodies(job: Job) -> list[ValidationError]:
+    """Run the step and DD checks over the in-stream / member PROC bodies.
+
+    A PROC body is otherwise only checked once :func:`explode_job` copies it
+    into a job, so a PROC library member, or an in-stream PROC no step calls,
+    was never validated. Each body is checked as a JOB-less job whose steps
+    are named ``PROC.step`` (as lint does, issue #149). A finding on a line
+    the job's own checks already reported (an exploded copy) is left out.
+    """
+    from .lint.runner import procedure_body_job
+
+    errors: list[ValidationError] = []
+    for proc in job.procedures:
+        if proc.is_external:
+            continue  # its lines are another file's
+        body = procedure_body_job(proc)
+        flat_steps = list(iter_execution_steps(body.steps))
+        errors.extend(_duplicate_step_names(flat_steps))
+        for step in flat_steps:
+            errors.extend(validate_step_structure(step))
+    return errors
+
+
+def _duplicate_step_names(flat_steps: list[Step]) -> list[ValidationError]:
+    """A WARNING for each step that repeats an earlier step's name."""
+    errors: list[ValidationError] = []
+    step_names: set[str] = set()
+    for step in flat_steps:
+        # An exploded step called from an unnamed EXEC carries a placeholder
+        # qualifier (``PROC.PS1``), so two unnamed calls of one PROC share a
+        # name without either being a coding error.
+        if step.is_exploded and not step.original_proc_call:
+            continue
+        if not step.name:
+            continue
+        if step.name in step_names:
+            # A WARNING: z/OS runs the job, and only a reference to the
+            # name (COND=, IF, a referback) is ambiguous (JCL Reference,
+            # "Rules for names").
+            errors.append(
+                ValidationError(
+                    f"Duplicate step name: {step.name}",
+                    ErrorType.VALIDATION_ERROR,
+                    line_number=step.line_number,
+                    severity=ErrorSeverity.WARNING,
+                )
+            )
+        else:
+            step_names.add(step.name)
     return errors
 
 
@@ -641,8 +700,11 @@ _DELETED = "-"
 
 
 def _temp_key(dd: DDStatement) -> str:
-    """The temporary dataset *dd* names: ``&&GOSET(GO)`` is ``&&GOSET``."""
-    return (dd.dataset_name or "").split("(", 1)[0]
+    """The temporary dataset *dd* names: ``&&GOSET(GO)`` is ``&&GOSET``.
+
+    Upper-cased: lowercase JCL names the same dataset (invariant 5).
+    """
+    return (dd.dataset_name or "").split("(", 1)[0].upper()
 
 
 class _TempDatasetTracker:

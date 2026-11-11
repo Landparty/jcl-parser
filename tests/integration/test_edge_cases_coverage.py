@@ -49,11 +49,12 @@ class TestParserEdgeCases:
 //TESTJOB JOB {long_params}
 //STEP1 EXEC PGM=PROG
 //"""
-        # Columns 72-80 are the sequence field: the operands past column 71
-        # are cut, the statement still parses.
+        # A record over 80 columns cannot be a card image: it is read whole
+        # (nothing past column 71 is silently cut) and reported.
         job = parse_jcl(jcl, strict_mode=False)
         assert job.parameters["P0"] == "V0"
-        assert "P49" not in job.parameters
+        assert job.parameters["P49"] == "V49"
+        assert any("characters long" in m for _, m, _ in job.statement_findings)
         assert [s.name for s in job.steps] == ["STEP1"]
 
     def test_special_characters_in_strings(self):

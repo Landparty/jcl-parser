@@ -14,9 +14,11 @@ from dataclasses import replace as dataclass_replace
 from datetime import datetime
 from typing import Any
 
+from .condition_parser import parse_condition
 from .errors import (
     CircularProcedureError,
     ExplosionDepthError,
+    JCLParseError,
     JCLStructureError,
     JCLSyntaxError,
     ProcedureNotFoundError,
@@ -95,6 +97,28 @@ def _clone_conditional(
     new_cond.then_steps = process_steps_fn(block.then_steps)
     new_cond.else_steps = process_steps_fn(block.else_steps)
     return new_cond
+
+
+def substitute_condition_symbols(block: ConditionalBlock, scope: "SymbolScope") -> None:
+    """Substitute the symbols of *block*'s IF condition and re-parse it.
+
+    z/OS substitutes symbols in an IF statement before evaluating it, the
+    same as on any other statement (``IF &ST..RC = 0`` with ``ST=S1``). The
+    condition is only rewritten when every symbol in it resolves; otherwise
+    it is left as written (its AST stays ``None``).
+    """
+    if "&" not in block.condition:
+        return
+    try:
+        text = substitute_symbols(
+            block.condition, scope, allow_undefined=True, collapse_double_amp=False
+        )
+    except JCLParseError:
+        return
+    if "&" in text:
+        return
+    block.condition = text
+    block.condition_ast = parse_condition(text)
 
 
 def _qualify_step_ref(
@@ -594,6 +618,7 @@ def expand_proc_invocation(
         for proc_step in steps_list:
             if isinstance(proc_step, ConditionalBlock):
                 new_block = _clone_conditional(proc_step, _process_proc_steps)
+                substitute_condition_symbols(new_block, expansion_scope)
                 new_block.condition = _qualify_condition_text(
                     new_block.condition, proc_steps, prefix
                 )
@@ -864,6 +889,27 @@ def _needs_reparse(value: str) -> bool:
     return depth == 0 and value.startswith("(") and value.endswith(")")
 
 
+def _brings_in_operands(coded: Any, value: Any) -> bool:
+    """Whether a symbol in *coded* brought operand structure into *value*.
+
+    A value coded in apostrophes is text: its commas and parentheses, coded
+    or from a symbol, never separate operands. In a coded parenthesised group
+    (``DCB=(&X)``), any element whose symbol brought in a comma counts.
+    """
+    if isinstance(value, str):
+        return (
+            isinstance(coded, str)
+            and not isinstance(coded, QuotedValue)
+            and "&" in coded
+            and _needs_reparse(value)
+        )
+    if isinstance(value, list) and isinstance(coded, list):
+        return len(coded) == len(value) and any(
+            _brings_in_operands(c, v) for c, v in zip(coded, value, strict=True)
+        )
+    return False
+
+
 def _no_parm_key(key: str) -> bool:
     """False for PARM (and ``PARM.step``), whose value is never re-scanned.
 
@@ -895,14 +941,7 @@ def reparse_symbol_values(
     candidates = [
         key
         for key, value in substituted.items()
-        if isinstance(value, str)
-        and isinstance(coded.get(key), str)
-        # A value coded in apostrophes is text: its commas and parentheses,
-        # coded or from a symbol, never separate operands.
-        and not isinstance(coded[key], QuotedValue)
-        and "&" in coded[key]
-        and reparse_key(key)
-        and _needs_reparse(value)
+        if reparse_key(key) and _brings_in_operands(coded.get(key), value)
     ]
     if not candidates:
         return substituted, set()
@@ -914,6 +953,10 @@ def reparse_symbol_values(
     for key, value in substituted.items():
         parsed: dict[str, Any] | None = None
         if key in candidates:
+            if isinstance(value, list):
+                # DCB=(&X) with X='RECFM=FB,LRECL=80': the coded group is
+                # scanned again with the symbol's operands in it.
+                value = jcl_value_text(value)
             text = value if is_positional_key(key) else f"{key}={value}"
             try:
                 parsed = _parse_parameters(text)
@@ -1763,7 +1806,7 @@ def apply_unqualified_dd_overrides(
 def explode_job(
     job: Job,
     proc_loader: ProcedureLoader | None = None,
-    max_depth: int = 10,
+    max_depth: int = 15,
     max_steps: int = DEFAULT_MAX_STEPS,
     audit: bool = True,
     system_provider: SystemSymbolProvider | None = None,
@@ -1853,7 +1896,9 @@ def explode_job(
         result = []
         for step in steps_list:
             if isinstance(step, ConditionalBlock):
-                result.append(_clone_conditional(step, _process_steps))
+                new_block = _clone_conditional(step, _process_steps)
+                substitute_condition_symbols(new_block, base_scope)
+                result.append(new_block)
                 continue
             step_scope = _job_step_scope(job, step, base_scope)
             if step.is_procedure:
@@ -1897,6 +1942,9 @@ def explode_job(
     exploded_steps = _process_steps(job.steps)
 
     exploded_job = _exploded_job(job, exploded_steps)
+    from ._instream_symbols import substitute_instream_symbols
+
+    substitute_instream_symbols(exploded_job)
 
     # Diagnostics raised while substituting symbols during explosion itself
     # (as opposed to during parse_jcl(), already covered by the warnings

@@ -303,9 +303,9 @@ class TestRobustnessAndGracefulErrors:
             parse_jcl(src)
 
     @pytest.mark.parametrize("src", ["", "   \n", "//* comment only\n"])
-    def test_validate_jcl_is_lenient_on_empty_input(self, src):
-        """validate_jcl reports problems rather than raising on trivial input."""
-        assert validate_jcl(src) == []
+    def test_validate_jcl_reports_empty_input(self, src):
+        """validate_jcl reports a missing JOB rather than raising on it."""
+        assert [e.message for e in validate_jcl(src)] == ["No JOB statement found"]
 
     def test_unbalanced_parentheses_raise_syntax_error(self):
         with pytest.raises(JCLSyntaxError):

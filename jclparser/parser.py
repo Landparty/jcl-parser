@@ -30,6 +30,8 @@ import re
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal, overload
 
+from ._instream_symbols import substitute_instream_symbols
+
 # Backward-compatible re-exports: these helpers historically lived in this
 # module and are imported from ``jclparser.parser`` by tests and downstream
 # code. Keep them importable from here.
@@ -136,8 +138,9 @@ def _parse_jcl_core(
     # Handle different input source types (FileNotFoundError propagates)
     content = read_source(source)
     recursive_includes: set[str] = set()
+    too_deep_includes: set[str] = set()
     content, expanded_includes, line_map = _expand_includes(
-        content, include_loader, proc_base_path, recursive_includes
+        content, include_loader, proc_base_path, recursive_includes, too_deep_includes
     )
 
     try:
@@ -148,6 +151,7 @@ def _parse_jcl_core(
             proc_base_path=proc_base_path,
             enable_external_procs=enable_external_procs,
             recursive_includes=recursive_includes,
+            too_deep_includes=too_deep_includes,
         )
         _resolve_references(job, expanded_includes, strict=strict_mode)
     except JCLParseError as exc:
@@ -186,6 +190,7 @@ def _parse_expanded(
     proc_base_path: str | Path | None,
     enable_external_procs: bool,
     recursive_includes: set[str] | frozenset[str] = frozenset(),
+    too_deep_includes: set[str] | frozenset[str] = frozenset(),
 ) -> tuple[Job, list[Procedure]]:
     """Parse the INCLUDE-expanded *content*: scan, build, load PROCs.
 
@@ -198,7 +203,11 @@ def _parse_expanded(
         content, config.dialect if config is not None else "standard"
     )
     job, null_line = _build_job(
-        scanned, config, strict=strict_mode, recursive_includes=recursive_includes
+        scanned,
+        config,
+        strict=strict_mode,
+        recursive_includes=recursive_includes,
+        too_deep_includes=too_deep_includes,
     )
     own_procedures = list(job.procedures)
 
@@ -232,13 +241,15 @@ def _expand_includes(
     include_loader: IncludeMemberLoader | None,
     proc_base_path: str | Path | None,
     recursive: set[str] | None = None,
+    too_deep: set[str] | None = None,
 ) -> tuple[str, list[str], IncludeLineMap | None]:
     """Expand INCLUDE MEMBER= statements.
 
     This runs before the main parse loop so that inlined content participates
     in continuation-line merging and everything else that follows.
     *recursive*, when given, receives the members left unexpanded because
-    their INCLUDE is recursive.
+    their INCLUDE is recursive, and *too_deep* those nested deeper than
+    z/OS allows.
 
     Returns:
         The expanded content, the members expanded, and the map from its
@@ -265,6 +276,7 @@ def _expand_includes(
         libraries=jcllib_libs,
         collected=expanded,
         recursive=recursive,
+        too_deep=too_deep,
     )
     logger.debug(
         "expanded %d INCLUDE member(s) before parse: %s",
@@ -294,6 +306,7 @@ def _build_job(
     *,
     strict: bool = False,
     recursive_includes: set[str] | frozenset[str] = frozenset(),
+    too_deep_includes: set[str] | frozenset[str] = frozenset(),
 ) -> tuple[Job, int | None]:
     """Run the parse loop over the scanned source lines.
 
@@ -305,6 +318,7 @@ def _build_job(
         dialect=config.dialect if config is not None else "standard", strict=strict
     )
     builder.recursive_includes = recursive_includes
+    builder.too_deep_includes = too_deep_includes
     for line, line_num in scanned.merged_lines:
         # Handle inline data continuation
         if builder.consume_inline_data(line):
@@ -374,6 +388,7 @@ def _resolve_references(
             len(job.set_statements),
         )
         resolve_set_symbols(job, strict=strict)
+        substitute_instream_symbols(job)
 
 
 def _raise_on_fatal_findings(job: Job) -> None:
@@ -739,9 +754,8 @@ def _validate_line_by_line(
     along the way. In-stream data and CNTL control records are not JCL and
     are skipped, exactly as the parse loop skips them. *strict_error*, the
     exception the strict parse raised, is reported as well unless this pass
-    already reports it, or it is the "No JOB statement found" a JOB-less
-    member with nothing to run (no statements, or a PROC member) is exempt
-    from.
+    already reports it, or it is the "No JOB statement found" a PROC member
+    with steps is exempt from.
     """
     try:
         content = read_source(source)
@@ -849,14 +863,14 @@ class _StructureTracker:
     def exempt_from(self, exc: Exception) -> bool:
         """Whether the strict parse's *exc* is not an error for this source.
 
-        A source with no statements at all, and a PROC member with steps (a
-        cataloged or in-stream procedure with no JOB), have no JOB statement
-        by design; the strict parse's "No JOB statement found" is not
-        reported for them.
+        A PROC member with steps (a cataloged or in-stream procedure with no
+        JOB) has no JOB statement by design; the strict parse's "No JOB
+        statement found" is not reported for it. An empty or comment-only
+        source is not exempt: a truncated file must not pass validation.
         """
         if getattr(exc, "message", "") != _NO_JOB_MESSAGE:
             return False
-        return not self.has_statement or (self.has_proc and self.has_exec)
+        return self.has_proc and self.has_exec
 
     def _error(self, message: str, line_number: int) -> None:
         self.errors.append(

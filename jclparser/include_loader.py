@@ -199,11 +199,15 @@ class LineOrigin(NamedTuple):
 _Entry = tuple[str, LineOrigin]
 
 
+#: z/OS nests INCLUDE groups up to 15 levels (JCL Reference, INCLUDE statement).
+MAX_INCLUDE_DEPTH = 15
+
+
 def resolve_includes(
     content: str,
     loader: IncludeMemberLoader,
     libraries: list[str] | None = None,
-    max_depth: int = 8,
+    max_depth: int = MAX_INCLUDE_DEPTH,
     _depth: int = 0,
     _collected: list[str] | None = None,
     max_lines: int = 1_000_000,
@@ -266,10 +270,11 @@ def resolve_includes_with_origins(
     content: str,
     loader: IncludeMemberLoader,
     libraries: list[str] | None = None,
-    max_depth: int = 8,
+    max_depth: int = MAX_INCLUDE_DEPTH,
     max_lines: int = 1_000_000,
     collected: list[str] | None = None,
     recursive: set[str] | None = None,
+    too_deep: set[str] | None = None,
 ) -> tuple[str, list[LineOrigin]]:
     """Expand INCLUDEs like :func:`resolve_includes`; also map lines to origins.
 
@@ -280,7 +285,9 @@ def resolve_includes_with_origins(
         source -- and the member -- it was read from.  *collected*, when
         given, receives the name of every member expanded, and *recursive*
         the name of every member an INCLUDE was left intact for because it
-        includes itself (directly or through other members).
+        includes itself (directly or through other members), and
+        *too_deep* the name of every member left unexpanded because its
+        INCLUDE is nested deeper than *max_depth*.
 
     Raises:
         JCLStructureError: If expansion would inline more than *max_lines*.
@@ -290,6 +297,8 @@ def resolve_includes_with_origins(
     )
     if recursive is not None:
         expander.recursive = recursive
+    if too_deep is not None:
+        expander.too_deep = too_deep
     entries = expander.expand(content, 0, frozenset())
     return "".join(text for text, _ in entries), [origin for _, origin in entries]
 
@@ -316,6 +325,9 @@ class _IncludeExpander:
         self.symbols = symbols
         #: Members an INCLUDE was left intact for because it is recursive.
         self.recursive: set[str] = set()
+        #: Members an INCLUDE was left intact for because it is nested
+        #: deeper than max_depth.
+        self.too_deep: set[str] = set()
 
     def expand(self, content: str, depth: int, active: frozenset[str]) -> list[_Entry]:
         """Expand the INCLUDEs of *content*; one entry per resulting line.
@@ -325,6 +337,14 @@ class _IncludeExpander:
         """
         lines = split_source_lines(content, keepends=True)
         if depth >= self.max_depth:
+            for line in lines:
+                member = _extract_include_member(line.rstrip("\r\n"))
+                if member is not None:
+                    self.too_deep.add(
+                        _substitute_member_symbols(member, self.symbols)
+                        if "&" in member
+                        else member
+                    )
             return [(line, LineOrigin(None, i + 1)) for i, line in enumerate(lines)]
 
         # Records of in-stream data (``DD *`` / ``DD DATA,DLM=``) and CNTL

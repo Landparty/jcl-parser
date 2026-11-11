@@ -1,5 +1,21 @@
 # Update Log
 
+## 2026-11-11 (bug-hunt fixes: passes 3-21)
+* **Fix**: a statement record longer than 80 columns was cut at column 71 like a card image, silently dropping operands. It is now read whole and reported (WARNING on `Job.statement_findings`); see [development/invariants](development/invariants.md) (1).
+* **Fix**: a trailing comma followed by a nameless statement (`// SET`, `// PEND`, `// ENDIF`, `// ELSE`, `// INCLUDE`, `// DD`) no longer merges that statement into the previous one as junk keys (`'SET X'`); it is parsed as its own statement and the comma is the usual "expected continuation not received" ERROR.
+* **Fix**: after a quoted string continued onto another record, the comment field of the closing record is stripped (`PARM='AAA,` / `BBB'   COMMENT` is `AAA,BBB`).
+* **Fix**: new ERRORs on `Job.statement_findings`: a PROC defined inside an in-stream PROC; a PEND or ENDCNTL with nothing to end; a CNTL with no ENDCNTL; an IF with no THEN; IF nesting past 15 levels (past 100 the parse raises, instead of overflowing the stack in explode / RC analysis / JSON); a DD before the first EXEC of a PROC; a statement other than a JES control statement before the JOB statement; a JCLLIB after the first EXEC, or a second JCLLIB; a keyword coded twice on JOB/EXEC/DD/OUTPUT (until now only a `job.warnings` entry), or with its alias (`DSN`/`DSNAME`, `VOL`/`VOLUME`); a nameless OUTPUT. See [core/data-model](core/data-model.md).
+* **Fix**: `job.validate()` now checks in-stream PROC bodies and PROC members (`validators.validate_procedure_bodies`), and new `_semantic_checks.py`: PARM over 100 characters, PARM with PARMDD, COND= syntax, SYSOUT class, GDG relative generation range, unreadable IF conditions, IF/COND naming no earlier step, `RESTART=` naming no step, `CNTL=*.name` naming no CNTL, duplicate OUTPUT names, a new GDG generation read before it is created. See [advanced/validation](advanced/validation.md).
+* **Fix**: symbols in IF conditions are substituted (job SETs in the parse, PROC symbols in `explode_job`) and the condition is re-parsed; `compute_feasible_paths` lists an IF whose condition did not parse in `unanalysed_conditions`.
+* **Fix**: `SYMBOLS=JCLONLY` / `EXECSYS` / `CNVTSYS` in-stream data gets the job's exported symbols substituted (`_instream_symbols.py`), so lineage, IDCAMS analysis and SQL detection see the real names.
+* **Fix**: a symbol inside a coded parenthesised group that brings in operands is re-scanned (`DCB=(&X)` with `X='RECFM=FB,LRECL=80'`).
+* **Fix**: `EXEC PGM=(A,B)` / `PROC=(A,B)` raise a `JCLSyntaxError` instead of crashing (`PROC=`) or producing a list `Step.program` that crashed validate, lineage, SQL detection and analyze.
+* **Fix**: IDCAMS `+` continuation drops the next line's leading blanks, so a name split inside a word (`NAME(A.K+` / `SDS)`) reaches lineage whole.
+* **Change**: INCLUDE nesting default `max_depth` 8 → 15 (`include_loader.MAX_INCLUDE_DEPTH`); deeper nesting is reported as too deep, not "not found". `explode_job` / `Job.explode` default `max_depth` 10 → 15 (the z/OS limits).
+* **Change**: `validate_jcl` reports "No JOB statement found" for an empty or comment-only source (it returned `[]`, so `jcl-parser DIR --validate` passed an emptied file). A PROC member with steps is still exempt.
+* **Fix** (pass 24): the temporary-dataset tracker (`validators._temp_key`) compares names case-insensitively, so `&&tmp` then `&&TMP` is no longer "used but never created", and a second creation in another case is flagged.
+* **Tests**: `tests/unit/test_bughunt_2026_11_11.py`. Not changed: a three-level override (`//OS.IS.D DD`) is still applied to the nested PROC's DD; the IBM rule could not be confirmed.
+
 ## 2026-11-10 (#192 follow-up: quoted values)
 * **Fix**: the #192 symbol re-scan split a value coded in apostrophes at its commas: `PATH='/u/&U/a,b'` lost `,b` and gained a stray `_pos_1`. The parse now marks such values as `utils.QuotedValue` (a `str` subclass, so callers see an ordinary string); `reparse_symbol_values` skips them and substitution keeps the mark, also through `explode_job`. Tests: `TestQuotedValuesNotRescanned` in `tests/unit/test_bughunt_2026_11_10.py`.
 

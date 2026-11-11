@@ -217,10 +217,23 @@ def _create_step_from_statement(stmt: Statement) -> Step:
         # Might be a procedure call without keyword
         proc_or_pgm = stmt.parameters.pop(f"{POSITIONAL_PARAM_PREFIX}0")
         # If it looks like a procedure name (no path separators), treat as procedure
-        if "." not in proc_or_pgm and "/" not in proc_or_pgm:
+        if not isinstance(proc_or_pgm, str) or (
+            "." not in proc_or_pgm and "/" not in proc_or_pgm
+        ):
             procedure = proc_or_pgm
         else:
             program = proc_or_pgm
+
+    for keyword, value in (("PGM", program), ("PROC", procedure)):
+        if value is not None and (not isinstance(value, str) or value.startswith("(")):
+            # PGM=(A,B): Step.program / Step.procedure are names, and every
+            # consumer reads them as text.
+            raise JCLSyntaxError(
+                f"EXEC {keyword}= must name one "
+                f"{'program' if keyword == 'PGM' else 'procedure'}, got "
+                f"{jcl_value_text(value)}",
+                stmt.line_number,
+            )
 
     return Step(
         name=stmt.name,
