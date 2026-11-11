@@ -13,6 +13,7 @@
 * **Fix**: IDCAMS `+` continuation drops the next line's leading blanks, so a name split inside a word (`NAME(A.K+` / `SDS)`) reaches lineage whole.
 * **Change**: INCLUDE nesting default `max_depth` 8 → 15 (`include_loader.MAX_INCLUDE_DEPTH`); deeper nesting is reported as too deep, not "not found". `explode_job` / `Job.explode` default `max_depth` 10 → 15 (the z/OS limits).
 * **Change**: `validate_jcl` reports "No JOB statement found" for an empty or comment-only source (it returned `[]`, so `jcl-parser DIR --validate` passed an emptied file). A PROC member with steps is still exempt.
+* **Fix** (pass 24): the temporary-dataset tracker (`validators._temp_key`) compares names case-insensitively, so `&&tmp` then `&&TMP` is no longer "used but never created", and a second creation in another case is flagged.
 * **Tests**: `tests/unit/test_bughunt_2026_11_11.py`. Not changed: a three-level override (`//OS.IS.D DD`) is still applied to the nested PROC's DD; the IBM rule could not be confirmed.
 
 ## 2026-11-10 (#192 follow-up: quoted values)

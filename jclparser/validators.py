@@ -700,8 +700,11 @@ _DELETED = "-"
 
 
 def _temp_key(dd: DDStatement) -> str:
-    """The temporary dataset *dd* names: ``&&GOSET(GO)`` is ``&&GOSET``."""
-    return (dd.dataset_name or "").split("(", 1)[0]
+    """The temporary dataset *dd* names: ``&&GOSET(GO)`` is ``&&GOSET``.
+
+    Upper-cased: lowercase JCL names the same dataset (invariant 5).
+    """
+    return (dd.dataset_name or "").split("(", 1)[0].upper()
 
 
 class _TempDatasetTracker:

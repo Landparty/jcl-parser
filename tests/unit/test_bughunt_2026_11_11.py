@@ -802,3 +802,29 @@ class TestCondSyntax:
         tests = ",".join(["(4,LT)"] * 9)
         jcl = _JOB + f"//S EXEC PGM=A,COND=({tests})\n"
         assert _has(_messages(jcl, "basic"), "codes 9 tests (at most 8)")
+
+
+# ---------------------------------------------------------------------------
+# Pass 24
+# ---------------------------------------------------------------------------
+
+
+class TestTemporaryDatasetCase:
+    def test_lowercase_creation_matches_uppercase_use(self):
+        jcl = "//J  JOB 1\n" + (
+            "//S3 EXEC PGM=X\n"
+            "//T  DD DSN=&&tmp,DISP=(NEW,PASS),SPACE=(TRK,1),UNIT=SYSDA\n"
+            "//S4 EXEC PGM=X\n//T  DD DSN=&&TMP,DISP=(OLD,DELETE)\n"
+        )
+        assert _messages(jcl) == []
+
+    def test_second_creation_in_other_case_flagged(self):
+        jcl = "//J  JOB 1\n" + (
+            "//S3 EXEC PGM=X\n"
+            "//T  DD DSN=&&tmp,DISP=(NEW,PASS),SPACE=(TRK,1),UNIT=SYSDA\n"
+            "//S4 EXEC PGM=X\n"
+            "//T  DD DSN=&&TMP,DISP=(NEW,PASS),SPACE=(TRK,1),UNIT=SYSDA\n"
+        )
+        assert _messages(jcl) == [
+            "Temporary dataset &&TMP created in multiple steps: S3 and S4"
+        ]
