@@ -9,6 +9,7 @@ any other ``.toml`` file::
     select = ["JCL-LINT-001", "JCL-LINT-007"]   # default: every rule
     ignore = ["JCL-LINT-002"]
     critical-datasets = ["PROD.", ".MASTER."]
+    system-hlqs = ["SYS1", "DSN*"]               # default: DEFAULT_SYSTEM_HLQS
     fail-on = "warning"                         # info (default) | warning | error
 
     [tool.jcl-parser.lint.severity]
@@ -33,6 +34,31 @@ SEVERITY_RANK: dict[ErrorSeverity, int] = {
 }
 
 
+#: High-level qualifiers of z/OS and IBM product libraries, which JCL names
+#: literally everywhere (``SYS1.MACLIB``, ``CEE.SCEERUN``, ``IGY.V6R4M0.SIGYCOMP``,
+#: ``DSN.V13R1.SDSNLOAD``), so JCL-LINT-001 does not ask for a symbolic HLQ
+#: on them.  A trailing ``*`` matches any qualifier starting with the rest.
+DEFAULT_SYSTEM_HLQS: tuple[str, ...] = (
+    "SYS1",
+    "CEE",
+    "CBC",
+    "IGY*",
+    "DSN*",
+    "DFH*",
+    "CICSTS*",
+    "CSQ*",
+    "IMS*",
+    "ISP",
+    "ISF",
+    "GIM",
+    "ASM",
+    "HLA",
+    "EQA*",
+    "TCPIP",
+    "CSF",
+)
+
+
 @dataclass
 class LintConfig:
     """User-facing lint configuration.
@@ -49,6 +75,9 @@ class LintConfig:
             JCL-LINT-003.  Example: ``["PROD.", ".MASTER."]``.
         fail_on: The lowest severity that makes the CLI exit 1.
             :func:`~jclparser.lint.runner.lint_job` itself ignores it.
+        system_hlqs: High-level qualifiers of system / product libraries
+            that JCL-LINT-001 leaves alone (``*`` at the end matches a
+            prefix).  Default :data:`DEFAULT_SYSTEM_HLQS`.
     """
 
     enabled: set[str] = field(default_factory=set)
@@ -56,6 +85,19 @@ class LintConfig:
     severities: dict[str, ErrorSeverity] = field(default_factory=dict)
     critical_dataset_patterns: list[str] = field(default_factory=list)
     fail_on: ErrorSeverity = ErrorSeverity.INFO
+    system_hlqs: list[str] = field(default_factory=lambda: list(DEFAULT_SYSTEM_HLQS))
+
+    def is_system_hlq(self, qualifier: str) -> bool:
+        """True if *qualifier* (a dataset name's first) names system libraries."""
+        qualifier = qualifier.upper()
+        for entry in self.system_hlqs:
+            entry = entry.upper()
+            if entry.endswith("*"):
+                if qualifier.startswith(entry[:-1]):
+                    return True
+            elif qualifier == entry:
+                return True
+        return False
 
     def should_run(self, code: str) -> bool:
         if code in self.disabled:
@@ -95,7 +137,14 @@ def _codes(value: object, where: str) -> set[str]:
 def lint_config_from_mapping(data: Mapping[str, Any]) -> LintConfig:
     """A :class:`LintConfig` from the keys of a ``[tool.jcl-parser.lint]``
     table; an unknown key raises :class:`LintConfigError`."""
-    known = {"select", "ignore", "severity", "critical-datasets", "fail-on"}
+    known = {
+        "select",
+        "ignore",
+        "severity",
+        "critical-datasets",
+        "fail-on",
+        "system-hlqs",
+    }
     unknown = sorted(set(data) - known)
     if unknown:
         raise LintConfigError(f"unknown lint setting(s): {', '.join(unknown)}")
@@ -117,6 +166,11 @@ def lint_config_from_mapping(data: Mapping[str, Any]) -> LintConfig:
     config.critical_dataset_patterns = list(patterns)
     if "fail-on" in data:
         config.fail_on = parse_severity(data["fail-on"], "fail-on")
+    if "system-hlqs" in data:
+        hlqs = data["system-hlqs"]
+        if not isinstance(hlqs, list) or not all(isinstance(h, str) for h in hlqs):
+            raise LintConfigError("system-hlqs: expected a list of strings")
+        config.system_hlqs = list(hlqs)
     return config
 
 

@@ -134,6 +134,9 @@ _KEYWORD_STATEMENTS = frozenset({"JOB", "EXEC", "DD", "OUTPUT"})
 _KEYWORD_ALIASES = (("DSN", "DSNAME"), ("VOL", "VOLUME"))
 #: The statement parser's warning for a repeated keyword.
 _RE_DUPLICATE_WARNING = re.compile(r"duplicate parameter '([^']+)'")
+#: A JCL symbol or symbolic parameter name (JCL Reference, "Using system
+#: symbols and JCL symbols").
+_RE_SYMBOL_NAME = re.compile(r"[A-Z@#$][A-Z0-9@#$]{0,7}", re.IGNORECASE)
 
 #: DDs z/OS allows before a job's first EXEC.
 _JOB_LEVEL_DDS = frozenset({"JOBLIB", "JOBCAT", "SYSCHK"})
@@ -658,6 +661,9 @@ class JobBuilder:
                 f"PROC {outer.name}; procedure definitions cannot be nested "
                 "(add a PEND before it)",
             )
+        for key in stmt.parameters:
+            if not is_positional_key(key):
+                self._check_symbol_name(key, "PROC", line_num)
         self.current_procedure = Procedure(
             name=stmt.name or "UNNAMED",
             parameters=stmt.parameters,
@@ -673,6 +679,25 @@ class JobBuilder:
         self.current_step = None
         self.in_joblib_concat = False
         self.proc_orphaned_dds = []
+
+    def _check_symbol_name(self, symbol: str, statement: str, line_num: int) -> None:
+        """An ERROR for a symbol name z/OS does not accept on *statement*.
+
+        A symbolic parameter (PROC) or JCL symbol (SET) is one to eight
+        letters, digits or national characters, the first not a digit.
+        """
+        if _RE_SYMBOL_NAME.fullmatch(symbol):
+            return
+        self.statement_findings.append(
+            (
+                line_num,
+                (
+                    f"{statement} symbol name {symbol!r} is not valid: one to eight "
+                    "letters, digits or @ # $, not starting with a digit"
+                ),
+                ErrorSeverity.ERROR,
+            )
+        )
 
     def _on_pend(self, stmt: Statement, line_num: int) -> None:
         # End of procedure definition - stop tracking.  PEND closes the PROC
@@ -728,6 +753,7 @@ class JobBuilder:
             symbols = self.job.set_statements if self.job else self.pending_sets
 
         def _record(symbol: str, value: str) -> None:
+            self._check_symbol_name(symbol, "SET", line_num)
             resolved = _resolve_set_value(
                 value,
                 symbols,
@@ -850,7 +876,18 @@ class JobBuilder:
                     "not expanded",
                 )
             else:
-                self._warnings_sink().append(self._include_warning(stmt, str(member)))
+                warning = self._include_warning(stmt, str(member))
+                self._warnings_sink().append(warning)
+                # Also a validate finding: the job runs without the member's
+                # statements (often its DDs).  A WARNING, as for a missing
+                # PROC -- the member may be in a library not configured here.
+                self.statement_findings.append(
+                    (
+                        line_num,
+                        warning.split(": ", 1)[1],
+                        ErrorSeverity.WARNING,
+                    )
+                )
 
     def _include_warning(self, stmt: Statement, member: str) -> str:
         """The warning for an INCLUDE whose member could not be loaded."""

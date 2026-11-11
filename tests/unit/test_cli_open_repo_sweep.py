@@ -497,7 +497,10 @@ class TestDatasetsCreatedInCalledProc:
         messages = _pass25(
             dsn="&&T", disp="(NEW,DELETE)", read="&&T", read_disp="(OLD,DELETE)"
         )
-        assert "Temporary dataset &&T used but never created" in messages
+        assert any(
+            m.startswith("Temporary dataset &&T is read in step S2 after step R.PS")
+            for m in messages
+        )
 
     def test_other_temporary_still_reported(self) -> None:
         messages = _pass25(

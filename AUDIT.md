@@ -28,7 +28,7 @@
 | M9 | **Open** | Only about 530 of about 2,970 tests carry a marker; benchmarks do not run in CI |
 | M10 | **Open** (partly done) | ruff and mypy are pinned; actions are still pinned by tag, not by commit hash |
 | M11 | Resolved | Directory argument (lineage / lint / validate), stdin, step names that equal a query word (#133), intermixed flags |
-| L1 | **Open** | `JOB (ACCT),'X=Y'` still gives `{"'X": "Y'"}` |
+| L1 | Resolved | `JOB (ACCT),'X=Y'` gives the positional `X=Y` (2026-11-11) |
 | L2 | Not re-checked | |
 | L3 | Open (by design) | Columns 72-80 are the sequence field and are dropped without a warning |
 | L4 | Resolved | `Step.dynamnbr` / `Step.perform` return `None` for symbolic or list values |
