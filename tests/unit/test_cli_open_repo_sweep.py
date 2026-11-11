@@ -452,3 +452,93 @@ class TestValidateExitCode:
         )
         _write(tmp_path, "e.jcl", _WITH_ERROR)
         assert _run([str(tmp_path), "--validate"], capsys)[0] == 1
+
+
+# ---------------------------------------------------------------------------
+# 9. Bug hunt pass 25: datasets a called PROC creates exist for later steps
+# ---------------------------------------------------------------------------
+
+_PROC_CREATES = (
+    _JOB + "//P    PROC\n//PS   EXEC PGM=X\n"
+    "//O    DD DSN={dsn},DISP={disp},SPACE=(TRK,1),UNIT=SYSDA\n"
+    "//     PEND\n//R    EXEC {proc}\n//S2   EXEC PGM=Y\n"
+    "//I    DD DSN={read},DISP={read_disp}\n"
+)
+
+
+def _pass25(**fields: str) -> list[str]:
+    values = {"proc": "P", **fields}
+    return [
+        e.message
+        for e in validate_jcl(_PROC_CREATES.format(**values), level="semantic")
+    ]
+
+
+class TestDatasetsCreatedInCalledProc:
+    def test_gdg_generation_created_in_proc(self) -> None:
+        messages = _pass25(
+            dsn="A.G(+1)", disp="(NEW,CATLG)", read="A.G(+1)", read_disp="SHR"
+        )
+        assert messages == []
+
+    def test_gdg_generation_not_created_still_reported(self) -> None:
+        messages = _pass25(
+            dsn="B.G(+1)", disp="(NEW,CATLG)", read="A.G(+1)", read_disp="SHR"
+        )
+        assert any("no earlier step of the job creates" in m for m in messages)
+
+    def test_temporary_passed_out_of_proc(self) -> None:
+        messages = _pass25(
+            dsn="&&T", disp="(NEW,PASS)", read="&&T", read_disp="(OLD,DELETE)"
+        )
+        assert messages == []
+
+    def test_temporary_deleted_in_proc_still_reported(self) -> None:
+        messages = _pass25(
+            dsn="&&T", disp="(NEW,DELETE)", read="&&T", read_disp="(OLD,DELETE)"
+        )
+        assert "Temporary dataset &&T used but never created" in messages
+
+    def test_other_temporary_still_reported(self) -> None:
+        messages = _pass25(
+            dsn="&&T", disp="(NEW,PASS)", read="&&U", read_disp="(OLD,DELETE)"
+        )
+        assert "Temporary dataset &&U used but never created" in messages
+
+    @pytest.mark.parametrize(
+        ("dsn", "read", "read_disp"),
+        [("A.G(+1)", "A.G(+1)", "SHR"), ("&&T", "&&T", "(OLD,DELETE)")],
+    )
+    def test_unavailable_proc_may_create_anything(
+        self, dsn: str, read: str, read_disp: str
+    ) -> None:
+        messages = _pass25(
+            dsn=dsn, disp="(NEW,PASS)", read=read, read_disp=read_disp, proc="NOPE"
+        )
+        assert not any("creates generation" in m for m in messages)
+        assert not any("never created" in m for m in messages)
+
+    def test_external_proc_from_library(self, tmp_path: Path) -> None:
+        lib = tmp_path / "SYS1.PROCLIB"
+        lib.mkdir()
+        (lib / "MKGDG.jcl").write_text(
+            "//MKGDG PROC\n//PS EXEC PGM=X\n"
+            "//O DD DSN=A.G(+1),DISP=(NEW,CATLG),SPACE=(TRK,1),UNIT=SYSDA\n"
+            "//L DD DSN=&&LOADSET,DISP=(MOD,PASS),SPACE=(TRK,1),UNIT=SYSDA\n"
+        )
+        jcl = (
+            _JOB + "//R EXEC MKGDG\n//S2 EXEC PGM=Y\n"
+            "//I DD DSN=A.G(+1),DISP=SHR\n//L DD DSN=&&LOADSET,DISP=(OLD,DELETE)\n"
+        )
+        errors = validate_jcl(jcl, level="semantic", proc_base_path=str(tmp_path))
+        assert errors == []
+
+    def test_nested_proc_call(self) -> None:
+        jcl = (
+            _JOB + "//INNER PROC\n//IS EXEC PGM=X\n"
+            "//O DD DSN=&&T,DISP=(NEW,PASS),SPACE=(TRK,1),UNIT=SYSDA\n//    PEND\n"
+            "//OUTER PROC\n//OS EXEC INNER\n//    PEND\n"
+            "//R EXEC OUTER\n//S2 EXEC PGM=Y\n//I DD DSN=&&T,DISP=(OLD,DELETE)\n"
+        )
+        messages = [e.message for e in validate_jcl(jcl, level="semantic")]
+        assert not any("never created" in m for m in messages)

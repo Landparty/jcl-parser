@@ -11,6 +11,7 @@ Every `jcl-parser` subcommand was run on 491 JCL files from 19 public GitHub rep
 * **Fix**: `analyze`: IEBGENER/ICEGENER with in-stream SYSUT1 or SYSOUT SYSUT2 (the `SYSOUT=(A,INTRDR)` submit idiom) is a copy, with `reads in-stream data` / `writes to the internal reader` notes; IDCAMS notes `BLDINDEX` and `DEFINE ALIAS` (no dataset event for an alias).
 * **Fix**: step and DD display shows positional operands (`DUMMY` was a blank line) and SYSOUT sublists as `SYSOUT=(A,INTRDR)` instead of a Python list.
 * **Not changed**: `//BGZGIT JOB <JOB PARAMETERS>` still shows `Acct: <JOB`: the operand field ends at the first blank (invariant 7), so that is what the card says.
+* **Fix** (bug hunt pass 25): datasets created inside a called PROC (in-stream or loaded, nested calls too) now exist for later job steps: the GDG "(+n) read before the job creates it" WARNING (new in #195) and "Temporary dataset &&T used but never created" (`&&LOADSET` passed out of a compile PROC) no longer fire for them. After a call to a PROC that is not available, neither is reported. This also removes two CardDemo false positives (TRANBKP, PRTCATBL via REPROC).
 * **Tests**: `tests/unit/test_cli_open_repo_sweep.py`.
 
 ## 2026-11-11 (bug-hunt fixes: passes 3-21)

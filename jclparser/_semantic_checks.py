@@ -429,11 +429,54 @@ def _disp_status(dd: DDStatement) -> str:
     return jcl_value_text(first).strip().upper() if first else "NEW"
 
 
+def called_procedure_dds(
+    job: Job, step: Step, _seen: frozenset[str] = frozenset()
+) -> list[DDStatement] | None:
+    """The DDs coded in the PROC that *step* calls, nested calls included.
+
+    ``[]`` for a step that calls no PROC; ``None`` when the PROC, or one it
+    calls, is not available (in-stream or loaded), or calls itself: what it
+    allocates is then unknown.  On an exploded job no step calls a PROC.
+    """
+    if not step.procedure:
+        return []
+    name = step.procedure.upper()
+    procedure = job.get_procedure(step.procedure) or job.get_procedure(name)
+    if procedure is None or name in _seen:
+        return None
+    dds: list[DDStatement] = []
+    for inner in iter_execution_steps(procedure.steps):
+        nested = called_procedure_dds(job, inner, _seen | {name})
+        if nested is None:
+            return None
+        dds.extend(nested)
+        dds.extend(inner.dd_statements)
+    return dds
+
+
 def _check_generations_read(job: Job) -> list[ValidationError]:
-    """A WARNING for a new generation (+n) read before the job creates it."""
+    """A WARNING for a new generation (+n) read before the job creates it.
+
+    The DDs of a called PROC count as the calling step's (a PROC step that
+    creates ``(+1)`` for a later job step, pass 25); after a call to a PROC
+    that is not available, what exists is unknown and nothing is reported.
+    """
     created: set[tuple[str, int]] = set()
     errors: list[ValidationError] = []
     for step in iter_execution_steps(job.steps):
+        proc_dds = called_procedure_dds(job, step)
+        if proc_dds is None:
+            break
+        for dd in proc_dds:
+            generation = _gdg_generation(dd)
+            if (
+                generation
+                and generation > 0
+                and dd.dataset_name is not None
+                and _disp_status(dd) in ("NEW", "MOD")
+            ):
+                base = dd.dataset_name[: dd.dataset_name.rindex("(")].upper()
+                created.add((base, generation))
         for dd in step.dd_statements:
             generation = _gdg_generation(dd)
             if generation is None or generation <= 0 or dd.dataset_name is None:
