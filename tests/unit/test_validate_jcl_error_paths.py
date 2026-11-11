@@ -224,9 +224,12 @@ class TestValidateJCLFallbackReportsStrictError:
             (0, "No JOB statement found")
         ]
 
-    def test_empty_and_comment_only_input_lenient(self):
-        assert validate_jcl("") == []
-        assert validate_jcl("//* JUST A COMMENT\n\n") == []
+    def test_empty_and_comment_only_input_reported(self):
+        # A truncated or emptied file must not pass the validate gate.
+        assert self._findings("") == [(0, "No JOB statement found")]
+        assert self._findings("//* JUST A COMMENT\n\n") == [
+            (0, "No JOB statement found")
+        ]
 
     def test_proc_member_not_flagged_for_missing_job(self):
         jcl = "//P PROC\n//S EXEC PGM=X\n//D DD DSN=(A\n// PEND\n"

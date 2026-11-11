@@ -97,6 +97,44 @@ __all__ = [  # noqa: RUF022 — grouped by the module each name comes from
 ]
 
 
+#: Deepest IF nesting z/OS allows (JCL Reference, IF/THEN/ELSE/ENDIF).
+MAX_IF_NESTING = 15
+#: Deepest IF nesting the parse builds before it gives up (far past the
+#: z/OS limit, well short of overflowing a recursive walk of the model).
+_MAX_IF_NESTING_PARSED = 100
+
+#: The ``THEN`` that ends an IF statement's operands.
+_RE_ENDS_WITH_THEN = re.compile(r"(^|[\s)])THEN$", re.IGNORECASE)
+
+#: Statements that belong to a job: coded before its JOB statement they are
+#: reported (EXEC already raises; PROC/PEND make a JOB-less member).
+_JOB_SCOPE_TYPES = frozenset(
+    {
+        "DD",
+        "SET",
+        "JCLLIB",
+        "OUTPUT",
+        "EXPORT",
+        "INCLUDE",
+        "IF",
+        "ELSE",
+        "ENDIF",
+        "CNTL",
+        "ENDCNTL",
+        "COMMAND",
+        "SCHEDULE",
+        "NOTIFY",
+        "XMIT",
+    }
+)
+
+#: Statements on which a keyword may be coded only once.
+_KEYWORD_STATEMENTS = frozenset({"JOB", "EXEC", "DD", "OUTPUT"})
+#: Keywords with two spellings: coding both is coding one twice.
+_KEYWORD_ALIASES = (("DSN", "DSNAME"), ("VOL", "VOLUME"))
+#: The statement parser's warning for a repeated keyword.
+_RE_DUPLICATE_WARNING = re.compile(r"duplicate parameter '([^']+)'")
+
 #: DDs z/OS allows before a job's first EXEC.
 _JOB_LEVEL_DDS = frozenset({"JOBLIB", "JOBCAT", "SYSCHK"})
 
@@ -225,10 +263,18 @@ class JobBuilder:
         self.statement_findings: list[tuple[int, str, ErrorSeverity]] = []
         #: INCLUDE members left unexpanded because they include themselves.
         self.recursive_includes: set[str] | frozenset[str] = frozenset()
+        #: INCLUDE members left unexpanded because they are nested deeper
+        #: than the 15 levels z/OS allows.
+        self.too_deep_includes: set[str] | frozenset[str] = frozenset()
         #: ``(line, message)`` for each misplaced DD in :attr:`orphaned_dds`;
         #: reported once the first job-level EXEC picks the DDs up (with no
         #: EXEC at all they are discarded, and reported as such, instead).
         self.misplaced_dds: list[tuple[int, str]] = []
+        #: ``(line, type)`` of the job statements seen before the JOB
+        #: statement; reported once it arrives (a JOB-less member has none).
+        self.before_job: list[tuple[int, str]] = []
+        #: Line of the job's JCLLIB statement, once one is seen.
+        self.jcllib_line: int | None = None
         #: Name of the last job-level DD before the first EXEC (JOBLIB,
         #: JOBCAT, ...): an unnamed DD after it concatenates onto it.
         self.last_job_dd: str | None = None
@@ -384,9 +430,47 @@ class JobBuilder:
         """
         if stmt.warnings:
             self._warnings_sink().extend(stmt.warnings)
+        if stmt.type in _KEYWORD_STATEMENTS:
+            self._check_duplicate_keywords(stmt, line_num)
+        if self.current_cntl is not None and stmt.type != "ENDCNTL":
+            self._unclosed_cntl()
+        if (
+            self.job is None
+            and self.current_procedure is None
+            and stmt.type in _JOB_SCOPE_TYPES
+        ):
+            self.before_job.append((line_num, stmt.type))
 
         handler_name = self._HANDLERS.get(stmt.type, "_on_custom")
         getattr(self, handler_name)(stmt, line_num)
+
+    def _check_duplicate_keywords(self, stmt: Statement, line_num: int) -> None:
+        """Report a keyword coded twice (or with its alias) on one statement.
+
+        z/OS rejects the statement; the parse keeps the last value (the
+        warning on ``job.warnings`` says which), and for ``DSN``/``DSNAME``
+        or ``VOL``/``VOLUME`` both keys.
+        """
+        for warning in stmt.warnings:
+            match = _RE_DUPLICATE_WARNING.search(warning)
+            if match is not None:
+                self.statement_findings.append(
+                    (
+                        line_num,
+                        (
+                            f"keyword {match.group(1)} is coded more than once "
+                            f"on the {stmt.type} statement"
+                        ),
+                        ErrorSeverity.ERROR,
+                    )
+                )
+        for short, long in _KEYWORD_ALIASES:
+            if short in stmt.parameters and long in stmt.parameters:
+                self._statement_error(
+                    line_num,
+                    f"{short} and {long} are the same keyword and are both coded "
+                    f"on the {stmt.type} statement",
+                )
 
     # ------------------------------------------------------------------ #
     # Per-statement-type handlers
@@ -396,6 +480,14 @@ class JobBuilder:
         if self.job is not None:
             raise JCLSyntaxError("Multiple JOB statements found", line_num)
         self.job = _create_job_from_statement(stmt)
+        # On z/OS the records before a JOB statement are not part of its job
+        # (JES reads them as the end of the previous job, or rejects them).
+        for before_line, statement_type in self.before_job:
+            self._statement_error(
+                before_line,
+                f"{statement_type} statement comes before the JOB statement; "
+                "only JES control statements and comments may precede it",
+            )
 
     def _on_exec(self, stmt: Statement, line_num: int) -> None:
         if self.job is None and self.current_procedure is None:
@@ -516,8 +608,15 @@ class JobBuilder:
     ) -> None:
         """Place a DD coded before the first EXEC of its job or PROC."""
         if self.current_procedure is not None:
-            # DD in a PROC body before its first EXEC
+            # DD in a PROC body before its first EXEC: z/OS rejects it; it is
+            # attached to the procedure's first step.
             self.proc_orphaned_dds.append(current_dd)
+            self._statement_error(
+                line_num,
+                f"DD {stmt.name or '(unnamed)'} comes before the first EXEC of "
+                f"PROC {self.current_procedure.name} (it is attached to the "
+                "procedure's first step, if it has one)",
+            )
             return
         name = stmt.name or self.last_job_dd
         if stmt.name:
@@ -548,6 +647,17 @@ class JobBuilder:
 
     def _on_proc(self, stmt: Statement, line_num: int) -> None:
         # Inline procedure definition - start tracking procedure
+        outer = self.current_procedure
+        if outer is not None and self.job is not None:
+            # z/OS rejects a PROC statement inside an in-stream procedure;
+            # the parse ends the outer one here (its later steps belong to
+            # the inner one), which empties or truncates it.
+            self._statement_error(
+                line_num,
+                f"PROC {stmt.name or '(unnamed)'} is defined inside in-stream "
+                f"PROC {outer.name}; procedure definitions cannot be nested "
+                "(add a PEND before it)",
+            )
         self.current_procedure = Procedure(
             name=stmt.name or "UNNAMED",
             parameters=stmt.parameters,
@@ -587,6 +697,8 @@ class JobBuilder:
                     )
                 )
             self._warn_proc_orphaned_dds(procedure, line_num)
+        elif self.job is not None:
+            self._statement_error(line_num, "PEND statement with no PROC to end")
         self.proc_orphaned_dds = []
         self.proc_cond_depth = 0
         self.current_procedure = None
@@ -669,6 +781,7 @@ class JobBuilder:
 
     def _on_jcllib(self, stmt: Statement, line_num: int) -> None:
         # JCLLIB ORDER=(lib1,lib2,...)
+        self._check_jcllib_placement(line_num)
         if "ORDER" not in stmt.parameters:
             return
         order_value = stmt.parameters["ORDER"]
@@ -695,6 +808,28 @@ class JobBuilder:
                 resolved = lib
             sink.append(resolved)
 
+    def _check_jcllib_placement(self, line_num: int) -> None:
+        """Report a second JCLLIB, or one after the job's first EXEC.
+
+        z/OS allows one JCLLIB per job, after the JOB statement and before
+        the first EXEC. The parse still uses its libraries.
+        """
+        if self.current_procedure is not None:
+            return
+        if self.jcllib_line is not None:
+            self._statement_error(
+                line_num,
+                f"second JCLLIB statement (the first is on line "
+                f"{self.jcllib_line}); a job may have only one",
+            )
+        elif self.job_level_steps:
+            self._statement_error(
+                line_num,
+                "JCLLIB statement comes after the first EXEC; it must come before it",
+            )
+        if self.jcllib_line is None:
+            self.jcllib_line = line_num
+
     def _on_include(self, stmt: Statement, line_num: int) -> None:
         # INCLUDE MEMBER=name
         member = stmt.parameters.get("MEMBER") or stmt.parameters.get(
@@ -705,7 +840,17 @@ class JobBuilder:
             sink.append(member)
             # Found members are expanded before the parse loop runs, so an
             # INCLUDE that reaches here could not be loaded.
-            self._warnings_sink().append(self._include_warning(stmt, str(member)))
+            if str(member) in self.too_deep_includes:
+                from .include_loader import MAX_INCLUDE_DEPTH
+
+                self._statement_error(
+                    line_num,
+                    f"INCLUDE member {member} is nested more than "
+                    f"{MAX_INCLUDE_DEPTH} levels deep (the z/OS limit); it was "
+                    "not expanded",
+                )
+            else:
+                self._warnings_sink().append(self._include_warning(stmt, str(member)))
 
     def _include_warning(self, stmt: Statement, member: str) -> str:
         """The warning for an INCLUDE whose member could not be loaded."""
@@ -763,8 +908,9 @@ class JobBuilder:
             else:
                 condition_parts.append(str(value))
         condition = " ".join(condition_parts)
-        if condition.upper().endswith(" THEN"):
-            condition = condition[:-5]
+        match = _RE_ENDS_WITH_THEN.search(condition)
+        if match is not None:
+            condition = condition[: match.start() + len(match.group(1))].rstrip()
         return condition
 
     def _innermost_if(self) -> tuple[ConditionalBlock, str] | None:
@@ -797,6 +943,13 @@ class JobBuilder:
     def _open_if(self, stmt: Statement) -> None:
         """Handle ``IF``: record a new :class:`ConditionalBlock` and enter it."""
         condition = self._if_condition_text(stmt)
+        operands = " ".join(str(v) for v in stmt.parameters.values())
+        if not _RE_ENDS_WITH_THEN.search(operands):
+            self._statement_error(
+                stmt.line_number,
+                "IF statement has no THEN; the relational expression must be "
+                "followed by THEN",
+            )
         conditional = ConditionalBlock(
             condition=condition,
             condition_ast=parse_condition(condition),
@@ -808,6 +961,28 @@ class JobBuilder:
             self.pending_conditionals.append(conditional)
         self._attach(conditional)
         self.conditional_stack.append((conditional, "THEN"))
+        self._check_if_depth(stmt.line_number)
+
+    def _check_if_depth(self, line_num: int) -> None:
+        """Report IF nesting beyond the z/OS limit; refuse a runaway one.
+
+        z/OS allows 15 levels. Far deeper nesting would overflow the Python
+        stack in every recursive walker of the model (explode, RC analysis,
+        JSON export), so it stops the parse instead.
+        """
+        depth = len(self.conditional_stack)
+        if depth == MAX_IF_NESTING + 1:
+            self._statement_error(
+                line_num,
+                f"IF statements are nested more than {MAX_IF_NESTING} levels "
+                "deep (the z/OS limit)",
+            )
+        if depth > _MAX_IF_NESTING_PARSED:
+            raise JCLSyntaxError(
+                f"IF statements nested more than {_MAX_IF_NESTING_PARSED} levels "
+                f"deep (z/OS allows {MAX_IF_NESTING})",
+                line_num,
+            )
 
     def _switch_branch(self, branch: str, line_num: int) -> None:
         """Handle ``THEN`` / ``ELSE``: make *branch* the open IF's active one."""
@@ -890,6 +1065,10 @@ class JobBuilder:
         # resolution depends on which (#85).
         step = self.current_step
         procedure = self.current_procedure
+        if not stmt.name:
+            self._statement_error(
+                line_num, "OUTPUT statement has no name; z/OS requires one"
+            )
         output = OutputStatement.from_statement(
             stmt,
             step_name=(step.name or "") if step is not None else None,
@@ -930,7 +1109,26 @@ class JobBuilder:
     def _on_endcntl(self, stmt: Statement, line_num: int) -> None:
         # Closes the CNTL block opened by _on_control; the block itself is
         # already recorded, so there is nothing more to keep.
+        if self.current_cntl is None:
+            self._statement_error(line_num, "ENDCNTL statement with no CNTL to end")
         self.current_cntl = None
+
+    def _unclosed_cntl(self) -> None:
+        """Report the open CNTL block, which the scan ended without ENDCNTL.
+
+        The scan's own warning is already on ``job.warnings``.
+        """
+        cntl = self.current_cntl
+        if cntl is None:
+            return
+        self.current_cntl = None
+        self.statement_findings.append(
+            (
+                cntl.line_number,
+                f"CNTL {cntl.name or '(unnamed)'} has no matching ENDCNTL",
+                ErrorSeverity.ERROR,
+            )
+        )
 
     def handle_control_data(self, line: str) -> None:
         """Collect a program control record from inside a CNTL/ENDCNTL block."""
@@ -1065,6 +1263,7 @@ class JobBuilder:
             job.warnings.append(unclosed_data_warning)
 
         self._flush_pending_statements(job)
+        self._unclosed_cntl()
         self._warn_orphaned_dds(job)
         self._warn_unclosed_ifs(job)
         self._warn_after_null(job)

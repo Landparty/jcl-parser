@@ -72,6 +72,11 @@ _ANONYMOUS_PREDECESSOR = "*OTHER*"
 #: skipped and recorded in :attr:`FeasibilityReport.unanalysed_conditions`.
 MAX_COMBINATIONS = 250_000
 
+#: Reason recorded for an IF whose condition did not parse.
+_NOT_PARSED = (
+    "not analysed: the condition is not a relational expression the parser understands"
+)
+
 
 @dataclass
 class FeasibilityReport:
@@ -455,6 +460,10 @@ class _FeasibilityWalker:
                         self.report.duplicate_if_branches.append(
                             (item.line_number, item.condition)
                         )
+                else:
+                    self.report.unanalysed_conditions.append(
+                        (item.condition, _NOT_PARSED)
+                    )
                 running_preds = self._walk_branches(
                     item, signatures, running_preds, guards
                 )

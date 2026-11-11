@@ -188,14 +188,34 @@ def is_continued_card_image(line: str, next_line: str | None = None) -> bool:
     quoted string is continued: it runs through column 71 and its trailing
     blanks are part of the value (issue #65).
     """
-    if len(line) >= 80:
+    if is_fixed_format_record(line):
         return not line[71].isspace()
+    if is_overlong_record(line):
+        return False
     return _has_column_72_indicator(line, next_line)
 
 
 #: Length of a card-image record: columns 1-71 text, 72 continuation,
 #: 73-80 sequence field.
 CARD_IMAGE_LENGTH = 80
+
+
+def is_overlong_record(line: str) -> bool:
+    """Whether *line* has text past column 80, so it cannot be a card image.
+
+    JCL records are 80 columns. A longer record (from an editor that does not
+    wrap) is read whole: cutting it at column 71 like a card image would
+    silently drop the operands past column 71. The parse reports it.
+    """
+    return len(line.rstrip()) > CARD_IMAGE_LENGTH
+
+
+def is_fixed_format_record(line: str) -> bool:
+    """Whether *line* is an 80-column record whose columns 72-80 are not text.
+
+    At least 80 characters, with nothing but blanks past column 80.
+    """
+    return len(line) >= CARD_IMAGE_LENGTH and not is_overlong_record(line)
 
 
 def is_card_image(record: str) -> bool:
@@ -257,7 +277,7 @@ def normalize_jcl_line(line: str, next_line: str | None = None) -> str:
     # column-72 continuation indicator (0-indexed 71).  Only do this for full
     # 80-column mainframe records; shorter lines are modern text-editor JCL
     # where every character is content.
-    if len(line) >= 80 or _has_column_72_indicator(line, next_line):
+    if is_fixed_format_record(line) or _has_column_72_indicator(line, next_line):
         line = line[:71]
 
     # Remove trailing whitespace but preserve leading spaces for continuation detection

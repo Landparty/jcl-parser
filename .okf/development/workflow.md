@@ -104,7 +104,9 @@ Line counts as of 2026-10-29 (`wc -l`).
 | `_statement_parser.py` | 904 | Single-statement parsing, `_STATEMENT_TYPES`, `split_comment_field()`, INCLUDE/JCLLIB pre-scans |
 | `_job_builder.py` | 1042 | `JobBuilder` per-statement-type dispatch (`JobBuilder._HANDLERS` table) |
 | `_model_factories.py` | 253 | `Statement` → `Job`/`Step`/`DDStatement` factories, SET-value helpers |
-| `_post_parse.py` | 567 | External PROC loading, `OUTPUT=*.name` refs, SET substitution, strict DD structure |
+| `_post_parse.py` | 585 | External PROC loading, `OUTPUT=*.name` refs, SET substitution (DD/EXEC values and job-level IF conditions), strict DD structure |
+| `_instream_symbols.py` | 58 | `SYMBOLS=JCLONLY/EXECSYS/CNVTSYS` in-stream data: exported-symbol substitution |
+| `_semantic_checks.py` | 455 | Operand checks (PARM, COND, SYSOUT, GDG) and cross-statement reference checks for `job.validate()` |
 | `model.py` | 1101 | `Job`, `Step`, `DDStatement`, `ConditionalBlock`, `Procedure`, `Statement`, `OutputStatement`, `Parameter` |
 | `explosion.py` | 1975 | `explode_job()`, `SymbolScope`, DD/EXEC overrides, `DEFAULT_MAX_STEPS` |
 | `proc_loader.py` | 439 | Loader chain, `create_default_loader()` |

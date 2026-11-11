@@ -33,8 +33,11 @@ _RE_RUN_PROGRAM = re.compile(
 
 # TSO comment: ``/* ... */``, or ``/*`` to the end of the line.
 _RE_TSO_COMMENT = re.compile(r"/\*.*?(?:\*/|$)", re.MULTILINE)
-# TSO continuation: a trailing ``-`` or ``+`` joins the next line.
-_RE_TSO_CONTINUATION = re.compile(r"[-+][ \t]*\r?\n")
+# TSO continuation: a trailing ``-`` or ``+`` joins the next line.  ``+``
+# also drops the next line's leading blanks, so it can continue a word
+# (``NAME(A.K+`` / ``  SDS)`` is ``NAME(A.KSDS)``).
+_RE_TSO_CONTINUATION = re.compile(r"-[ \t]*\r?\n")
+_RE_TSO_PLUS_CONTINUATION = re.compile(r"\+[ \t]*\r?\n[ \t]*")
 
 # TSO command: CALL 'HLQ.LOADLIB(MEMBER)' / CALL MEMBER / CALL *(MEMBER)
 _RE_CALL = re.compile(r"\bCALL\s+(?:'([^']*)'|(\S+))", re.IGNORECASE)
@@ -97,6 +100,7 @@ def _normalize_control_text(text: str) -> str:
     Comments go first: a comment line ending in ``-`` is not a continuation.
     """
     text = _RE_TSO_COMMENT.sub(" ", text)
+    text = _RE_TSO_PLUS_CONTINUATION.sub("", text)
     return _RE_TSO_CONTINUATION.sub(" ", text)
 
 

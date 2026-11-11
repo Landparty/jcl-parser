@@ -33,6 +33,7 @@ from .utils import (
     is_card_image,
     is_continued_card_image,
     is_jes_xmit,
+    is_overlong_record,
     jes_xmit_delimiter,
     normalize_jcl_lines,
     split_source_lines,
@@ -125,7 +126,12 @@ def _merge_source_lines(content: str, dialect: str = "standard") -> ScannedSourc
         for jcl_line_num, record in handler.stray_continuations
     ]
 
-    errors = _continuation_errors(handler, jcl_indices)
+    errors = tuple(
+        sorted(
+            _continuation_errors(handler, jcl_indices)
+            + _overlong_record_errors(raw_lines, lines, jcl_indices)
+        )
+    )
     warnings += [f"Line {line}: {message}" for line, message, _ in errors]
 
     return ScannedSource(
@@ -165,6 +171,27 @@ def _continuation_errors(
         for jcl_line_num, text in handler.missing_continuations
     ]
     return tuple(sorted(errors))
+
+
+def _overlong_record_errors(
+    raw_lines: Sequence[str], lines: Sequence[str], jcl_indices: Sequence[int]
+) -> tuple[tuple[int, str, ErrorSeverity], ...]:
+    """JCL statement records longer than 80 columns (read whole, reported)."""
+    return tuple(
+        (
+            i + 1,
+            (
+                f"record is {len(raw_lines[i].rstrip())} characters long; JCL "
+                "records are 80 columns, so z/OS would not read the text past "
+                "column 71 as part of the statement (it was read whole here)"
+            ),
+            ErrorSeverity.WARNING,
+        )
+        for i in jcl_indices
+        if lines[i].startswith("//")
+        and not lines[i].startswith("//*")
+        and is_overlong_record(raw_lines[i])
+    )
 
 
 def merge_continuations(

@@ -36,6 +36,41 @@ class ContinuationContext:
     is_complete: bool = False
 
 
+def _split_after_closing_quote(
+    line: str, group_operation: str, paren_depth: int
+) -> tuple[str, str]:
+    """Split a record that continues an open quoted string at its comment.
+
+    The record's text up to the apostrophe that closes the string belongs to
+    it, blanks included; after that the usual operand rules apply, so
+    ``//   BBB'   COMMENT`` ends its operands at ``BBB'``. A record whose
+    string never closes has no comment field.
+    """
+    i = 2
+    n = len(line)
+    while i < n:
+        if line[i] == "'":
+            if i + 1 < n and line[i + 1] == "'":
+                i += 2
+                continue
+            break
+        i += 1
+    else:
+        return line, ""
+    rest = line[i + 1 :]
+    if not rest.strip():
+        return line[: i + 1], ""
+    # Re-use the operand-field scanner on the text after the string, behind
+    # a one-character stand-in for the closed string.
+    stand_in = "//   A"
+    statement, comment = split_comment_field(
+        stand_in + rest, group_operation, paren_depth
+    )
+    if not comment:
+        return line, ""
+    return line[: i + 1] + statement[len(stand_in) :], comment
+
+
 class ContinuationLineHandler:
     """
     Advanced continuation line handler for JCL.
@@ -132,6 +167,15 @@ class ContinuationLineHandler:
         # Its second token being an operation keyword gives it away.
         return _is_named_statement(content.split(), False)
 
+    def _starts_nameless_statement(self, line: str) -> bool:
+        """Whether *line* is a nameless statement (``// SET X=1``, ``// PEND``).
+
+        Its first word is a statement operation on its own (not a
+        ``KEYWORD=`` operand), followed by a blank or the end of the record.
+        """
+        words = line[2:].split(None, 1)
+        return bool(words) and words[0].upper() in _STATEMENT_TYPES
+
     def is_stray_continuation_record(self, line: str) -> bool:
         """Return True if *line* looks like a continuation record but starts a
         statement group of its own.
@@ -188,6 +232,14 @@ class ContinuationLineHandler:
         # is a stray continuation, never merged (issue #123) -- see
         # is_stray_continuation_record().
         if not (has_implicit_continuation or has_unclosed_context):
+            return False
+
+        in_quotes = ctx.in_quotes if ctx is not None else False
+        if not in_quotes and self._starts_nameless_statement(line):
+            # ``// SET X=1`` / ``// PEND`` after a trailing comma: z/OS would
+            # read it as a continuation and fail on the operand; read as its
+            # own statement, the comma is reported as an expected
+            # continuation that never came.
             return False
 
         if self.CONTINUATION_PATTERN.match(line):
@@ -351,16 +403,20 @@ class ContinuationLineHandler:
             if not next_stripped:
                 break
 
-            # A continuation record has no comment field of its own while
-            # a quoted string is being continued (the blank would be inside
-            # it). Inside a parenthesised list it may have one after a
-            # subparameter's comma, so the open depth is passed along.
+            # While a quoted string is being continued, a blank before its
+            # closing apostrophe is part of it; only the text after the
+            # string closes can end in a comment field. Inside a
+            # parenthesised list it may have one after a subparameter's
+            # comma, so the open depth is passed along.
             # The comment is only recorded once the record is known to be
             # merged: a record that starts the next statement is stripped
             # (and recorded) again as that statement, which would report
             # the same comment twice.
-            next_comment = ""
-            if not cached_ctx.in_quotes:
+            if cached_ctx.in_quotes:
+                next_line, next_comment = _split_after_closing_quote(
+                    next_line, group_operation, cached_ctx.paren_depth
+                )
+            else:
                 next_line, next_comment = split_comment_field(
                     next_line, group_operation, cached_ctx.paren_depth
                 )

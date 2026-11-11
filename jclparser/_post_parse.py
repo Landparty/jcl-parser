@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from ._model_factories import _has_unresolved_symbol_ref
 from .errors import JCLStructureError, JCLSyntaxError
-from .model import Job, OutputStatement, Step, iter_execution_steps
+from .model import ConditionalBlock, Job, OutputStatement, Step, iter_execution_steps
 from .utils import split_source_lines
 
 if TYPE_CHECKING:
@@ -338,6 +338,20 @@ def resolve_set_symbols(job: Job, strict: bool = False) -> None:
                 )
             _substitute_step_parameters(_step, _step_scope, job.warnings)
         _substitute_step_names(_step, _step_scope)
+    _substitute_job_conditions(job.steps, _set_scope)
+
+
+def _substitute_job_conditions(
+    items: list[Step | ConditionalBlock], scope: SymbolScope
+) -> None:
+    """Substitute SET symbols into the job's IF conditions (not a PROC's)."""
+    from .explosion import substitute_condition_symbols
+
+    for item in items:
+        if isinstance(item, ConditionalBlock):
+            substitute_condition_symbols(item, scope)
+            _substitute_job_conditions(item.then_steps, scope)
+            _substitute_job_conditions(item.else_steps, scope)
 
 
 def _resolve_proc_call_set_symbols(step: Step, scope: SymbolScope, job: Job) -> None:

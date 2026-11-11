@@ -46,21 +46,21 @@ from jclparser import parse_jcl, explode_job, ProcedureNotFoundError
 
 job = parse_jcl(source)
 try:
-    exploded = explode_job(job, max_depth=10, audit=True, strict_symbols=False)
+    exploded = explode_job(job, max_depth=15, audit=True, strict_symbols=False)
 except ProcedureNotFoundError as e:
     print(f"PROC not found: {e}")
 ```
 
 # Explosion Options
 
-Signature: `explode_job(job, proc_loader=None, max_depth=10, max_steps=DEFAULT_MAX_STEPS, audit=True,
+Signature: `explode_job(job, proc_loader=None, max_depth=15, max_steps=DEFAULT_MAX_STEPS, audit=True,
 system_provider=None, strict_symbols=False)`. The `Job.explode()` method takes the same
 options but names the loader `loader=`, not `proc_loader=`.
 
 | Option | Default | Effect |
 |--------|---------|--------|
 | `proc_loader` | `None` | Loader chain; `None` builds the default chain below |
-| `max_depth` | `10` | Raises `ExplosionDepthError` if nesting exceeds it |
+| `max_depth` | `15` | Raises `ExplosionDepthError` if nesting exceeds it (z/OS nests PROCs 15 levels) |
 | `max_steps` | `DEFAULT_MAX_STEPS` = `10_000` (`0` = unlimited) | Cap on total expanded steps; raises `JCLStructureError` if exceeded. Counted per plain step as it is produced (an `on_step` hook threaded through `_explode_step`), so a PROC fan-out stops at the limit instead of being built first. z/OS allows 255 steps per job |
 | `audit` | **`True`** | Populates `job.explosion_audit` (left `[]` when False); `job.explosion_map` is filled either way |
 | `system_provider` | `None` | `SystemSymbolProvider` for `&SYSUID`-style system symbols; `None` uses `system_symbols.get_default_provider()` (a `MockSystemSymbolProvider` unless `set_default_provider()` was called) |
