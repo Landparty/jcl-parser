@@ -1,5 +1,13 @@
 # Update Log
 
+## 2026-11-12 (hunt issues #189, #190, #191, #194, #197)
+* **Fix (#189)**: lineage orders a job's uses of a dataset by step execution order (`DatasetUse.step_order`, then line), not by source line: a PROC step's DD keeps the PROC's own line number, so a delete then a PROC-step recreate made the job a deleter again and formed a cycle with every reader.
+* **Fix (#190)**: JES2/JES3 control-statement parameters split only at commas outside apostrophes as well as parentheses (`PNAME='SMITH,J'` stays whole).
+* **Fix (#191)**: dataset lifecycle tells DELETE from UNCATLG. The `VOL=SER` / `VOL=REF` exemption (#186) applies only after an UNCATLG; a use after DELETE is reported whatever the volume parameters say, as "after being deleted in step ...". `VOL=REF=dsname` names the volume like `VOL=REF=*`.
+* **Fix (#194)**: INCLUDE line translation also maps `(line N)` and `(lines A-B)` inside a warning (PEND-closes-IF, null statement).
+* **Fix (#197)**: `parse_jcl` substitutes `SYMBOLS=` in-stream data with the exported SET values in effect at the DD's step (`Step.set_symbols`), as its DD operands are; a symbol first set later is left as coded.
+* **Tests**: `tests/unit/test_hunt_issues_189_197.py`.
+
 ## 2026-11-11 (CLI sweep over open-source JCL)
 Every `jcl-parser` subcommand was run on 491 JCL files from 19 public GitHub repositories (Zowe, IBM samples, CardDemo, MVS sysgen, ...). No crashes; these fixes come from its findings.
 * **Fix**: `parse_condition` reads a comparison of two numbers (`(0 EQ 1)`) as the new `ConstantComparison` node. #195's SET substitution in IF turned Zowe's `IF (&IFZOWECA EQ 1)` into one, which was then warned about as unreadable and left out of `paths`; now it validates clean and the dead branch is reported unreachable. See [core/data-model](core/data-model.md#condition-ast-node-types).

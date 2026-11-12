@@ -28,31 +28,44 @@ def _symbols_mode(value: Any) -> str | None:
     return mode if mode in _SUBSTITUTING_MODES else None
 
 
-def _exported_table(job: Job) -> dict[str, str]:
-    """The SET symbols *job* exports (``SYMLIST=*`` exports them all)."""
+def _exported_table(job: Job, values: dict[str, str] | None = None) -> dict[str, str]:
+    """The SET symbols *job* exports (``SYMLIST=*`` exports them all), taken
+    from *values* (default: the job's final SET table)."""
+    table = job.set_statements if values is None else values
     exported = {name.upper() for name in job.exported_symbols}
     if "*" in exported:
-        return dict(job.set_statements)
-    return {k: v for k, v in job.set_statements.items() if k.upper() in exported}
+        return dict(table)
+    return {k: v for k, v in table.items() if k.upper() in exported}
 
 
-def substitute_instream_symbols(job: Job) -> None:
-    """Substitute exported symbols into every ``SYMBOLS=`` in-stream DD of *job*."""
-    table = _exported_table(job)
-    if not table:
+def substitute_instream_symbols(job: Job, at_each_step: bool = False) -> None:
+    """Substitute exported symbols into every ``SYMBOLS=`` in-stream DD of *job*.
+
+    With *at_each_step* (``parse_jcl``, whose steps carry the SET values in
+    effect where each was coded), a DD gets the values in effect at its step,
+    as its step's DD operands do; a symbol first set after it is left as
+    coded (#197). Otherwise the job's final SET table is used.
+    """
+    if not _exported_table(job):
         return
     from ._post_parse import _scope_for_table
     from .explosion import substitute_symbols
 
-    scope = None
+    scopes: dict[tuple[tuple[str, str], ...], Any] = {}
     for step in iter_execution_steps(job.steps):
+        snapshot = step.set_symbols if at_each_step else None
+        table = _exported_table(job, snapshot)
         for dd in step.dd_statements:
             if not dd.inline_data or "&" not in dd.inline_data:
                 continue
             if _symbols_mode(dd.parameters.get("SYMBOLS")) is None:
                 continue
-            if scope is None:
-                scope = _scope_for_table(table, job.warnings)
+            key = tuple(sorted(table.items()))
+            if key not in scopes:
+                scopes[key] = _scope_for_table(table, job.warnings)
             dd.inline_data = substitute_symbols(
-                dd.inline_data, scope, allow_undefined=True, collapse_double_amp=False
+                dd.inline_data,
+                scopes[key],
+                allow_undefined=True,
+                collapse_double_amp=False,
             )

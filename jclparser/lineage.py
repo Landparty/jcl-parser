@@ -102,6 +102,10 @@ class DatasetUse:
     #: The DD deletes the dataset (normal disposition ``DELETE``, any status
     #: but ``NEW``); it is a read that must also follow every other use.
     deletes: bool = False
+    #: Position of the DD's step in the job's execution order. A PROC
+    #: step's DD keeps the PROC's own line number, so ``line_number`` does
+    #: not order a job's uses (#189).
+    step_order: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -254,7 +258,16 @@ def _mermaid_text(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _step_orders(job: Job) -> dict[str, int]:
+    """Each execution step's name -> its position in the job (#189)."""
+    orders: dict[str, int] = {}
+    for index, step in enumerate(iter_execution_steps(job.steps)):
+        orders.setdefault(step.name or "", index)
+    return orders
+
+
 def _record_uses(job_id: str, job: Job, datasets: dict[str, DatasetLineage]) -> None:
+    orders = _step_orders(job)
     for dsn, events in analyze_dataset_lifecycle(job).items():
         if dsn.startswith("&&"):
             continue
@@ -269,17 +282,21 @@ def _record_uses(job_id: str, job: Job, datasets: dict[str, DatasetLineage]) -> 
                 disp=evt.disp_status,
                 line_number=evt.line_number,
                 deletes=evt.disp_normal == "DELETE" and evt.disp_status != "NEW",
+                step_order=orders.get(evt.step_name, 0),
             )
             role = _role(evt.disp_status, evt.disp_normal)
             if role == "write":
                 lineage.writers.append(use)
             elif role == "read":
                 lineage.readers.append(use)
-    _record_idcams_uses(job_id, job, datasets)
+    _record_idcams_uses(job_id, job, datasets, orders)
 
 
 def _record_idcams_uses(
-    job_id: str, job: Job, datasets: dict[str, DatasetLineage]
+    job_id: str,
+    job: Job,
+    datasets: dict[str, DatasetLineage],
+    orders: dict[str, int] | None = None,
 ) -> None:
     """Record the datasets IDCAMS commands write and read (issue: CardDemo).
 
@@ -304,6 +321,7 @@ def _record_idcams_uses(
                 dataset=dsn,
                 disp="IDCAMS",
                 line_number=step.line_number,
+                step_order=(orders or {}).get(step.name or "", 0),
             )
             same_dd = [
                 u
@@ -414,8 +432,10 @@ def _last_use_deletes(lineage: DatasetLineage, job: str) -> bool:
     copy: the other jobs read its new one and run after it, not before (#183).
     """
     uses = [u for u in (*lineage.readers, *lineage.writers) if u.job == job]
-    last = max(u.line_number for u in uses)
-    return any(u.deletes for u in uses if u.line_number == last)
+    # Execution order first: a PROC step's DD carries the PROC's line
+    # number, which may sit above the steps that run before it (#189).
+    last = max((u.step_order, u.line_number) for u in uses)
+    return any(u.deletes for u in uses if (u.step_order, u.line_number) == last)
 
 
 def _run_order(

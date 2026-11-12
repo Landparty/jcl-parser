@@ -68,7 +68,7 @@ class TestMembersShareTheLibrary:
         )
         assert len(msgs) == 1
         assert "'P.L' opened in step 'S2'" in msgs[0]
-        assert "after being uncataloged in step 'S1'" in msgs[0]
+        assert "after being deleted in step 'S1'" in msgs[0]
 
     def test_analyze_keys_unchanged(self) -> None:
         events = analyze_dataset_lifecycle(
