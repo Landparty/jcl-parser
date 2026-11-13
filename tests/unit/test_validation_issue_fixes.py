@@ -252,7 +252,7 @@ class TestLifecycleDispositionAtStepEnd:
         assert _lifecycle_messages(src) == [
             (
                 "Dataset 'PROD.B' opened in step 'S4' (DD D4) after being "
-                "uncataloged in step 'S3'"
+                "deleted in step 'S3'"
             )
         ]
 
@@ -267,7 +267,7 @@ class TestLifecycleDispositionAtStepEnd:
             "//S3 EXEC PGM=Z\n//D DD DSN=PROD.B,DISP=(NEW,CATLG)\n"
         )
         messages = _lifecycle_messages(src)
-        assert not [m for m in messages if "after being uncataloged" in m]
+        assert not [m for m in messages if "after being" in m]
         dup = [m for m in messages if "already cataloged" in m]
         assert len(dup) == 1
         assert "in step 'S3'" in dup[0]

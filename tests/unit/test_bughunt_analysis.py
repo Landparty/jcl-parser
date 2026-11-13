@@ -241,7 +241,7 @@ class TestLifecycleModCatlg:
             "//IN DD DSN=A.B.C,DISP=SHR\n"
         )
         assert len(msgs) == 1
-        assert "after being uncataloged" in msgs[0]
+        assert "after being deleted" in msgs[0]
 
     def test_mod_catlg_then_new_catlg_is_duplicate(self):
         msgs = _messages(

@@ -28,6 +28,8 @@ from .model import Job, Procedure
 
 _LEADING_LINE = re.compile(r"^Line (\d+)")
 _INNER_LINE = re.compile(r"\bon line (\d+)\b")
+_PAREN_LINE = re.compile(r"\(line (\d+)\)")
+_PAREN_LINES = re.compile(r"\(lines (\d+)-(\d+)\)")
 
 
 class IncludeLineMap:
@@ -61,10 +63,21 @@ class IncludeLineMap:
         return f"Line {main_line} ({note})" if note else f"Line {main_line}"
 
     def relabel_text(self, text: str) -> str:
-        """Translate the ``Line N`` prefix (and ``on line N``) of a message."""
+        """Translate the ``Line N`` prefix of a message, and the ``on line
+        N``, ``(line N)`` and ``(lines A-B)`` numbers inside it (#194)."""
         text = _LEADING_LINE.sub(lambda m: self.label(int(m.group(1))), text, 1)
-        return _INNER_LINE.sub(
+        text = _INNER_LINE.sub(
             lambda m: f"on line {self.translate(int(m.group(1)))}", text
+        )
+        text = _PAREN_LINE.sub(
+            lambda m: f"(line {self.translate(int(m.group(1)))})", text
+        )
+        return _PAREN_LINES.sub(
+            lambda m: (
+                f"(lines {self.translate(int(m.group(1)))}"
+                f"-{self.translate(int(m.group(2)))})"
+            ),
+            text,
         )
 
     def relabel_error(self, exc: JCLParseError) -> None:
