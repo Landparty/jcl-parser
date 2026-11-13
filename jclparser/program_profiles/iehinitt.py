@@ -1,27 +1,56 @@
 """Profile for ``IEHINITT`` — magnetic tape volume initialization utility.
 
-Control statements are read from ``SYSIN``: each ``INITT`` statement writes
-a standard label to initialize one or more tape volumes, optionally naming
-a volume serial (``VOL=SER=``) and owner ID (``OWNER=``).  IEHINITT works
-entirely through tape labels rather than DD dataset references, so — like
-:mod:`jclparser.program_profiles.iehlist` — the profile only reports which
-volumes were initialized and does not emit
+Control statements are read from ``SYSIN``. IBM documents one statement::
+
+    ddname   INITT SER=serial[,NUMBTAPE=n][,OWNER='name'][,DISP=REWIND|UNLOAD]...
+
+The name field is the ddname of the DD that allocates the tape unit, so it
+is read as the statement's label (through
+:func:`~jclparser.program_profiles._control.parse_control_statements`).
+``SER=`` gives the first volume serial and ``OWNER=`` the owner ID, usually
+quoted. IEHINITT works entirely through tape labels rather than DD dataset
+references, so — like :mod:`jclparser.program_profiles.iehlist` — the
+profile only reports which volumes were initialized and does not emit
 :class:`~jclparser.dataset_lifecycle.DatasetEvent` entries.
 """
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
+from ._control import parse_control_statements, split_operands
 from .base import ProgramAnalysis, ProgramProfile, _sysin_text
 
 if TYPE_CHECKING:
     from ..model import Step
 
-_RE_INITT = re.compile(r"^\s*INITT\b", re.IGNORECASE | re.MULTILINE)
-_RE_VOL = re.compile(r"\bVOL=SER=([A-Za-z0-9]+)", re.IGNORECASE)
-_RE_OWNER = re.compile(r"\bOWNER=([A-Za-z0-9]+)", re.IGNORECASE)
+_OPERATIONS = frozenset({"INITT"})
+
+
+def _keywords(operands: str) -> dict[str, str]:
+    """``KEY=value`` operands, keys upper-cased, surrounding quotes dropped.
+    ``VOL=SER=x`` (DD syntax, not INITT's) is read as ``SER=x``."""
+    found: dict[str, str] = {}
+    for part in split_operands(operands):
+        key, sep, value = part.partition("=")
+        if not sep:
+            continue
+        key = key.strip().upper()
+        value = value.strip()
+        if key == "VOL" and value.upper().startswith("SER="):
+            key, value = "SER", value[4:]
+        if len(value) >= 2 and value[0] == value[-1] == "'":
+            value = value[1:-1].replace("''", "'")
+        found.setdefault(key, value)
+    return found
+
+
+def _initt_note(label: str, keys: dict[str, str]) -> str:
+    parts = [f"{name}={keys[name]}" for name in ("SER", "OWNER") if name in keys]
+    if "NUMBTAPE" in keys:
+        parts.append(f"NUMBTAPE={keys['NUMBTAPE']}")
+    note = f"INITT {label}" if label else "INITT"
+    return f"{note} ({', '.join(parts)})" if parts else note
 
 
 class IEHINITTProfile(ProgramProfile):
@@ -29,21 +58,11 @@ class IEHINITTProfile(ProgramProfile):
 
     def analyze(self, step: Step) -> ProgramAnalysis:
         text = _sysin_text(step) or ""
-        notes: list[str] = []
-
-        for m in _RE_INITT.finditer(text):
-            line_end = text.find("\n", m.end())
-            line_tail = text[m.end() : line_end if line_end != -1 else len(text)]
-            vol_m = _RE_VOL.search(line_tail)
-            owner_m = _RE_OWNER.search(line_tail)
-            detail_parts = []
-            if vol_m:
-                detail_parts.append(f"VOL={vol_m.group(1)}")
-            if owner_m:
-                detail_parts.append(f"OWNER={owner_m.group(1)}")
-            detail = f" ({', '.join(detail_parts)})" if detail_parts else ""
-            notes.append(f"INITT{detail}")
-
+        notes = [
+            _initt_note(statement.label.upper(), _keywords(statement.operands))
+            for statement in parse_control_statements(text, _OPERATIONS)
+            if statement.operation == "INITT"
+        ]
         summary = (
             f"IEHINITT: {len(notes)} tape initialization(s)"
             if notes

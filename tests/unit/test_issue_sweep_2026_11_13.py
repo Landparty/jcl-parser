@@ -109,3 +109,28 @@ def test_iebptpch_and_iebdg_labelled_statements() -> None:
         "reads MY.PDS",
     ]
     assert by_step["S2"].notes == ["DSD OUTPUT=OUT1", "FD fields: F1", "CREATE"]
+
+
+IEHINITT_JCL = """\
+//J1       JOB (1),'X',CLASS=A
+//S1       EXEC PGM=IEHINITT
+//SYSPRINT DD SYSOUT=*
+//TAPE1    DD UNIT=(TAPE,1,DEFER),LABEL=(,SL)
+//SYSIN    DD *
+TAPE1    INITT SER=TAP001,OWNER='J SMITH',NUMBTAPE=2
+TAPE1    INITT SER=TAP010,DISP=UNLOAD
+* a comment
+         INITT VOL=SER=OLD001
+/*
+"""
+
+
+def test_iehinitt_reads_ibm_initt_statements() -> None:
+    # #206: the ddname name field, SER= and a quoted OWNER=.
+    results = analyze_job(jp.parse_jcl(IEHINITT_JCL))
+    assert results[0].summary == "IEHINITT: 3 tape initialization(s)"
+    assert results[0].notes == [
+        "INITT TAPE1 (SER=TAP001, OWNER=J SMITH, NUMBTAPE=2)",
+        "INITT TAPE1 (SER=TAP010)",
+        "INITT (SER=OLD001)",
+    ]
