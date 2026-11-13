@@ -358,7 +358,7 @@ class TestIEBDG:
         results = analyze_job(job)
         assert len(results) == 1
         notes = " | ".join(results[0].notes)
-        assert "DSD DDNAME=SYSUT2" in notes
+        assert "DSD OUTPUT=SYSUT2" in notes
         assert "FLD1" in notes
         assert "CREATE REPEAT=100" in notes
 

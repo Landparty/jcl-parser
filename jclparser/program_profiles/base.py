@@ -43,9 +43,11 @@ class ProgramAnalysis:
         notes: Free-form annotations (e.g. "SORT with INCLUDE filter").
         raw_control: The raw SYSIN text that was parsed (if any).
         invoked_programs: Application programs the step actually runs that are
-            named inside the control text rather than on ``EXEC PGM=`` — e.g. a
-            program named in a DSN ``RUN PROGRAM(...)`` subcommand or a TSO
-            ``CALL`` under IKJEFT01.  Upper-cased and de-duplicated.
+            named inside the control text or the PARM rather than on
+            ``EXEC PGM=`` — e.g. a program named in a DSN ``RUN PROGRAM(...)``
+            subcommand, a TSO ``CALL`` under IKJEFT01, or the application
+            program of an IMS BMP/DLI/DBB region's PARM.  Upper-cased and
+            de-duplicated.
     """
 
     program: str
