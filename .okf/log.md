@@ -11,6 +11,13 @@
 * **Not changed** (deliberate, as before): a SYSOUT override keeping the PROC's DISP, duplicate step names as a WARNING, the three-level override, symbols on the JOB statement, `TIME` / `REGION` / `MSGLEVEL` values, `ABENDCC` conditions (documented limitation) and `MockSystemSymbolProvider` as the explosion default (design note).
 * **Fix** (pass 28): a NUL no longer makes valid JCL "Not a JCL file" by itself. NUL padding after the last record and a few non-printable bytes in in-stream data are JCL; content is binary only when its first record holds a NUL or more than 5 % of it is control characters (`parser._looks_binary`).
 * **Tests**: `tests/unit/test_open_bughunt_items.py`.
+## 2026-11-12 (hunt issues #189, #190, #191, #194, #197)
+* **Fix (#189)**: lineage orders a job's uses of a dataset by step execution order (`DatasetUse.step_order`, then line), not by source line: a PROC step's DD keeps the PROC's own line number, so a delete then a PROC-step recreate made the job a deleter again and formed a cycle with every reader.
+* **Fix (#190)**: JES2/JES3 control-statement parameters split only at commas outside apostrophes as well as parentheses (`PNAME='SMITH,J'` stays whole).
+* **Fix (#191)**: dataset lifecycle tells DELETE from UNCATLG. The `VOL=SER` / `VOL=REF` exemption (#186) applies only after an UNCATLG; a use after DELETE is reported whatever the volume parameters say, as "after being deleted in step ...". `VOL=REF=dsname` names the volume like `VOL=REF=*`.
+* **Fix (#194)**: INCLUDE line translation also maps `(line N)` and `(lines A-B)` inside a warning (PEND-closes-IF, null statement).
+* **Fix (#197)**: `parse_jcl` substitutes `SYMBOLS=` in-stream data with the exported SET values in effect at the DD's step (`Step.set_symbols`), as its DD operands are; a symbol first set later is left as coded.
+* **Tests**: `tests/unit/test_hunt_issues_189_197.py`.
 
 ## 2026-11-11 (CLI sweep over open-source JCL)
 Every `jcl-parser` subcommand was run on 491 JCL files from 19 public GitHub repositories (Zowe, IBM samples, CardDemo, MVS sysgen, ...). No crashes; these fixes come from its findings.

@@ -150,7 +150,7 @@ class TestLifecycleStepCond:
         src = _CREATE + f"//S2 EXEC PGM=IEFBR14,COND={cond}\n" + _DELETE_DD + _READ
         warnings = _lifecycle_warnings(src)
         assert len(warnings) == 1
-        assert "after being uncataloged in step 'S2'" in warnings[0][1]
+        assert "after being deleted in step 'S2'" in warnings[0][1]
 
     def test_no_cond_still_warns(self):
         src = _CREATE + "//S2 EXEC PGM=IEFBR14\n" + _DELETE_DD + _READ

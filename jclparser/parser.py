@@ -388,7 +388,7 @@ def _resolve_references(
             len(job.set_statements),
         )
         resolve_set_symbols(job, strict=strict)
-        substitute_instream_symbols(job)
+        substitute_instream_symbols(job, at_each_step=True)
 
 
 def _raise_on_fatal_findings(job: Job) -> None:

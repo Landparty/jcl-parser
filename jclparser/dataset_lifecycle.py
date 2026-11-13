@@ -101,15 +101,16 @@ _UNCATLG_VALUES = frozenset({"UNCATLG"})
 
 
 def _names_volume(dd: DDStatement) -> bool:
-    """True when *dd* gives the volume itself (``VOL=SER=``, or a ``VOL=REF``
-    back-reference to another DD) instead of going through the catalog."""
+    """True when *dd* gives the volume itself (``VOL=SER=``, or ``VOL=REF=``
+    naming another DD or another cataloged dataset) instead of looking this
+    dataset up in the catalog (#191)."""
     params = dd.parameters or {}
     for key in ("VOL", "VOLUME"):
         value = params.get(key)
         if value is None:
             continue
         text = str(value).upper().replace(" ", "")
-        if "SER=" in text or "REF=*" in text:
+        if "SER=" in text or "REF=" in text:
             return True
     return False
 
@@ -545,19 +546,12 @@ class _LifecycleChecker:
 
         A DD that names its volume reads the dataset from that volume, not
         through the catalog: it is how an uncataloged dataset is reached, so
-        neither check applies to it (#186)."""
+        neither check applies to it (#186). A deleted dataset is gone from
+        the volume too, so a use after DELETE is reported whatever the DD
+        says about volumes (#191)."""
+        self._report_use_after_removal(dsn, pos, evt, state)
         if evt.explicit_volume:
             return
-        cataloged_by, uncataloged_by = state
-        if uncataloged_by is not None and cataloged_by is None:
-            self._report(
-                dsn,
-                pos,
-                f"Dataset '{dsn}' opened in step '{evt.step_name}' "
-                f"(DD {evt.dd_label}) after being uncataloged in step "
-                f"'{uncataloged_by.step_name}'",
-                evt,
-            )
 
         # Forward-reference check: dataset opened (OLD or SHR) before it is
         # allocated anywhere in the job — heuristic warning because the
@@ -573,6 +567,27 @@ class _LifecycleChecker:
                 f"exists in the catalog",
                 evt,
             )
+
+    def _report_use_after_removal(
+        self, dsn: str, pos: int, evt: DatasetEvent, state: _CatalogState
+    ) -> None:
+        """Report an open after an UNCATLG, unless the DD names its volume,
+        or after a DELETE, which scratches the dataset from the volume."""
+        cataloged_by, removed_by = state
+        if removed_by is None or cataloged_by is not None:
+            return
+        deleted = removed_by.disp_normal in _DELETE_VALUES
+        if not deleted and evt.explicit_volume:
+            return
+        verb = "deleted" if deleted else "uncataloged"
+        self._report(
+            dsn,
+            pos,
+            f"Dataset '{dsn}' opened in step '{evt.step_name}' "
+            f"(DD {evt.dd_label}) after being {verb} in step "
+            f"'{removed_by.step_name}'",
+            evt,
+        )
 
     @staticmethod
     def _dispose(evt: DatasetEvent, state: _CatalogState) -> _CatalogState:

@@ -145,6 +145,34 @@ def _operand_field(params: str) -> str:
     return params
 
 
+def _split_top_level_commas(params: str) -> list[str]:
+    """Split at commas outside parentheses and apostrophes.
+
+    Parens keep ``ROUTE=(LOCAL,NODE2)`` whole; apostrophes keep a quoted
+    value such as ``PNAME='SMITH,J'`` whole (#190). A doubled ``''`` toggles
+    twice, so it stays inside the quotes.
+    """
+    parts: list[str] = []
+    depth = 0
+    in_quotes = False
+    buf: list[str] = []
+    for ch in params:
+        if ch == "'":
+            in_quotes = not in_quotes
+        elif not in_quotes and ch == "(":
+            depth += 1
+        elif not in_quotes and ch == ")":
+            depth = max(0, depth - 1)
+        elif not in_quotes and ch == "," and depth == 0:
+            parts.append("".join(buf).strip())
+            buf = []
+            continue
+        buf.append(ch)
+    if buf:
+        parts.append("".join(buf).strip())
+    return parts
+
+
 def _split_keyword_params(params: str) -> dict[str, str]:
     """Split a simple ``K=V,K=V`` parameter string.
 
@@ -156,24 +184,7 @@ def _split_keyword_params(params: str) -> dict[str, str]:
     out: dict[str, str] = {}
     if not params:
         return out
-    # Respect parens so ROUTE=(LOCAL,NODE2) is left intact.
-    parts: list[str] = []
-    depth = 0
-    buf: list[str] = []
-    for ch in params:
-        if ch == "(":
-            depth += 1
-            buf.append(ch)
-        elif ch == ")":
-            depth = max(0, depth - 1)
-            buf.append(ch)
-        elif ch == "," and depth == 0:
-            parts.append("".join(buf).strip())
-            buf = []
-        else:
-            buf.append(ch)
-    if buf:
-        parts.append("".join(buf).strip())
+    parts = _split_top_level_commas(params)
 
     pos = 0
     for p in parts:
