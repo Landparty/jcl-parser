@@ -7,6 +7,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.3.2](https://github.com/Landparty/jcl-parser/compare/v2.3.1...v2.3.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* bugs from the 2026-11-10 bug hunts (passes 1-2, all-samples run) ([90e9af4](https://github.com/Landparty/jcl-parser/commit/90e9af4be6c3b6fee48b40c409050d605860b9a0))
+* bugs from the 2026-11-10 bug hunts (passes 1-2, all-samples run) ([86e0b8d](https://github.com/Landparty/jcl-parser/commit/86e0b8d34fce83622ba06628cbb92d9b9efae1f3))
+* bugs from the 2026-11-10/11 bug hunts (passes 3-21) ([ecca147](https://github.com/Landparty/jcl-parser/commit/ecca147645773ee92c393d9bc5ef713b10ca6ea4))
+* compare temporary dataset names case-insensitively ([44824b5](https://github.com/Landparty/jcl-parser/commit/44824b51137a3fab79dbcc9d4a06242116355b09))
+* datasets a called PROC creates exist for later job steps ([de39490](https://github.com/Landparty/jcl-parser/commit/de39490afad68b6167bad40b7dcd0a28ea1f4ee1))
+* delete-and-recreate lineage, nameless PROC members, JES3 continuations, VOL=SER opens ([#187](https://github.com/Landparty/jcl-parser/issues/187)) ([6757711](https://github.com/Landparty/jcl-parser/commit/675771131323be97eea6a3c8382ec1a12ee9db08))
+* don't re-scan quoted values for symbol operands ([068193b](https://github.com/Landparty/jcl-parser/commit/068193ba7067b3504939b80e4b79db86835889a3))
+* lineage PROC recreate, JES quoted commas, use after DELETE, INCLUDE line refs, in-stream SET values ([e85d0dd](https://github.com/Landparty/jcl-parser/commit/e85d0dd29362d8af2af5b6cb7321ccf7306dad50))
+* lineage PROC recreate, JES quoted commas, use after DELETE, INCLUDE line refs, in-stream SET values ([2438947](https://github.com/Landparty/jcl-parser/commit/24389470689d2e6629fbffa7d9485435e85bdff3)), closes [#189](https://github.com/Landparty/jcl-parser/issues/189) [#190](https://github.com/Landparty/jcl-parser/issues/190) [#191](https://github.com/Landparty/jcl-parser/issues/191) [#194](https://github.com/Landparty/jcl-parser/issues/194) [#197](https://github.com/Landparty/jcl-parser/issues/197)
+* problems found by running every CLI subcommand on open-source JCL ([6b412a1](https://github.com/Landparty/jcl-parser/commit/6b412a13f11eaddd77f405f8f0a823b8e8e61b15))
+
 ## [2.3.1](https://github.com/Landparty/jcl-parser/compare/v2.3.0...v2.3.1) (2026-11-06)
 
 
