@@ -46,6 +46,12 @@ class HardcodedHLQRule(LintRule):
                 # qualifiers — to avoid being noisy on tiny test JCL.
                 if "." not in dsn:
                     continue
+                hlq = dsn.split(".", 1)[0]
+                # System / product libraries (SYS1.MACLIB) are named
+                # literally by design, and ``<HLQ>`` / ``{prefix}`` is a
+                # template placeholder someone fills in, not a literal.
+                if config.is_system_hlq(hlq) or any(c in hlq for c in "<>{}%"):
+                    continue
                 # JCL-LINT-010 reports this one, naming the SET symbol to use.
                 if defer and dsn.split(".", 1)[0].upper() in set_values:
                     continue

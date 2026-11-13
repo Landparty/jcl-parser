@@ -13,6 +13,7 @@ from ._semantic_checks import (
     called_procedure_dds,
     check_job_references,
     check_step_operands,
+    exploded_for_checks,
 )
 from .errors import ErrorSeverity, ErrorType, ValidationError
 from .model import (
@@ -142,8 +143,11 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
     for step in flat_steps:
         errors.extend(validate_step_structure(step))
 
-    # Validate data dependencies (temp dataset creation/use order)
-    errors.extend(validate_data_dependencies(job))
+    # Validate data dependencies (temp dataset creation/use order), on the
+    # exploded job when its PROCs are available (exploded once, for this
+    # check and the GDG one in check_job_references).
+    flow_job = exploded_for_checks(job) or job
+    errors.extend(validate_data_dependencies(flow_job))
 
     # Validate cross-step permanent dataset lifecycle (duplicate alloc, use-after-uncatalog, etc.)
     from .dataset_lifecycle import validate_dataset_lifecycle
@@ -161,7 +165,7 @@ def validate_job_structure(job: Job) -> list[ValidationError]:
 
     errors.extend(validate_backward_references(job))
 
-    errors.extend(check_job_references(job))
+    errors.extend(check_job_references(job, flow_job=flow_job))
 
     reported_lines = {e.line_number for e in errors if e.line_number}
     errors.extend(
@@ -711,6 +715,9 @@ def validate_data_dependencies(job: Job) -> list[ValidationError]:
     Returns:
         List of validation errors
     """
+    # On the exploded job when its PROCs are available: a call's overrides
+    # and symbols decide which temporaries it creates and deletes (pass 27).
+    job = exploded_for_checks(job) or job
     tracker = _TempDatasetTracker(job)
     tracker.walk(job.steps, {})
     return tracker.findings()

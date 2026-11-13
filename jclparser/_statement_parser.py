@@ -203,6 +203,12 @@ def _paren_group_end(text: str) -> int | None:
     return None
 
 
+#: A keyword or symbolic parameter name (``PARM.STEP1`` included).
+_RE_OPERAND_NAME = re.compile(
+    r"[A-Z@#$][A-Z0-9@#$]*(\.[A-Z@#$][A-Z0-9@#$]*)?", re.IGNORECASE
+)
+
+
 def _resumes_operands(text: str, keywords: frozenset[str] | None = None) -> bool:
     """Return True if *text*, following a trailing comma and blanks, looks like
     more operands rather than a comment.
@@ -229,7 +235,11 @@ def _resumes_operands(text: str, keywords: frozenset[str] | None = None) -> bool
     key, eq, _ = token.partition("=")
     if not eq:
         return False
-    return keywords is None or key.upper() in keywords
+    if keywords is None:
+        # Any keyword or symbolic parameter name -- but a name: the arrow of
+        # ``A=1,      <=== THE SOUT CLASS`` is a comment (pass 28).
+        return _RE_OPERAND_NAME.fullmatch(key) is not None
+    return key.upper() in keywords
 
 
 def _closes_parens(text: str, depth: int) -> bool:
@@ -566,19 +576,28 @@ def parse_statement(
 def _find_keyword_eq(part: str, operator_prefixes: frozenset) -> int | None:
     """Find the position of '=' that acts as a keyword parameter delimiter.
 
-    Returns None if no keyword '=' is found (i.e., all '=' signs are part of
-    relational operators like ¬=, ^=, ~=, !=, <=, >=).
+    Returns None if no keyword '=' is found: every '=' is part of a
+    relational operator (¬=, ^=, ~=, !=, <=, >=), or sits inside a quoted
+    string or a parenthesised group -- ``'X=Y'`` and ``(A=B)`` are
+    positional values, not keywords (AUDIT L1).
     """
-    pos = 0
-    while pos < len(part):
-        eq_pos = part.find("=", pos)
-        if eq_pos == -1:
-            return None
-        # An '=' is a keyword delimiter if it's at position 0 or the preceding
-        # character is NOT an operator prefix (¬, ^, ~, !, <, >)
-        if eq_pos == 0 or part[eq_pos - 1] not in operator_prefixes:
-            return eq_pos
-        pos = eq_pos + 1
+    in_quotes = False
+    depth = 0
+    for pos, char in enumerate(part):
+        if char == "'":
+            in_quotes = not in_quotes
+        elif in_quotes:
+            continue
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(depth - 1, 0)
+        elif (
+            char == "="
+            and depth == 0
+            and (pos == 0 or part[pos - 1] not in operator_prefixes)
+        ):
+            return pos
     return None
 
 
