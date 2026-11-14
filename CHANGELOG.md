@@ -7,6 +7,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.3.3](https://github.com/Landparty/jcl-parser/compare/v2.3.2...v2.3.3) (2026-11-14)
+
+
+### Bug Fixes
+
+* **profiles:** read IBM's INITT statements in the IEHINITT profile ([#206](https://github.com/Landparty/jcl-parser/issues/206)) ([8967451](https://github.com/Landparty/jcl-parser/commit/89674519ac032efc2fe751f7c31c4c0c9f370f77))
+* TSO SQL with unread SYSTSIN, IMS region program, labelled utility statements ([b407c92](https://github.com/Landparty/jcl-parser/commit/b407c92207d55b7e6c9c45cc581e3d11d3b2a364))
+
 ## [2.3.2](https://github.com/Landparty/jcl-parser/compare/v2.3.1...v2.3.2) (2026-11-13)
 
 
