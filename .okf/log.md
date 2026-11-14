@@ -1,5 +1,13 @@
 # Update Log
 
+## 2026-11-13 (hunt issues #199, #201, #202, #204, #206)
+* **Fix (#199)**: a TSO batch step whose `SYSTSIN` is a dataset (commands unread) is no longer TSO-only: its SYSIN SQL is reported and DML/DDL/DCL there makes it DB2 (`sql_detector._tso_commands_readable`). The `DDNAME=RACF` case of #196 stays non-DB2. See [api/public-api](api/public-api.md).
+* **Fix (#201)**: the DFSRRC00 profile puts a BMP/DLI/DBB region's application program in `invoked_programs`; MSG/IFP keep `[]`.
+* **Fix (#202)**: IEBUPDTE reads a labelled control statement (`./LBL ADD NAME=...`).
+* **Fix (#204)**: IEBPTPCH and IEBDG read their statements through `_control.parse_control_statements`, so a name field in column 1 is allowed; IEBDG's `DSD` note gives `OUTPUT=` / `INPUT=` (`DSD OUTPUT=OUT1`), not a `DDNAME=` it never takes.
+* **Fix (#206)**: the IEHINITT profile reads IBM's `ddname INITT SER=x[,OWNER='name'][,NUMBTAPE=n]` through `_control.parse_control_statements`: the name field (the tape DD) is captured, `SER=` is the volume (a legacy `VOL=SER=` is still read) and a quoted `OWNER=` is unquoted. Notes read `INITT TAPE1 (SER=TAP001, OWNER=J SMITH, NUMBTAPE=2)`.
+* **Tests**: `tests/unit/test_issue_sweep_2026_11_13.py`.
+
 ## 2026-11-11 (open bug-hunt findings)
 * **Fix** (pass 26): an INCLUDE member that cannot be loaded (not found, built from a symbol with no SET value, or recursive) is a WARNING on `Job.statement_findings`, so `validate_jcl` (structure and semantic) and `--validate` report it, like a missing PROC. It was only on `job.warnings`.
 * **Fix** (pass 27): the temporary-dataset and GDG checks run on the exploded job when every called PROC is available (`_semantic_checks.exploded_for_checks`, exploded once per `job.validate()`): a call-site override renaming the PROC's `&&A` no longer gives a false "deleted" warning, `DSN=&&&T` with `T=GOSET` is `&&GOSET`, a temporary the PROC deletes and a later job step reads is reported, and a PROC called twice that creates the same temporary is a duplicate. A DD from a cataloged PROC is reported on the calling step's line. With a PROC missing, the as-coded fallback from pass 25 still applies. See [advanced/validation](advanced/validation.md#what-it-checks).

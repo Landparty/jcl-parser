@@ -124,6 +124,8 @@ _ENDEXEC_RE = re.compile(r"\bENDEXEC\b", re.IGNORECASE)
 # commands too); only the DB2 DSN subcommands in it are SQL-related.
 _TSO_COMMAND_DD = "SYSTSIN"
 _TSO_SQL_CATEGORIES = frozenset({"UTILITY"})
+# SQL on a non-SYSTSIN DD that makes a TSO step with unread commands DB2.
+_DB2_EVIDENCE_CATEGORIES = frozenset({"DML", "DDL", "DCL"})
 
 # SQL statement keywords that start a statement.  Order matters for matching:
 # longer prefixes first so "INSERT INTO" beats "INSERT".
@@ -301,9 +303,12 @@ def detect_sql_in_step(
     # TSO batch without the DSN command processor runs no SQL at all: its
     # in-stream data is TSO / RACF / REXX input whatever the DD is called
     # (``//SYSTSIN DD DDNAME=RACF`` reads the RACF DD).
-    tso_only = (
-        step.program or ""
-    ).upper() in TSO_BATCH_PROGRAMS and not result.is_db2_program
+    # Only when the TSO commands could be read, though: with SYSTSIN in a
+    # dataset the DSN command is out of sight, and the SQL on SYSIN is real
+    # (issue #199).
+    is_tso = (step.program or "").upper() in TSO_BATCH_PROGRAMS
+    commands_read = is_tso and _tso_commands_readable(step)
+    tso_only = is_tso and not result.is_db2_program and commands_read
     is_tso_input = False
     for dd in _dataset_dds(step):
         # An unnamed DD is a concatenation member of the last named one, so
@@ -316,7 +321,38 @@ def detect_sql_in_step(
             if is_tso_input and cat not in _TSO_SQL_CATEGORIES:
                 continue
             result.sql_statements.append((kw, cat, dd.name))
+    if is_tso and not result.is_db2_program and not commands_read:
+        # Unread TSO commands plus SQL on another DD: that SQL has no other
+        # reader than DSN, so the step runs DB2.
+        result.is_db2_program = any(
+            cat in _DB2_EVIDENCE_CATEGORIES for _, cat, _ in result.sql_statements
+        )
     return result
+
+
+def _tso_commands_readable(step: Step) -> bool:
+    """True when every member of *step*'s ``SYSTSIN`` is in-stream data,
+    directly or through ``DDNAME=`` naming an in-stream DD, so the TSO
+    commands the step runs are all known (issue #199)."""
+    dds = _dataset_dds(step)
+    by_name = {dd.name.upper().rpartition(".")[2]: dd for dd in dds if dd.name}
+    members: list[DDStatement] = []
+    in_systsin = False
+    for dd in dds:
+        if dd.name:
+            in_systsin = dd.name.upper().rpartition(".")[2] == _TSO_COMMAND_DD
+        if in_systsin:
+            members.append(dd)
+    if not members:
+        return False
+    for dd in members:
+        if dd.inline_data:
+            continue
+        ref = dd.parameters.get("DDNAME")
+        target = by_name.get(ref.upper()) if isinstance(ref, str) else None
+        if target is None or target is dd or not target.inline_data:
+            return False
+    return True
 
 
 def _tso_step_runs_db2(step: Step, joblib: Sequence[str] = ()) -> bool:

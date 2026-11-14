@@ -19,7 +19,10 @@ if TYPE_CHECKING:
     from ..model import Step
 
 _RE_CTL = re.compile(
-    r"^\./\s*(ADD|CHANGE|REPL|NUMBER)\b(?:[^\n]*\bNAME=([A-Za-z0-9$#@]+))?",
+    # ``./`` then an optional label starting in column 3 (``./LBL ADD``,
+    # issue #202) or blanks, then the operation.
+    r"^\./(?:[A-Za-z$#@][A-Za-z0-9$#@]{0,7}[ \t]+|[ \t]*)"
+    r"(ADD|CHANGE|REPL|NUMBER)\b(?:[^\n]*\bNAME=([A-Za-z0-9$#@]+))?",
     re.IGNORECASE | re.MULTILINE,
 )
 

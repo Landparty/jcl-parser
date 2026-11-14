@@ -358,7 +358,7 @@ class TestIEBDG:
         results = analyze_job(job)
         assert len(results) == 1
         notes = " | ".join(results[0].notes)
-        assert "DSD DDNAME=SYSUT2" in notes
+        assert "DSD OUTPUT=SYSUT2" in notes
         assert "FLD1" in notes
         assert "CREATE REPEAT=100" in notes
 
@@ -650,14 +650,15 @@ class TestIEHINITT:
             "//MYJOB    JOB  (ACCT)\n"
             "//STEP1    EXEC PGM=IEHINITT\n"
             "//SYSIN    DD *\n"
-            "  INITT VOL=SER=TAPE01,OWNER=SYS1,NUMBTAPE=1\n"
+            "TAPE1    INITT SER=TAPE01,OWNER=SYS1,NUMBTAPE=1\n"
             "/*\n"
         )
         job = jp.parse_jcl(src)
         results = analyze_job(job)
         assert len(results) == 1
         notes = " | ".join(results[0].notes)
-        assert "VOL=TAPE01" in notes
+        assert "INITT TAPE1" in notes
+        assert "SER=TAPE01" in notes
         assert "OWNER=SYS1" in notes
 
     def test_no_sysin_graceful(self):

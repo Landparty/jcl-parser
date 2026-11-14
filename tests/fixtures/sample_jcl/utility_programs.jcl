@@ -130,7 +130,7 @@ SOURCE CODE LINE 2
 //             DISP=(NEW,KEEP),
 //             LABEL=(1,SL)
 //SYSIN    DD *
-  INITT TAPE,SER=TAPE01,NUMBTAPE=1
+TAPE     INITT SER=TAPE01,NUMBTAPE=1
 /*
 //*
 //* FTP file transfer

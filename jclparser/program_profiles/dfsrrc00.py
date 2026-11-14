@@ -86,6 +86,7 @@ class DFSRRC00Profile(ProgramProfile):
             dataset_events=[],
             notes=notes,
             raw_control=parm or None,
+            invoked_programs=[app_program] if app_program else [],
         )
 
 
